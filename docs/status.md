@@ -17,16 +17,15 @@ Last updated: Tue Oct 27, 2026, afternoon Honduras time, by Claude Code (team of
 - E1-E8 prep (Muse orchestrator, ~9:45 PM): date gate NOT passed (Oct 26 in
   ET/Honduras, U4 unanswered) → contracts + 53 fixed cases (+2 fixtures) only,
   no runner or model calls. Lanes wait for Oct 27 00:00 ET; see the handoff.
-- E1-E8 Phase 1 (Muse orchestrator, Oct 27 AM): all lanes green-ish, all
-  uncommitted on spike/* (E1 14/15, E3 10/10, E6 4/4, E8 3/3, E2 5/6, E5
-  9/9; ~$0.75 of $5). Needs Angel: echo-convention ruling, Phase 2 go,
-  commit/integrate. Cards in KB planning/2026-10-27-phase1-result-cards.md.
-- E4 voice (Muse, Oct 27 AM, `spike/voice-e4` uncommitted): transcription
+- E1-E8 Phase 1 (Muse orchestrator, Oct 27 AM): all lanes green-ish, merged
+  to `main` Oct 27 (E1 14/15, E3 10/10, E6 4/4, E8 3/3, E2 5/6, E5
+  9/9; ~$0.75 of $5). Needs Angel: Phase 2 go. Cards in KB planning/2026-10-27-phase1-result-cards.md.
+- E4 voice (Muse, Oct 27 AM, `spike/voice-e4`, merged): transcription
   6/6, interpretation 4/6 strict (E4-05 correction flip is genuine; E4-02
   filler-echo is a scoring artifact); E1-02 rescored PASS offline (E1
   15/15); ~$0.81 of $5 total. E7 not run. OGG->WAV: WASM-in-consumer
   leads, needs T2 CPU benchmark.
-- e1-v4 fix (Muse, Oct 27 AM, `spike/e1-v4` uncommitted): E1 19/21 (15/15
+- e1-v4 fix (Muse, Oct 27 AM, `spike/e1-v4`, merged): E1 19/21 (15/15
   original, 4/6 held-out -- corrections right, product lift gap stands);
   E4 interpret 6/6 on saved transcripts. No e1-v5 (no original-15
   regression). ~$1.12 of $5 total.
