@@ -1,0 +1,21 @@
+{
+  "id": "E1-06",
+  "tags": ["fiado_credit", "missing-amount"],
+  "input": { "type": "text", "body": "Don Carlos llevó dos libras de arroz fiado." },
+  "expected": {
+    "kind": "fiado_credit",
+    "must_equal": {
+      "product_text": "arroz",
+      "quantity_text": "dos libras",
+      "quantity_value": 2,
+      "unit_text": "libras",
+      "counterparty_text": "Don Carlos",
+      "targets_open_draft": false
+    },
+    "must_be_null": ["amount_minor", "amount_basis"],
+    "must_ask": true,
+    "must_not_contain": [],
+    "must_mention": ["Carlos"]
+  },
+  "notes": "Credit without amount owed. Weight units are unambiguous (2 libras), but the debt needs a figure, so ask for the amount."
+}

@@ -1,0 +1,13 @@
+{
+  "id": "E5-01",
+  "tags": ["ambiguous", "size-trap"],
+  "context": { "store": "A" },
+  "input": { "type": "text", "body": "Entraron 5 cocas." },
+  "expected": {
+    "verdict": "ask",
+    "candidates": ["P-COCA2L", "P-COCA500"],
+    "must_ask": true,
+    "must_not_contain": ["P-COCA2L-B"]
+  },
+  "notes": "Coca without size matches two products. Must ask (one specific question), never silently pick. Store B IDs must not appear."
+}

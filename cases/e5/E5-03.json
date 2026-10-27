@@ -1,0 +1,13 @@
+{
+  "id": "E5-03",
+  "tags": ["ambiguous", "pack-trap"],
+  "context": { "store": "A" },
+  "input": { "type": "text", "body": "Vendí una leche." },
+  "expected": {
+    "verdict": "ask",
+    "candidates": ["P-LECHE12A", "P-LECHE12B"],
+    "must_ask": true,
+    "must_not_contain": []
+  },
+  "notes": "Leche without pack detail matches both x12 packs. Must ask which one, never merge into a single leche."
+}

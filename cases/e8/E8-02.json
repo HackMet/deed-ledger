@@ -1,0 +1,15 @@
+{
+  "id": "E8-02",
+  "tags": ["duplicate-photo", "new-message"],
+  "scenario": "The same photo bytes arrive as two different provider messages (M-6002, M-6003): a resend, not a retry.",
+  "steps": [
+    { "step": 1, "action": "ingest_message", "args": { "message_id": "M-6002", "store": "A", "kind": "image", "ref": "e2-01-printed-invoice.png" } },
+    { "step": 2, "action": "ingest_message", "args": { "message_id": "M-6003", "store": "A", "kind": "image", "ref": "e2-01-printed-invoice.png" } }
+  ],
+  "expected": {
+    "commits": 0,
+    "rejects": [],
+    "final": { "duplicate_warning": true, "silent_second_commit": false }
+  },
+  "notes": "Different message IDs, identical bytes. Must raise a reviewable duplicate warning, never a second silent commit. Distinct from E6-04 (same ID replay)."
+}

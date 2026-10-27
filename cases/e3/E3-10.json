@@ -1,0 +1,12 @@
+{
+  "id": "E3-10",
+  "tags": ["profit", "refusal", "explicit-date"],
+  "context": { "today": "2026-10-27", "store": "A" },
+  "input": { "type": "text", "body": "¿Cuál fue mi ganancia ayer?" },
+  "expected": {
+    "verdict": "refuse",
+    "must_mention": ["costo"],
+    "must_not_contain": ["10000", "100.00"]
+  },
+  "notes": "Yesterday (2026-10-26) sales exist (S-004, L100.00) but costs are missing, so ganancia is unknowable. Must refuse and name the missing cost, not quote sales as profit."
+}

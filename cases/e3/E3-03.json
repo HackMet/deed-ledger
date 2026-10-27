@@ -1,0 +1,12 @@
+{
+  "id": "E3-03",
+  "tags": ["profit", "refusal", "missing-cost"],
+  "context": { "today": "2026-10-27", "store": "A" },
+  "input": { "type": "text", "body": "¿Cuánto gané hoy?" },
+  "expected": {
+    "verdict": "refuse",
+    "must_mention": ["costo"],
+    "must_not_contain": ["20550", "205.50", "-13950", "139.50"]
+  },
+  "notes": "Costs are missing everywhere, so profit is unknowable. Must refuse plainly and name the missing cost. Must not present sales (205.50) as profit, nor net sales-minus-expenses (-139.50) as profit."
+}

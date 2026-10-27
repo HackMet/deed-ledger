@@ -1,0 +1,15 @@
+{
+  "id": "E6-03",
+  "tags": ["wrong-store", "isolation"],
+  "scenario": "Draft D-1003 belongs to store A; a confirm arrives with store B context.",
+  "steps": [
+    { "step": 1, "action": "create_draft", "args": { "draft_id": "D-1003", "store": "A", "kind": "expense" } },
+    { "step": 2, "action": "confirm", "args": { "draft_id": "D-1003", "revision": 1, "store": "B", "operation_key": "K-1003-x" } }
+  ],
+  "expected": {
+    "commits": 0,
+    "rejects": [2],
+    "final": { "draft_id": "D-1003", "state": "open", "committed_revision": null }
+  },
+  "notes": "Cross-store approval must be rejected. The draft stays open and uncommitted; no store B write exists."
+}

@@ -1,0 +1,13 @@
+{
+  "id": "E5-05",
+  "tags": ["correction", "resolves-ambiguity"],
+  "context": { "store": "A", "open_case": "E5-01" },
+  "input": { "type": "text", "body": "No, la de dos litros." },
+  "expected": {
+    "verdict": "match",
+    "product_id": "P-COCA2L",
+    "must_ask": false,
+    "must_not_contain": ["P-COCA500"]
+  },
+  "notes": "Follow-up to the open E5-01 ambiguity. The correction resolves it to P-COCA2L with no further question."
+}

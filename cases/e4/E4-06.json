@@ -1,0 +1,13 @@
+{
+  "id": "E4-06",
+  "tags": ["voice", "missing-product"],
+  "input": { "type": "audio", "file": "e4-e1-11.wav" },
+  "reference_transcript": "Vendí tres a veinte cada uno.",
+  "interpretation_case": "E1-11",
+  "expected": {
+    "transcript_must_mention": ["tres", "veinte"],
+    "interpretation": "per E1-11 expected"
+  },
+  "recording_spec": "Record Oct 27. Synthetic speech or volunteer-spoken render of the reference transcript. Scored artifact is WAV 16 kHz mono. No real voice notes.",
+  "notes": "Missing product through audio. Transcription has little to miss; the test is that interpretation still asks which product."
+}

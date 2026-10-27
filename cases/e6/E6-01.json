@@ -1,0 +1,16 @@
+{
+  "id": "E6-01",
+  "tags": ["double-confirm", "exactly-once"],
+  "scenario": "Owner double-taps Confirmar on draft D-1001 revision 1 (store A). Operation key K-1001.",
+  "steps": [
+    { "step": 1, "action": "create_draft", "args": { "draft_id": "D-1001", "store": "A", "kind": "supplier_receipt" } },
+    { "step": 2, "action": "confirm", "args": { "draft_id": "D-1001", "revision": 1, "store": "A", "operation_key": "K-1001" } },
+    { "step": 3, "action": "confirm", "args": { "draft_id": "D-1001", "revision": 1, "store": "A", "operation_key": "K-1001" } }
+  ],
+  "expected": {
+    "commits": 1,
+    "rejects": [3],
+    "final": { "draft_id": "D-1001", "state": "committed", "committed_revision": 1 }
+  },
+  "notes": "Step 2 commits; step 3 is a duplicate and must be rejected with a plain message, not a second commit."
+}

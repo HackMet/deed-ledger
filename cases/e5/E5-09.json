@@ -1,0 +1,13 @@
+{
+  "id": "E5-09",
+  "tags": ["match", "short-alias"],
+  "context": { "store": "A" },
+  "input": { "type": "text", "body": "Entraron 2 cajas de Coca 500." },
+  "expected": {
+    "verdict": "match",
+    "product_id": "P-COCA500",
+    "must_ask": false,
+    "must_not_contain": ["P-COCA2L"]
+  },
+  "notes": "Short alias Coca 500 matches the 500 ml product. Quantity and unit conversion stay downstream; matching only names the product."
+}

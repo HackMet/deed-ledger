@@ -1,0 +1,13 @@
+{
+  "id": "E1-10",
+  "tags": ["cancel"],
+  "input": { "type": "text", "body": "Cancelá eso, no entró nada." },
+  "expected": {
+    "kind": "cancel",
+    "must_equal": { "targets_open_draft": true },
+    "must_be_null": ["product_text", "quantity_value", "amount_minor", "counterparty_text"],
+    "must_ask": false,
+    "must_not_contain": []
+  },
+  "notes": "Cancels the open draft. Nothing to echo back as a quantity or amount."
+}

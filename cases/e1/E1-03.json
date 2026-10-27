@@ -1,0 +1,19 @@
+{
+  "id": "E1-03",
+  "tags": ["pack-vs-unit", "ambiguity"],
+  "input": { "type": "text", "body": "Entraron dos cajas de doce leches." },
+  "expected": {
+    "kind": "supplier_receipt",
+    "must_equal": {
+      "product_text": "leches",
+      "quantity_text": "dos cajas de doce",
+      "unit_text": "cajas",
+      "targets_open_draft": false
+    },
+    "must_be_null": ["quantity_value", "amount_minor", "amount_basis"],
+    "must_ask": true,
+    "must_not_contain": ["24"],
+    "must_mention": ["caja"]
+  },
+  "notes": "Contract example. Pack size unconfirmed, so quantity_value stays null and 24 must not appear anywhere in the proposal. owner_reply asks one specific question, e.g. whether each box holds 12."
+}

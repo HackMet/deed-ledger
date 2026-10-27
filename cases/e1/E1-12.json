@@ -1,0 +1,18 @@
+{
+  "id": "E1-12",
+  "tags": ["adjustment", "loss"],
+  "input": { "type": "text", "body": "Se quebraron cuatro huevos." },
+  "expected": {
+    "kind": "adjustment",
+    "must_equal": {
+      "product_text": "huevos",
+      "quantity_text": "cuatro",
+      "quantity_value": 4,
+      "targets_open_draft": false
+    },
+    "must_be_null": ["unit_text", "amount_minor", "counterparty_text"],
+    "must_ask": false,
+    "must_not_contain": []
+  },
+  "notes": "Loss adjustment. Huevos is the product; no unit word was stated, so unit_text stays null."
+}

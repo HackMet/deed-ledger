@@ -1,0 +1,32 @@
+# Decisions
+
+One line per decision, with the evidence behind it. Statuses:
+
+- **Accepted**: binding for every agent. Comes from the PRD, a hackathon rule, or Angel.
+- **Proposed**: recommended with evidence and waiting for Angel's OK. If `AGENTS.md` already applies it as a
+  default, follow it until Angel decides. Otherwise, ask before building on it.
+- **Implemented**: a reversible repository-setup choice made during initialization.
+
+Never edit an accepted decision. Add a new one that supersedes it, and mark the old one "Superseded by D-xx".
+
+| ID | Date | Decision | Why / evidence | Status |
+|---|---|---|---|---|
+| D-01 | 2026-10-24 | WhatsApp-first, Spanish-first; web is complementary. | [PRD §12.1](PRD.md#121-confirmed-product-decisions) | Accepted |
+| D-02 | 2026-10-24 | Inventory intake and management is the MVP, not full store management. | PRD §12.1 | Accepted |
+| D-03 | 2026-10-24 | AI proposals need human confirmation before stock changes. | PRD §12.1 | Accepted |
+| D-04 | 2026-10-24 | Audit ledger and transaction idempotency are P0. | PRD §12.1 | Accepted |
+| D-05 | 2026-10-24 | Business and location scoping is P0, even with one pilot store. | PRD §12.1 | Accepted |
+| D-06 | 2026-10-24 | One shared D1 database behind a tenant-aware repository contract. | PRD §12.1 | Accepted |
+| D-07 | 2026-10-24 | No claim of complete on-hand accuracy without an opening count and continued transaction capture. | PRD §12.1 | Accepted |
+| D-08 | 2026-10-26 | Enter the Indie Developer track, theme "Build for Your World". Answers PRD Q-09. | Application submitted on Oct 15 on the Indie track; the Official Rules allow one track per participant ([requirements](hackathon-requirements.md) R13). | Accepted; confirm on the submission form |
+| D-09 | 2026-10-26 | Call only standard Meta model IDs (`muse-spark-1.3`, `muse-voice-transcribe-1.0`), never `*-contributor` IDs. | Meta's pricing and model pages: contributor variants are cheaper because Meta may train on the prompts, files and responses. Real store data must not be used that way (PRD §9.2). The $150 credits cover standard prices comfortably. | Proposed |
+| D-10 | 2026-10-26 | Voice notes go to Muse Voice Transcribe's file endpoint after decoding WhatsApp's OGG/Opus to WAV. They are never sent to Muse Spark as audio. Partly answers PRD Q-06. | Speech-to-text docs: the file endpoint accepts only mono 16-bit PCM WAV at 16 or 24 kHz. The models page says Spark 1.3 audio input is not fully supported and may be degraded. Where the decoding runs is still open ([architecture](architecture.md#open-technical-decisions) A1). | Proposed |
+| D-11 | 2026-10-26 | `AGENTS.md` is the only place for shared agent rules. `CLAUDE.md` imports it and adds only Claude-specific notes. | Claude Code reads `AGENTS.md` by itself only when no `CLAUDE.md` exists at or above the working directory, and `~/angel/CLAUDE.md` sits above this repo. Muse Code reads `AGENTS.md` first at each directory level. Codex reads every `AGENTS.md` from the git root to the working directory. | Implemented |
+| D-12 | 2026-10-26 | The repo is its own git root (`git init -b main`, no commits yet). | Muse Code and Codex stop looking for instructions at the nearest `.git`. Without one here, they could pick up instruction files from parent folders. The hackathon also requires a public repository. | Implemented |
+| D-13 | 2026-10-26 | No code is copied from other repositories, including Angel's other projects. Open-source packages are allowed when their license permits and the handoff says why we need them. | Hackathon rules: new work only, original and solely owned, open source only under its license ([requirements](hackathon-requirements.md) R6, R7, R24). | Accepted (rule) |
+| D-14 | 2026-10-26 | One task per branch (`<agent>/<slug>`). Agents working at the same time use separate git worktrees. Angel commits and merges; `muse/*` branches merge with a merge commit (no squash). | Muse Code's sandbox keeps `.git` read-only, so Muse cannot commit anyway. Two agents in one working tree overwrite each other's changes. Commits carry no AI trailers, so the branch name in the merge commit is what shows Muse Code's share in the history. | Proposed |
+| D-15 | 2026-10-26 | Hackathon scope is the "Must" list in [hackathon-plan.md](hackathon-plan.md). The remaining PRD P0 items stay P0 for the pilot but don't gate the submission. | PRD P0 is 12 requirements, a 12-test suite and a five-screen web app. That's more than one developer can build and harden in 9 days. The rubric rewards a working, convincing demo (Demo 25%, Impact 30%). | Proposed |
+| D-16 | 2026-10-26 | For the MVP, owners reach web pages through expiring signed links sent over WhatsApp and bound to business, actor and resource. No passwords. | PRD principle 1 (no complex setup); FR-07 and §9.1 already require signed, expiring tokens; the owner works from a phone. Narrows FR-10's "login-protected" for the hackathon. | Proposed |
+| D-17 | 2026-10-26 | Product code starts after the kickoff (Oct 26, 10:00 AM Honduras time), inside the official event window. Before it: docs and setup only. | The event window runs from the kickoff to the deadline ([requirements](hackathon-requirements.md) S4), and the rules require work built during the event. The guide also calls Oct 27 – Nov 4 the "Building period". Waiting until Oct 27 would be the strictest reading and costs a day; U4 asks the organizers. | Proposed |
+| D-18 | 2026-10-26 | Real pilot data (invoices, voice notes, photos, store numbers) stays outside the repo. Fixtures are synthetic, or anonymized with consent. | Public repository plus the organizers' license over submissions; PRD §9.2; Angel's initialization brief. | Accepted |
+| D-19 | 2026-10-26 | The app reads its Meta key from `MODEL_API_KEY`, never `META_API_KEY`. | `META_API_KEY` is the variable Muse Code checks first, ahead of its own sign-in. Exporting it would silently switch Muse's billing to that key. Meta's API examples use `MODEL_API_KEY`. | Proposed |

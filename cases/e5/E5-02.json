@@ -1,0 +1,13 @@
+{
+  "id": "E5-02",
+  "tags": ["match", "alias"],
+  "context": { "store": "A" },
+  "input": { "type": "text", "body": "Entraron 5 cocas de dos litros." },
+  "expected": {
+    "verdict": "match",
+    "product_id": "P-COCA2L",
+    "must_ask": false,
+    "must_not_contain": ["P-COCA500", "P-COCA2L-B"]
+  },
+  "notes": "Size disambiguates to P-COCA2L by alias. No question needed."
+}

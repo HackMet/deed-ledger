@@ -1,0 +1,12 @@
+{
+  "id": "E3-06",
+  "tags": ["stock", "verified-baseline", "answerable"],
+  "context": { "today": "2026-10-27", "store": "A" },
+  "input": { "type": "text", "body": "¿Cuánto arroz hay?" },
+  "expected": {
+    "verdict": "answer",
+    "must_mention": ["50"],
+    "must_not_contain": []
+  },
+  "notes": "Recorded 50 libras with a verified baseline as of 2026-10-26. Answerable with the as_of date shown."
+}

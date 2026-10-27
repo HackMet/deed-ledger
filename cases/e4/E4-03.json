@@ -1,0 +1,13 @@
+{
+  "id": "E4-03",
+  "tags": ["voice", "price-ambiguity"],
+  "input": { "type": "audio", "file": "e4-e1-04.wav" },
+  "reference_transcript": "Vendí dos cajas de jugos a ciento cincuenta.",
+  "interpretation_case": "E1-04",
+  "expected": {
+    "transcript_must_mention": ["dos", "cajas", "jugos", "ciento cincuenta"],
+    "interpretation": "per E1-04 expected"
+  },
+  "recording_spec": "Record Oct 27. Synthetic speech or volunteer-spoken render of the reference transcript. Scored artifact is WAV 16 kHz mono. No real voice notes.",
+  "notes": "Price-coverage ambiguity through audio. Watch number transcription (dos, ciento cincuenta) separately from basis handling."
+}

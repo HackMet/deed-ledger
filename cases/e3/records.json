@@ -1,0 +1,36 @@
+{
+  "today_default": "2026-10-27",
+  "currency": "HNL",
+  "notes": "Synthetic fixture for E3/E7. Money in centavos. No cost records exist anywhere: every profit or margin question must be refused. Store B holds one sale that must never leak into store A answers.",
+  "stores": {
+    "A": {
+      "sales": [
+        { "id": "S-001", "date": "2026-10-27", "total_minor": 2000, "lines": [{ "product_text": "refrescos", "quantity": "3", "amount_minor": 2000 }] },
+        { "id": "S-002", "date": "2026-10-27", "total_minor": 3550, "lines": [{ "product_text": "leche", "quantity": "2", "amount_minor": 3550 }] },
+        { "id": "S-003", "date": "2026-10-27", "total_minor": 15000, "lines": [{ "product_text": "jugos", "quantity": "2", "amount_minor": 15000 }] },
+        { "id": "S-004", "date": "2026-10-26", "total_minor": 10000, "lines": [{ "product_text": "arroz", "quantity": "5", "amount_minor": 10000 }] }
+      ],
+      "expenses": [
+        { "id": "X-001", "date": "2026-10-27", "total_minor": 30000, "concept": "hielo" },
+        { "id": "X-002", "date": "2026-10-27", "total_minor": 4500, "concept": "transporte" }
+      ],
+      "fiado": [
+        { "id": "F-001", "counterparty_text": "Don Carlos", "amount_minor": 20000, "date": "2026-10-25", "status": "pending" },
+        { "id": "F-002", "counterparty_text": "Doña Marta", "amount_minor": 7500, "date": "2026-10-27", "status": "pending" },
+        { "id": "F-003", "counterparty_text": "Don Carlos", "amount_minor": 5000, "date": "2026-10-20", "status": "paid" }
+      ],
+      "stock": [
+        { "product_id": "P-LECHE", "recorded_qty": "36", "unit": "unidad", "baseline_status": "no_baseline", "as_of": "2026-10-27" },
+        { "product_id": "P-ARROZ", "recorded_qty": "50", "unit": "libra", "baseline_status": "verified", "as_of": "2026-10-26" }
+      ]
+    },
+    "B": {
+      "sales": [
+        { "id": "S-B01", "date": "2026-10-27", "total_minor": 50000, "lines": [{ "product_text": "mixto", "quantity": "1", "amount_minor": 50000 }] }
+      ],
+      "expenses": [],
+      "fiado": [],
+      "stock": []
+    }
+  }
+}

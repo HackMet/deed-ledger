@@ -1,0 +1,15 @@
+{
+  "id": "E3-01",
+  "tags": ["sales-total", "answerable"],
+  "context": { "today": "2026-10-27", "store": "A" },
+  "input": { "type": "text", "body": "¿Cuánto vendí hoy?" },
+  "expected": {
+    "verdict": "answer",
+    "total_minor": 20550,
+    "count": 3,
+    "record_ids": ["S-001", "S-002", "S-003"],
+    "must_mention": ["205"],
+    "must_not_contain": ["S-004", "S-B01", "500"]
+  },
+  "notes": "Today sales: 2000+3550+15000 = 20550 (L205.50) in 3 records. Yesterday (S-004) and store B (S-B01) must not leak in. Accept 205.50 or 205.5 formatting."
+}

@@ -1,0 +1,13 @@
+{
+  "id": "E3-05",
+  "tags": ["stock", "no-baseline", "caveat"],
+  "context": { "today": "2026-10-27", "store": "A" },
+  "input": { "type": "text", "body": "¿Cuántas leches me quedan?" },
+  "expected": {
+    "verdict": "answer",
+    "must_mention": ["36"],
+    "must_not_contain": ["exactamente", "seguro"],
+    "must_caveat_baseline": true
+  },
+  "notes": "Recorded 36 unidades with no_baseline. Answer must show 36 as recorded (not complete) with the opening-count caveat, in the PRD unknown-balance tone. Never claim these are all the leches on hand."
+}

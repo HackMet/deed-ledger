@@ -1,0 +1,20 @@
+{
+  "id": "E1-01",
+  "tags": ["sale", "unambiguous"],
+  "input": { "type": "text", "body": "Vendí tres refrescos a veinte cada uno." },
+  "expected": {
+    "kind": "sale",
+    "must_equal": {
+      "product_text": "refrescos",
+      "quantity_text": "tres",
+      "quantity_value": 3,
+      "amount_minor": 2000,
+      "amount_basis": "per_unit",
+      "targets_open_draft": false
+    },
+    "must_be_null": ["unit_text", "counterparty_text"],
+    "must_ask": false,
+    "must_not_contain": []
+  },
+  "notes": "Clean sale. 20 lempiras each = 2000 centavos, basis explicit per_unit. No unit word stated, so unit_text stays null."
+}

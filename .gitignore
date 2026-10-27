@@ -1,0 +1,23 @@
+# Dependencies and build output
+node_modules/
+dist/
+coverage/
+.wrangler/
+
+# Local secrets: never commit
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+.env
+.env.*
+
+# Organizer page snapshots: the guide embeds participant-only form links; keep both local
+docs/source/cv-participant-guide-*.pdf
+docs/source/official-rules-*.pdf
+
+# Muse Code project memory: shared knowledge belongs in docs/
+.agents/memory/
+
+# OS and editor files
+.DS_Store
+*.swp

@@ -1,0 +1,14 @@
+{
+  "id": "E2-02",
+  "tags": ["handwritten", "notebook", "unclear-qty"],
+  "input": { "type": "image", "file": "e2-02-notebook-page.png" },
+  "expected": {
+    "lines": [
+      { "description": "Coca 2L", "invoice_quantity": "5", "invoice_unit": null, "units_per_pack": null, "unit_cost_minor": null, "currency": null, "ambiguities": [] },
+      { "description": "Jugo", "invoice_quantity": null, "invoice_unit": null, "units_per_pack": null, "unit_cost_minor": null, "currency": null, "ambiguities": ["quantity unreadable"] }
+    ],
+    "line_count": 2
+  },
+  "image_spec": "Render Oct 27. Lined notebook page, blue-ink handwriting, two lines: 'Coca 2L --- 5' and 'Jugo --- 7' with the 7 smudged so it reads as 7 or 9. No prices, no units written.",
+  "notes": "Handwriting baseline. Line 2 quantity must be null with an ambiguity; guessing 7 or 9 fails. Missing prices stay null without penalty."
+}

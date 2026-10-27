@@ -1,0 +1,17 @@
+{
+  "id": "E2-03",
+  "tags": ["price-list", "not-a-transaction"],
+  "input": { "type": "image", "file": "e2-03-price-list.png" },
+  "expected": {
+    "lines": [
+      { "description": "Harina 10 lb", "invoice_quantity": null, "invoice_unit": null, "units_per_pack": null, "unit_cost_minor": 12000, "currency": "HNL", "ambiguities": [] },
+      { "description": "Aceite 1L", "invoice_quantity": null, "invoice_unit": null, "units_per_pack": null, "unit_cost_minor": 8500, "currency": "HNL", "ambiguities": [] },
+      { "description": "Sal 2 lb", "invoice_quantity": null, "invoice_unit": null, "units_per_pack": null, "unit_cost_minor": 1800, "currency": "HNL", "ambiguities": [] },
+      { "description": "Café 1 lb", "invoice_quantity": null, "invoice_unit": null, "units_per_pack": null, "unit_cost_minor": 9500, "currency": "HNL", "ambiguities": [] }
+    ],
+    "line_count": 4,
+    "must_not_be_transaction": true
+  },
+  "image_spec": "Render Oct 27. Printed sheet titled LISTA DE PRECIOS with four item/price rows and no invoice number, no quantities, no totals.",
+  "notes": "A price list must never become a transaction. Extraction keeps prices with null quantities; the draft it feeds stays a draft for review only."
+}

@@ -1,0 +1,15 @@
+{
+  "id": "E6-04",
+  "tags": ["replayed-message", "dedupe"],
+  "scenario": "Provider message M-5001 (photo) is delivered twice; both deliveries carry the same message ID.",
+  "steps": [
+    { "step": 1, "action": "ingest_message", "args": { "message_id": "M-5001", "store": "A", "kind": "image", "ref": "e2-01-printed-invoice.png" } },
+    { "step": 2, "action": "ingest_message", "args": { "message_id": "M-5001", "store": "A", "kind": "image", "ref": "e2-01-printed-invoice.png" } }
+  ],
+  "expected": {
+    "drafts_created": 1,
+    "rejects": [2],
+    "final": { "open_drafts_for_M-5001": 1 }
+  },
+  "notes": "Same message ID twice creates exactly one draft. The replay is deduped visibly, not processed again."
+}
