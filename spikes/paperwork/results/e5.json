@@ -1,0 +1,204 @@
+{
+  "experiment": "E5",
+  "date": "2026-10-27",
+  "model": "muse-spark-1.3",
+  "prompt_version": "e5-prompt-v2",
+  "price_source": "https://dev.meta.ai/docs/pricing-rate-limits",
+  "price_per_m": {
+    "input": 1.25,
+    "output": 4.25
+  },
+  "summary": {
+    "passed": 9,
+    "total": 9,
+    "failed_ids": [],
+    "latency_p50_ms": 2997,
+    "latency_p95_ms": 4715,
+    "input_tokens": 4604,
+    "output_tokens": 8783,
+    "cost_usd_list": 0.043083
+  },
+  "cases": [
+    {
+      "id": "E5-01",
+      "pass": true,
+      "fails": [],
+      "output": {
+        "ambiguities": [
+          "Coca 2 litros",
+          "Coca 500 ml"
+        ],
+        "candidates": [
+          "P-COCA2L",
+          "P-COCA500"
+        ],
+        "owner_reply": "¿Eran coca grande de dos litros o coquita pequeña?",
+        "product_id": null,
+        "verdict": "ask"
+      },
+      "latency_ms": 3961,
+      "input_tokens": 512,
+      "output_tokens": 1222,
+      "cost_usd_list": 0.005834,
+      "model": "muse-spark-1.3",
+      "prompt_version": "e5-prompt-v2"
+    },
+    {
+      "id": "E5-02",
+      "pass": true,
+      "fails": [],
+      "output": {
+        "ambiguities": [],
+        "candidates": [],
+        "owner_reply": "Listo, anotadas las 5 cocas de dos litros.",
+        "product_id": "P-COCA2L",
+        "verdict": "match"
+      },
+      "latency_ms": 2136,
+      "input_tokens": 515,
+      "output_tokens": 714,
+      "cost_usd_list": 0.003678,
+      "model": "muse-spark-1.3",
+      "prompt_version": "e5-prompt-v2"
+    },
+    {
+      "id": "E5-03",
+      "pass": true,
+      "fails": [],
+      "output": {
+        "ambiguities": [
+          "leche caja x12 (200 ml c/u)",
+          "leche caja x12 (1 L c/u)"
+        ],
+        "candidates": [
+          "P-LECHE12A",
+          "P-LECHE12B"
+        ],
+        "owner_reply": "¿Cuál leche vendió, la de 200 ml o la de un litro?",
+        "product_id": null,
+        "verdict": "ask"
+      },
+      "latency_ms": 3178,
+      "input_tokens": 510,
+      "output_tokens": 848,
+      "cost_usd_list": 0.004241,
+      "model": "muse-spark-1.3",
+      "prompt_version": "e5-prompt-v2"
+    },
+    {
+      "id": "E5-04",
+      "pass": true,
+      "fails": [],
+      "output": {
+        "ambiguities": [],
+        "candidates": [],
+        "owner_reply": "Listo, anotada la caja de leche x12 de litro.",
+        "product_id": "P-LECHE12B",
+        "verdict": "match"
+      },
+      "latency_ms": 2997,
+      "input_tokens": 516,
+      "output_tokens": 1117,
+      "cost_usd_list": 0.005392,
+      "model": "muse-spark-1.3",
+      "prompt_version": "e5-prompt-v2"
+    },
+    {
+      "id": "E5-05",
+      "pass": true,
+      "fails": [],
+      "output": {
+        "ambiguities": [],
+        "candidates": [],
+        "owner_reply": "Listo, anotadas las 5 cocas de dos litros.",
+        "product_id": "P-COCA2L",
+        "verdict": "match"
+      },
+      "latency_ms": 2055,
+      "input_tokens": 554,
+      "output_tokens": 706,
+      "cost_usd_list": 0.003693,
+      "model": "muse-spark-1.3",
+      "prompt_version": "e5-prompt-v2"
+    },
+    {
+      "id": "E5-06",
+      "pass": true,
+      "fails": [],
+      "output": {
+        "ambiguities": [
+          "jugo de mango no está en el catálogo de esta tienda"
+        ],
+        "candidates": [],
+        "owner_reply": "¿Le registro el jugo de mango como producto nuevo?",
+        "product_id": null,
+        "verdict": "ask_create"
+      },
+      "latency_ms": 1988,
+      "input_tokens": 514,
+      "output_tokens": 596,
+      "cost_usd_list": 0.003175,
+      "model": "muse-spark-1.3",
+      "prompt_version": "e5-prompt-v2"
+    },
+    {
+      "id": "E5-07",
+      "pass": true,
+      "fails": [],
+      "output": {
+        "ambiguities": [],
+        "candidates": [],
+        "owner_reply": "Anotadas 5 Coca 2 litros.",
+        "product_id": "P-COCA2L-B",
+        "verdict": "match"
+      },
+      "latency_ms": 4715,
+      "input_tokens": 456,
+      "output_tokens": 1676,
+      "cost_usd_list": 0.007693,
+      "model": "muse-spark-1.3",
+      "prompt_version": "e5-prompt-v2"
+    },
+    {
+      "id": "E5-08",
+      "pass": true,
+      "fails": [],
+      "output": {
+        "ambiguities": [
+          "podría ser leche caja x12 (200 ml c/u) o leche caja x12 (1 L c/u)"
+        ],
+        "candidates": [
+          "P-LECHE12A",
+          "P-LECHE12B"
+        ],
+        "owner_reply": "¿Eran las cajitas de 200 ml o las grandes de litro?",
+        "product_id": null,
+        "verdict": "ask"
+      },
+      "latency_ms": 3333,
+      "input_tokens": 512,
+      "output_tokens": 1112,
+      "cost_usd_list": 0.005366,
+      "model": "muse-spark-1.3",
+      "prompt_version": "e5-prompt-v2"
+    },
+    {
+      "id": "E5-09",
+      "pass": true,
+      "fails": [],
+      "output": {
+        "ambiguities": [],
+        "candidates": [],
+        "owner_reply": "Anotado, entraron 2 cajas de Coca 500 ml.",
+        "product_id": "P-COCA500",
+        "verdict": "match"
+      },
+      "latency_ms": 2484,
+      "input_tokens": 515,
+      "output_tokens": 792,
+      "cost_usd_list": 0.00401,
+      "model": "muse-spark-1.3",
+      "prompt_version": "e5-prompt-v2"
+    }
+  ]
+}
