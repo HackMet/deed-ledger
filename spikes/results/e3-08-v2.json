@@ -1,0 +1,55 @@
+{
+  "exp": "E3",
+  "model": "muse-spark-1.3",
+  "prompt_version": "e3-v2",
+  "started_at": "2026-10-27T13:31:25.651Z",
+  "finished_at": "2026-10-27T13:31:28.799Z",
+  "price_source": "https://dev.meta.ai/docs/pricing-rate-limits",
+  "cost_basis": "estimated list-price (input $1.25/M, output $4.25/M)",
+  "totals": {
+    "cases": 1,
+    "passed": 1,
+    "failed_ids": [],
+    "api_calls": 2,
+    "retries": 0,
+    "input_tokens": 2662,
+    "output_tokens": 720,
+    "latency_ms_p50": 3133,
+    "latency_ms_p95": 3133,
+    "cost_usd_list": 0.0063875
+  },
+  "cases": [
+    {
+      "id": "E3-08",
+      "pass": true,
+      "failures": [],
+      "output": {
+        "answer_text": "Maje, no hay registros de huevos en esta tienda, así que no puedo decirle cuántos quedan.",
+        "cited_record_ids": [],
+        "verdict": "refuse"
+      },
+      "tool_calls": [
+        {
+          "name": "get_stock_record",
+          "args": {
+            "product_query": "huevos"
+          },
+          "result": {
+            "unknown": true,
+            "reason": "no records for this product in this store"
+          }
+        }
+      ],
+      "truncated": false,
+      "latency_ms": 3133,
+      "retried": 0,
+      "api_calls": 2,
+      "usage": {
+        "prompt_tokens": 2662,
+        "completion_tokens": 720,
+        "total_tokens": 3382
+      },
+      "cost_usd": 0.0063875
+    }
+  ]
+}
