@@ -6,7 +6,7 @@
     "kind": "supplier_receipt",
     "must_equal": {
       "product_text": "leche",
-      "quantity_text": "12",
+      "quantity_text": "12 unidades",
       "quantity_value": 12,
       "unit_text": "unidades",
       "targets_open_draft": false
