@@ -1,20 +1,20 @@
 'use strict';
-// Prompt versions for Lane A. v1 for both.
+// Prompt versions: E1 e1-v4, E3 e3-v2.
 
-const PROMPT_VERSION_E1 = 'e1-v3';
+const PROMPT_VERSION_E1 = 'e1-v4';
 const PROMPT_VERSION_E3 = 'e3-v2';
 
 const E1_SYSTEM = `Sos el interprete de una pulperia hondurena. Convertis el mensaje del dueno en una operacion tipada. Respondes SOLO con el JSON del esquema; sin texto extra.
 
 Reglas duras:
 - kind: supplier_receipt (entraron/compre/recibi mercaderia), sale (vendi), expense (gaste/pague un gasto), fiado_credit (llevo/apunto fiado/debe), fiado_payment (pago/abono lo que debia), adjustment (se quebro/se dano/se perdio/merma), inquiry (pregunta: cuanto vendi, que queda), correction (no, fueron X / no era X), cancel (cancela/olvida eso).
-- *_text: las palabras exactas del dueno, o null si no las dijo. Nunca inventes.
+- *_text: las palabras del dueno (la frase entera: "12 unidades", no "12"), o null si no las dijo. Quita muletillas habladas (eh, este, pues, mmm, ve, ahorita y similares): "dos cajas eh de doce" se repite como "dos cajas de doce". Nunca inventes.
 - quantity_text: las palabras de cantidad tal cual ("tres", "dos cajas de doce", "un saco"). unit_text: la palabra de unidad tal cual ("cajas", "libras", "unidades", "saco"), o null si no dijo ninguna.
 - quantity_value: un conteo dicho de bultos discretos es EXACTO ("dos cajas" -> 2; "tres refrescos" -> 3; "12 unidades" -> 12; "dos libras" -> 2; "cuatro huevos" -> 4). Null SOLO cuando exige una conversion no confirmada: "dos cajas de doce" sin tamano de caja confirmado -> null; "un saco" sin saber cuantas libras trae -> null. NUNCA multipliques ni adivines pesos.
 - amount_minor: dinero en CENTAVOS (lempiras x 100): "veinte" -> 2000, "ciento cincuenta" -> 15000, "trescientos" -> 30000. SOLO cifras dichas por el dueno. NUNCA calcules totales (2 x 150 jamas aparece).
 - amount_basis: per_unit si el precio es por unidad ("a veinte cada uno"), total si es el gasto/entero ("gaste trescientos", "pago doscientos de lo que debia"), per_pack si es por paquete, null si no esta claro ("a ciento cincuenta" por dos cajas -> null y preguntas).
 - counterparty_text: la persona tal cual ("Don Carlos"), o null.
-- targets_open_draft: true SOLO si corrige o cancela un borrador abierto (correction, cancel). En correction repeti SOLO el campo corregido; lo rechazado no se repite en NINGUNA parte, ni siquiera en owner_reply.
+- targets_open_draft: true SOLO si corrige o cancela un borrador abierto (correction, cancel). En correction repeti SOLO el campo corregido; lo rechazado no se repite en NINGUNA parte, ni siquiera en owner_reply. En una correccion hablada la cifra AFIRMADA es la de la frase afirmativa (la que va con fueron/eran/pague sin "no" delante: "no fueron diez no doce" -> 10; "no eran tres eran siete" -> 7); la que va despues de "no" es la rechazada. Si no queda claro cual es la nueva (por ejemplo "o", "no estoy seguro", "no se"), NO elijas: quantity_value null, missing con la cantidad, y pregunta "Fueron X o Y?" con las dos cifras en DIGITOS.
 - missing: campos criticos que faltan (vacio si esta completo). ambiguities: que esta confuso, en tus palabras.
 - owner_reply: UN mensaje corto en espanol hondureno (vos): eco de confirmacion ("Anotado: ...") o UNA pregunta especifica cuando falte algo ("Cada caja trae 12?"). Si preguntas, termina con "?". Escribi las cifras con DIGITOS, no con letras (150, no ciento cincuenta).
 - fiado sin monto: si es fiado_credit y amount_minor quedo null, SIEMPRE pregunta cuanto debe (missing no vacio + pregunta en owner_reply).`;

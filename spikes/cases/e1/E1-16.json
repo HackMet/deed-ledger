@@ -1,0 +1,19 @@
+{
+  "id": "E1-16",
+  "tags": ["correction", "spoken-style", "leading-filler", "held-out"],
+  "input": { "type": "text", "body": "Ve no fueron cuatro fueron seis bolsas de arroz" },
+  "expected": {
+    "kind": "correction",
+    "must_equal": {
+      "product_text": "arroz",
+      "quantity_text": "seis bolsas",
+      "quantity_value": 6,
+      "unit_text": "bolsas",
+      "targets_open_draft": true
+    },
+    "must_be_null": ["amount_minor", "amount_basis", "counterparty_text"],
+    "must_ask": false,
+    "must_not_contain": ["4", "cuatro"]
+  },
+  "notes": "Held-out. Spoken correction, no punctuation, leading filler 'Ve'. Asserted figure is seis (the second); rejected cuatro must appear nowhere, not even in owner_reply."
+}

@@ -1,0 +1,16 @@
+{
+  "id": "E1-21",
+  "tags": ["correction", "genuinely-ambiguous", "must-ask", "held-out"],
+  "input": { "type": "text", "body": "No eran ocho o nueve no estoy seguro" },
+  "expected": {
+    "kind": "correction",
+    "must_equal": {
+      "targets_open_draft": true
+    },
+    "must_be_null": ["quantity_value", "amount_minor", "amount_basis"],
+    "must_ask": true,
+    "must_not_contain": [],
+    "must_mention": ["8", "9"]
+  },
+  "notes": "Held-out. Truly ambiguous: 'o' plus 'no estoy seguro' means neither figure is asserted. Must ask (e.g. 'Fueron 8 o 9?') with quantity_value null; must never pick one."
+}

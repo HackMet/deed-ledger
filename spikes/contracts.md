@@ -94,6 +94,16 @@ null (E1-15). A bare stated count in stock units ("12 unidades") is exact
 `amount_minor` with `amount_basis: null` plus a question (E1-04); a derived
 total (2 x 150) must never appear.
 
+Echo convention [CONVENTION] (Angel's ruling, Oct 27): `*_text` fields echo
+the owner's whole phrase (E1-02: "12 unidades", not "12"), but drop spoken
+filler (eh, este, pues, mmm, ve, ahorita, and similar): "dos cajas eh de
+doce" echoes as "dos cajas de doce" (E1-19). In a spoken correction the
+affirmed figure is the one in the affirmative verb phrase ("no fueron diez
+no doce" affirms 10; "no eran tres eran siete" affirms 7); the rejected
+figure is never echoed anywhere (E1-09, E1-16..E1-18). When the transcript
+leaves it unclear which figure is asserted, the model asks with both figures
+and keeps `quantity_value` null (E1-21).
+
 E1 `expected` keys [CONVENTION]:
 
 - `must_equal`: `{field: value}` exact match on top-level output fields.
