@@ -3,7 +3,7 @@
 Shared state for every agent: what's true now, what's next, what's open, what bit us. Keep it short. Anything a
 command can tell you (git log, test results, CI) doesn't belong here. Decisions go in [decisions.md](decisions.md).
 
-Last updated: Tue Oct 27, 2026, ~8:00 AM Honduras time, by Muse Code (E1-E8 Phase 1 + synthesis).
+Last updated: Tue Oct 27, 2026, ~8:25 AM Honduras time, by Muse Code (E4 voice + E1-02 rescore).
 
 ## Now
 
@@ -21,6 +21,11 @@ Last updated: Tue Oct 27, 2026, ~8:00 AM Honduras time, by Muse Code (E1-E8 Phas
   uncommitted on spike/* (E1 14/15, E3 10/10, E6 4/4, E8 3/3, E2 5/6, E5
   9/9; ~$0.75 of $5). Needs Angel: echo-convention ruling, Phase 2 go,
   commit/integrate. Cards in KB planning/2026-10-27-phase1-result-cards.md.
+- E4 voice (Muse, Oct 27 AM, `spike/voice-e4` uncommitted): transcription
+  6/6, interpretation 4/6 strict (E4-05 correction flip is genuine; E4-02
+  filler-echo is a scoring artifact); E1-02 rescored PASS offline (E1
+  15/15); ~$0.81 of $5 total. E7 not run. OGG->WAV: WASM-in-consumer
+  leads, needs T2 CPU benchmark.
 
 ## Next
 
