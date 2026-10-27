@@ -3,11 +3,11 @@
 Shared state for every agent: what's true now, what's next, what's open, what bit us. Keep it short. Anything a
 command can tell you (git log, test results, CI) doesn't belong here. Decisions go in [decisions.md](decisions.md).
 
-Last updated: Tue Oct 27, 2026, ~8:45 AM Honduras time, by Muse Code (e1-v4 filler/correction fix).
+Last updated: Tue Oct 27, 2026, afternoon Honduras time, by Claude Code (team offer sent).
 
 ## Now
 
-- Repository initialized: docs, agent instructions, git (`main`, no commits yet). No application code.
+- Repository initialized: docs, agent instructions, spike cases on `main`. No application code.
 - Kickoff today at 10:00 AM Honduras time. Product code starts after it (D-17, proposed; U4 asks whether Oct 27 is
   the real start).
 - Johan agreed (Oct 26, per Angel): real store data, filming, and public use of the store's name, the town, his name
@@ -50,7 +50,8 @@ Last updated: Tue Oct 27, 2026, ~8:45 AM Honduras time, by Muse Code (e1-v4 fill
 | Repository license, GitHub repo name, when it goes public (after the summary) | Angel | Oct 26 |
 | Muse Code: Contributor mode off, foreign-context check, sandbox, plan or API key (separate session) | Angel | Oct 26 |
 | Proposed decisions D-09, D-10, D-14, D-15, D-16, D-17, D-19 | Angel | Oct 26 |
-| Team: solo so far, in talks with a possible teammate. Settle track, ownership and prize split before they write code | Angel | Oct 26 |
+| Team: offer sent Oct 27 to a possible teammate (accepted builder, Indie track): they would own perception (photos and voice in, checked proposals out); Angel keeps the engine and the product. Waiting on a reply. Before they write code: prize split and code ownership in writing, Johan's OK for real data, repo access, a written spec for the perception/engine boundary. T2 and T3 owners change only once they agree | Teammate → Angel | Oct 27 |
+| Product and team name: "Johan AI" is a working title, to be picked later | Angel | Oct 27 |
 
 ## Traps
 
