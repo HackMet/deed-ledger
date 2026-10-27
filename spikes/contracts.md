@@ -16,17 +16,17 @@ is still open.
 ## Repo layout [CONVENTION]
 
 ```text
-experiments/contracts.md   this file
-cases/e1/E1-*.json         15 text cases
-cases/e2/E2-*.json         6 image-case specs (binaries land Oct 27)
-cases/e3/records.json      seeded fixture; cases/e3/E3-*.json (10 questions)
-cases/e4/E4-*.json         6 voice cases (audio lands Oct 27)
-cases/e5/catalog.json      trap catalog; cases/e5/E5-*.json (9 messages)
-cases/e6/E6-*.json         4 approval/replay scenarios
-cases/e7/NOTE.md           template-vs-model protocol (reuses E3)
-cases/e8/E8-*.json         3 interruption/duplicate scenarios
-results/                   created by lanes Oct 27 (gitignored if large)
-runner/                    built by Lane A Oct 27 (not before)
+spikes/contracts.md           this file (moved from experiments/ Oct 27)
+spikes/cases/e1/E1-*.json     15 text cases
+spikes/cases/e2/E2-*.json     6 image-case specs (binaries land Oct 27)
+spikes/cases/e3/records.json  seeded fixture; spikes/cases/e3/E3-*.json (10 questions)
+spikes/cases/e4/E4-*.json     6 voice cases (audio lands Oct 27)
+spikes/cases/e5/catalog.json  trap catalog; spikes/cases/e5/E5-*.json (9 messages)
+spikes/cases/e6/E6-*.json     4 approval/replay scenarios
+spikes/cases/e7/NOTE.md       template-vs-model protocol (reuses E3)
+spikes/cases/e8/E8-*.json     3 interruption/duplicate scenarios
+spikes/results/               created by lanes Oct 27 (gitignored if large)
+spikes/runner/                built by Lane A Oct 27 (not before)
 ```
 
 ## Hard rules for every lane
@@ -237,8 +237,8 @@ interface Transcriber {
 Runner (channel-independent, no WhatsApp, no database):
 
 ```text
-node runner/run.js --exp E1 --cases ./cases/e1 --model muse-spark-1.3 --out ./results/e1.json
-node runner/run.js --exp E3 --cases ./cases/e3 --model muse-spark-1.3 --out ./results/e3.json
+node spikes/runner/run.js --exp E1 --cases ./spikes/cases/e1 --model muse-spark-1.3 --out ./spikes/results/e1.json
+node spikes/runner/run.js --exp E3 --cases ./spikes/cases/e3 --model muse-spark-1.3 --out ./spikes/results/e3.json
 ```
 
 The runner prints per-case pass/fail, keeps failures, and records latency and
@@ -249,7 +249,7 @@ estimated list-price cost next to each case. Paid calls stay opt-in.
 Protocol: run the same ten E3 questions twice over identical seeded records:
 once with Spark explaining tool results, once with the fixed template below.
 Compare correctness, latency, and list-price cost per correct answer. No new
-cases; see `cases/e7/NOTE.md`. Baseline template (review wording):
+cases; see `spikes/cases/e7/NOTE.md`. Baseline template (review wording):
 
 "Hoy vendiste L___ en ___ registros. Te falta costo en ___, asi que no puedo
 decirte la ganancia."
