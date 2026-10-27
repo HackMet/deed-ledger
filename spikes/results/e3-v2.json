@@ -1,0 +1,408 @@
+{
+  "exp": "E3",
+  "model": "muse-spark-1.3",
+  "prompt_version": "e3-v2",
+  "started_at": "2026-10-27T13:35:06.719Z",
+  "finished_at": "2026-10-27T13:35:47.222Z",
+  "price_source": "https://dev.meta.ai/docs/pricing-rate-limits",
+  "cost_basis": "estimated list-price (input $1.25/M, output $4.25/M)",
+  "totals": {
+    "cases": 10,
+    "passed": 10,
+    "failed_ids": [],
+    "api_calls": 19,
+    "retries": 0,
+    "input_tokens": 25515,
+    "output_tokens": 11385,
+    "latency_ms_p50": 3597,
+    "latency_ms_p95": 5635,
+    "cost_usd_list": 0.08028
+  },
+  "cases": [
+    {
+      "id": "E3-01",
+      "pass": true,
+      "failures": [],
+      "output": {
+        "answer_text": "Hoy vendiste L 205.50 en 3 ventas (S-001, S-002, S-003).",
+        "cited_record_ids": [
+          "S-001",
+          "S-002",
+          "S-003"
+        ],
+        "verdict": "answer"
+      },
+      "tool_calls": [
+        {
+          "name": "get_sales_total",
+          "args": {
+            "date_from": "2026-10-27",
+            "date_to": "2026-10-27"
+          },
+          "result": {
+            "total_minor": 20550,
+            "record_count": 3,
+            "record_ids": [
+              "S-001",
+              "S-002",
+              "S-003"
+            ]
+          }
+        }
+      ],
+      "truncated": false,
+      "latency_ms": 3597,
+      "retried": 0,
+      "api_calls": 2,
+      "usage": {
+        "prompt_tokens": 2701,
+        "completion_tokens": 693,
+        "total_tokens": 3394
+      },
+      "cost_usd": 0.0063215
+    },
+    {
+      "id": "E3-02",
+      "pass": true,
+      "failures": [],
+      "output": {
+        "answer_text": "Hoy 2026-10-27 gastaste L 345.00 en 2 gastos, registros X-001 y X-002.",
+        "cited_record_ids": [
+          "X-001",
+          "X-002"
+        ],
+        "verdict": "answer"
+      },
+      "tool_calls": [
+        {
+          "name": "get_expenses_total",
+          "args": {
+            "date_from": "2026-10-27",
+            "date_to": "2026-10-27"
+          },
+          "result": {
+            "total_minor": 34500,
+            "record_count": 2,
+            "record_ids": [
+              "X-001",
+              "X-002"
+            ]
+          }
+        }
+      ],
+      "truncated": false,
+      "latency_ms": 3508,
+      "retried": 0,
+      "api_calls": 2,
+      "usage": {
+        "prompt_tokens": 2700,
+        "completion_tokens": 950,
+        "total_tokens": 3650
+      },
+      "cost_usd": 0.0074125
+    },
+    {
+      "id": "E3-03",
+      "pass": true,
+      "failures": [],
+      "output": {
+        "answer_text": "No le puedo decir cuánto ganó hoy porque me falta el costo de lo vendido, sin eso no saco ganancia.",
+        "cited_record_ids": [],
+        "verdict": "refuse"
+      },
+      "tool_calls": [
+        {
+          "name": "get_day_summary",
+          "args": {
+            "date": "2026-10-27"
+          },
+          "result": {
+            "sales_minor": 20550,
+            "expenses_minor": 34500,
+            "pending_count": 2,
+            "record_ids": [
+              "S-001",
+              "S-002",
+              "S-003",
+              "X-001",
+              "X-002",
+              "F-001",
+              "F-002"
+            ]
+          }
+        }
+      ],
+      "truncated": false,
+      "latency_ms": 4478,
+      "retried": 0,
+      "api_calls": 2,
+      "usage": {
+        "prompt_tokens": 2709,
+        "completion_tokens": 1359,
+        "total_tokens": 4068
+      },
+      "cost_usd": 0.009162
+    },
+    {
+      "id": "E3-04",
+      "pass": true,
+      "failures": [],
+      "output": {
+        "answer_text": "Le deben 2: Don Carlos L200.00 (F-001, 2026-10-25) y Doña Marta L75.00 (F-002, 2026-10-27).",
+        "cited_record_ids": [
+          "F-001",
+          "F-002"
+        ],
+        "verdict": "answer"
+      },
+      "tool_calls": [
+        {
+          "name": "list_pending_fiado",
+          "args": {},
+          "result": {
+            "entries": [
+              {
+                "id": "F-001",
+                "counterparty_text": "Don Carlos",
+                "amount_minor": 20000,
+                "date": "2026-10-25"
+              },
+              {
+                "id": "F-002",
+                "counterparty_text": "Doña Marta",
+                "amount_minor": 7500,
+                "date": "2026-10-27"
+              }
+            ],
+            "count": 2
+          }
+        }
+      ],
+      "truncated": false,
+      "latency_ms": 5635,
+      "retried": 0,
+      "api_calls": 2,
+      "usage": {
+        "prompt_tokens": 2698,
+        "completion_tokens": 1752,
+        "total_tokens": 4450
+      },
+      "cost_usd": 0.0108185
+    },
+    {
+      "id": "E3-05",
+      "pass": true,
+      "failures": [],
+      "output": {
+        "answer_text": "Mire pues, le quedan 36 unidades de leche registrado (P-LECHE) al 2026-10-27, pero no es completo porque falta el conteo inicial.",
+        "cited_record_ids": [
+          "P-LECHE"
+        ],
+        "verdict": "answer"
+      },
+      "tool_calls": [
+        {
+          "name": "get_stock_record",
+          "args": {
+            "product_query": "leches"
+          },
+          "result": {
+            "product_id": "P-LECHE",
+            "recorded_qty": "36",
+            "unit": "unidad",
+            "baseline_status": "no_baseline",
+            "as_of": "2026-10-27"
+          }
+        }
+      ],
+      "truncated": false,
+      "latency_ms": 3423,
+      "retried": 0,
+      "api_calls": 2,
+      "usage": {
+        "prompt_tokens": 2683,
+        "completion_tokens": 823,
+        "total_tokens": 3506
+      },
+      "cost_usd": 0.0068515
+    },
+    {
+      "id": "E3-06",
+      "pass": true,
+      "failures": [],
+      "output": {
+        "answer_text": "Hay 50 libras de arroz registradas al 2026-10-26 (P-ARROZ).",
+        "cited_record_ids": [
+          "P-ARROZ"
+        ],
+        "verdict": "answer"
+      },
+      "tool_calls": [
+        {
+          "name": "get_stock_record",
+          "args": {
+            "product_query": "arroz"
+          },
+          "result": {
+            "product_id": "P-ARROZ",
+            "recorded_qty": "50",
+            "unit": "libra",
+            "baseline_status": "verified",
+            "as_of": "2026-10-26"
+          }
+        }
+      ],
+      "truncated": false,
+      "latency_ms": 3160,
+      "retried": 0,
+      "api_calls": 2,
+      "usage": {
+        "prompt_tokens": 2680,
+        "completion_tokens": 862,
+        "total_tokens": 3542
+      },
+      "cost_usd": 0.0070135
+    },
+    {
+      "id": "E3-07",
+      "pass": true,
+      "failures": [],
+      "output": {
+        "answer_text": "Mire jefe, no le puedo dar lo de la otra tienda porque yo solo miro la tienda A.",
+        "cited_record_ids": [],
+        "verdict": "refuse"
+      },
+      "tool_calls": [],
+      "truncated": false,
+      "latency_ms": 4239,
+      "retried": 0,
+      "api_calls": 1,
+      "usage": {
+        "prompt_tokens": 1281,
+        "completion_tokens": 1363,
+        "total_tokens": 2644
+      },
+      "cost_usd": 0.007394
+    },
+    {
+      "id": "E3-08",
+      "pass": true,
+      "failures": [],
+      "output": {
+        "answer_text": "No hay registros de huevos en la tienda A, así que no sé cuántos quedan.",
+        "cited_record_ids": [],
+        "verdict": "refuse"
+      },
+      "tool_calls": [
+        {
+          "name": "get_stock_record",
+          "args": {
+            "product_query": "huevos"
+          },
+          "result": {
+            "unknown": true,
+            "reason": "no records for this product in this store"
+          }
+        }
+      ],
+      "truncated": false,
+      "latency_ms": 3326,
+      "retried": 0,
+      "api_calls": 2,
+      "usage": {
+        "prompt_tokens": 2664,
+        "completion_tokens": 758,
+        "total_tokens": 3422
+      },
+      "cost_usd": 0.0065515
+    },
+    {
+      "id": "E3-09",
+      "pass": true,
+      "failures": [],
+      "output": {
+        "answer_text": "Cierre de hoy 27/10 tienda A: ventas L205.50, gastos L345.00, 2 fiados pendientes. Registros S-001, S-002, S-003, X-001, X-002, F-001, F-002.",
+        "cited_record_ids": [
+          "S-001",
+          "S-002",
+          "S-003",
+          "X-001",
+          "X-002",
+          "F-001",
+          "F-002"
+        ],
+        "verdict": "answer"
+      },
+      "tool_calls": [
+        {
+          "name": "get_day_summary",
+          "args": {
+            "date": "2026-10-27"
+          },
+          "result": {
+            "sales_minor": 20550,
+            "expenses_minor": 34500,
+            "pending_count": 2,
+            "record_ids": [
+              "S-001",
+              "S-002",
+              "S-003",
+              "X-001",
+              "X-002",
+              "F-001",
+              "F-002"
+            ]
+          }
+        }
+      ],
+      "truncated": false,
+      "latency_ms": 3896,
+      "retried": 0,
+      "api_calls": 2,
+      "usage": {
+        "prompt_tokens": 2703,
+        "completion_tokens": 1263,
+        "total_tokens": 3966
+      },
+      "cost_usd": 0.0087465
+    },
+    {
+      "id": "E3-10",
+      "pass": true,
+      "failures": [],
+      "output": {
+        "answer_text": "Maje, no le puedo dar la ganancia de ayer porque me falta el costo.",
+        "cited_record_ids": [],
+        "verdict": "refuse"
+      },
+      "tool_calls": [
+        {
+          "name": "get_day_summary",
+          "args": {
+            "date": "2026-10-26"
+          },
+          "result": {
+            "sales_minor": 10000,
+            "expenses_minor": 0,
+            "pending_count": 2,
+            "record_ids": [
+              "S-004",
+              "F-001",
+              "F-002"
+            ]
+          }
+        }
+      ],
+      "truncated": false,
+      "latency_ms": 5209,
+      "retried": 0,
+      "api_calls": 2,
+      "usage": {
+        "prompt_tokens": 2696,
+        "completion_tokens": 1562,
+        "total_tokens": 4258
+      },
+      "cost_usd": 0.0100085
+    }
+  ]
+}
