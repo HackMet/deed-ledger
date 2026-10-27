@@ -3,7 +3,7 @@
 Shared state for every agent: what's true now, what's next, what's open, what bit us. Keep it short. Anything a
 command can tell you (git log, test results, CI) doesn't belong here. Decisions go in [decisions.md](decisions.md).
 
-Last updated: Tue Oct 27, 2026, ~8:25 AM Honduras time, by Muse Code (E4 voice + E1-02 rescore).
+Last updated: Tue Oct 27, 2026, ~8:45 AM Honduras time, by Muse Code (e1-v4 filler/correction fix).
 
 ## Now
 
@@ -26,6 +26,10 @@ Last updated: Tue Oct 27, 2026, ~8:25 AM Honduras time, by Muse Code (E4 voice +
   filler-echo is a scoring artifact); E1-02 rescored PASS offline (E1
   15/15); ~$0.81 of $5 total. E7 not run. OGG->WAV: WASM-in-consumer
   leads, needs T2 CPU benchmark.
+- e1-v4 fix (Muse, Oct 27 AM, `spike/e1-v4` uncommitted): E1 19/21 (15/15
+  original, 4/6 held-out -- corrections right, product lift gap stands);
+  E4 interpret 6/6 on saved transcripts. No e1-v5 (no original-15
+  regression). ~$1.12 of $5 total.
 
 ## Next
 
