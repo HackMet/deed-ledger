@@ -1,0 +1,220 @@
+{
+  "experiment": "E8",
+  "date": "2026-10-27",
+  "model": "none (deterministic, zero model calls)",
+  "cases": [
+    {
+      "id": "E8-01",
+      "pass": true,
+      "checks": {
+        "rejects": {
+          "expected": [],
+          "actual": []
+        },
+        "commits": {
+          "expected": 0,
+          "actual": 0
+        },
+        "final": {
+          "expected": {
+            "draft_id": "D-2001",
+            "resumed_or_restarted": true,
+            "correction_lost": false
+          },
+          "actual": {
+            "draft_id": "D-2001",
+            "resumed_or_restarted": true,
+            "correction_lost": false
+          }
+        }
+      },
+      "steps": [
+        {
+          "step": 1,
+          "action": "create_draft",
+          "ok": true,
+          "reason": null,
+          "args": {
+            "draft_id": "D-2001",
+            "store": "A",
+            "kind": "supplier_receipt"
+          },
+          "result": {
+            "ok": true,
+            "draft_id": "D-2001",
+            "revision": 1
+          }
+        },
+        {
+          "step": 2,
+          "action": "abandon",
+          "ok": true,
+          "reason": null,
+          "args": {
+            "draft_id": "D-2001",
+            "store": "A"
+          },
+          "result": {
+            "ok": true,
+            "draft_id": "D-2001"
+          }
+        },
+        {
+          "step": 3,
+          "action": "ingest_message",
+          "ok": true,
+          "reason": null,
+          "args": {
+            "message_id": "M-6001",
+            "store": "A",
+            "kind": "text",
+            "body": "Sí, eran 10 cajas."
+          },
+          "result": {
+            "ok": true,
+            "draft_id": "D-2001",
+            "resumed": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "E8-02",
+      "pass": true,
+      "checks": {
+        "rejects": {
+          "expected": [],
+          "actual": []
+        },
+        "commits": {
+          "expected": 0,
+          "actual": 0
+        },
+        "final": {
+          "expected": {
+            "duplicate_warning": true,
+            "silent_second_commit": false
+          },
+          "actual": {
+            "duplicate_warning": true,
+            "silent_second_commit": false
+          }
+        }
+      },
+      "steps": [
+        {
+          "step": 1,
+          "action": "ingest_message",
+          "ok": true,
+          "reason": null,
+          "args": {
+            "message_id": "M-6002",
+            "store": "A",
+            "kind": "image",
+            "ref": "e2-01-printed-invoice.png"
+          },
+          "result": {
+            "ok": true,
+            "draft_id": "D-M-6002",
+            "created": true
+          }
+        },
+        {
+          "step": 2,
+          "action": "ingest_message",
+          "ok": true,
+          "reason": null,
+          "args": {
+            "message_id": "M-6003",
+            "store": "A",
+            "kind": "image",
+            "ref": "e2-01-printed-invoice.png"
+          },
+          "result": {
+            "ok": true,
+            "draft_id": "D-M-6003",
+            "duplicate_warning": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "E8-03",
+      "pass": true,
+      "checks": {
+        "rejects": {
+          "expected": [],
+          "actual": []
+        },
+        "commits": {
+          "expected": 0,
+          "actual": 0
+        },
+        "final": {
+          "expected": {
+            "draft_id": "D-2003",
+            "revision": 2,
+            "correction_on_wrong_draft": false
+          },
+          "actual": {
+            "draft_id": "D-2003",
+            "revision": 2,
+            "correction_on_wrong_draft": false
+          }
+        }
+      },
+      "steps": [
+        {
+          "step": 1,
+          "action": "create_draft",
+          "ok": true,
+          "reason": null,
+          "args": {
+            "draft_id": "D-2003",
+            "store": "A",
+            "kind": "sale"
+          },
+          "result": {
+            "ok": true,
+            "draft_id": "D-2003",
+            "revision": 1
+          }
+        },
+        {
+          "step": 2,
+          "action": "wait",
+          "ok": true,
+          "reason": null,
+          "args": {
+            "draft_id": "D-2003",
+            "delay": "long"
+          },
+          "result": {
+            "ok": true,
+            "elapsed": "long"
+          }
+        },
+        {
+          "step": 3,
+          "action": "correct_draft",
+          "ok": true,
+          "reason": null,
+          "args": {
+            "draft_id": "D-2003",
+            "store": "A",
+            "changes": {
+              "quantity_value": 10
+            }
+          },
+          "result": {
+            "ok": true,
+            "draft_id": "D-2003",
+            "revision": 2
+          }
+        }
+      ]
+    }
+  ],
+  "passed": 3,
+  "total": 3
+}
