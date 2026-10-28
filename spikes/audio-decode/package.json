@@ -1,0 +1,22 @@
+{
+  "name": "audio-decode-spike",
+  "private": true,
+  "type": "module",
+  "description": "A1 spike: decode WhatsApp OGG/Opus to 16 kHz mono 16-bit WAV inside a Worker",
+  "scripts": {
+    "build:wasm": "node scripts/extract-wasm.mjs",
+    "audio": "bash scripts/make-audio.sh",
+    "dev": "npm run build:wasm && wrangler dev --port 8799 --inspector-port 9339 --ip 127.0.0.1",
+    "typecheck": "tsc -p .",
+    "bench:node": "node --experimental-strip-types --no-warnings bench/node-bench.mjs --out dist/wav-node",
+    "bench:workerd": "bash bench/workerd-bench.sh"
+  },
+  "dependencies": {
+    "opus-decoder": "0.7.12"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20261027.1",
+    "typescript": "7.0.2",
+    "wrangler": "4.154.0"
+  }
+}
