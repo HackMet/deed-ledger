@@ -12,7 +12,8 @@ are building it for the Meta Global AI Developer Hackathon (Indie track).
 - **Deadline:** Wednesday, November 4, 2026, 9:00 PM ET (8:00 PM Honduras time).
 - **Goal:** one convincing flow that works end to end, powered by Meta models. Invoice photo → reviewed draft → owner
   confirms → receipt recorded exactly once in an auditable ledger → stock questions answered truthfully.
-- **Status:** planning docs only. No application code yet.
+- **Status:** foundation built (webhook intake, ordered processing, outbox, store isolation). Engine, perception
+  and answers are next; `docs/status.md` has the details.
 - **Time zones:** Angel works in Honduras time (CST, UTC−6, no daylight saving). The organizers publish Eastern Time,
   which moves from UTC−4 to UTC−5 on November 1. Convert, and name the zone.
 
@@ -85,7 +86,11 @@ Authority, highest first: official hackathon rules → accepted decisions → PR
 - Fixtures are synthetic, or anonymized with consent. Never commit real invoices, voice notes, phone numbers or store
   figures.
 - Report the exact commands you ran and what they printed. "Should pass" is not a result.
-- **Commands:** none yet. The scaffold task (T1) adds `npm test` and `npm run typecheck` and replaces this line.
+- **Commands:** `npm ci`; `npm test` (Vitest inside the Workers runtime, local D1 with every migration, all secrets
+  blanked); `npm run typecheck`; `npm run dev` (local Worker, reads `.dev.vars`); `npm run dev:sim`, then
+  `npm run simulate -- --text "Hola"` (fake secrets, signed fake webhooks, prints the outbox, sends nothing);
+  `npm run admin:create-store -- --name … --phone-number-id … --owner-phone …` (local D1; `--remote` is Angel's);
+  `npm run cf-typegen` after changing `wrangler.jsonc`.
 
 ## Security
 

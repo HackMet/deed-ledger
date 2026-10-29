@@ -1,0 +1,6 @@
+# Copy to .dev.vars (gitignored) for `npm run dev` with a real WhatsApp test number.
+# Never commit real values. Tests and the simulator never read this file.
+WHATSAPP_APP_SECRET=
+WHATSAPP_VERIFY_TOKEN=
+WHATSAPP_TOKEN=
+SENDER_HASH_SALT=

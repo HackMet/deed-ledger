@@ -4,7 +4,8 @@ The baseline is [PRD §8](PRD.md#08-technical-architecture): TypeScript and Hono
 Queues, the Meta Model API and the WhatsApp Cloud API. This file doesn't repeat it. It adds what the build needs: the
 request flow, module boundaries, provider facts checked on October 26, 2026, and the technical decisions still open.
 
-No code exists yet. Nothing here describes a running system.
+Part 1 of the foundation is built: intake, processing and the outbox, described in
+[Part 1 as built](#part-1-as-built). Everything else in this file is the plan.
 
 The PRD's stack holds up. Angel has shipped this exact stack before (Workers, Hono, D1, the WhatsApp Cloud API and
 D1-backed Vitest tests), and on a nine-day solo build familiarity matters more than anything else. Two real problems
@@ -123,4 +124,120 @@ secrets. The expected names (T1 confirms them):
 | `WHATSAPP_TOKEN` | Long-lived system-user token for the WhatsApp Cloud API |
 | `WHATSAPP_APP_SECRET` | App secret, for checking webhook signatures |
 | `WHATSAPP_VERIFY_TOKEN` | Random string for the webhook GET challenge |
+| `SENDER_HASH_SALT` | Key for the HMAC that replaces phone numbers and message IDs of numbers that aren't members (message IDs embed the sender's phone number) |
 | `LINK_SIGNING_SECRET` | Key for signed web links and approval tokens |
+
+## Part 1 as built
+
+The WhatsApp foundation: messages come in, are worked through in order per conversation, and are answered through an
+outbox. The engine, drafts, perception and the web pages aren't built; a placeholder handler stands where the engine
+plugs in. Where this differs from the planned [flow](#flow) (media is downloaded by the queue consumer, after the
+200), this section is what runs. Constants live in `src/domain/processing.ts` and `src/domain/outbox.ts`.
+
+### Intake (`POST /webhooks/whatsapp`)
+
+- The `X-Hub-Signature-256` HMAC is checked over the raw bytes before anything is parsed. The GET subscription check
+  compares SHA-256 hashes of both verify tokens in constant time.
+- The store comes from `metadata.phone_number_id`, by exact match in `channel_accounts`. With no match, the event is
+  dropped and only its type is logged.
+- Every event is saved before the 200. A transient failure answers 500, so Meta retries; a constraint violation
+  answers 200 with an ID-only log.
+- A member's message is one batch: the conversation (one per store number and member), a pending media asset, the
+  inbound message (which is also its job) and `last_inbound_at_ms`. Every insert checks admission itself: the
+  membership is still active, the provider message ID isn't stored yet in this store, and the conversation has fewer
+  than 300 messages in the last hour. A message that isn't admitted leaves no row. A member deactivated before the
+  batch gets the unknown-sender path.
+- Ordering uses the provider timestamp clamped to [received − 7 days, received + 5 minutes]. The 24-hour window uses
+  our own receive time of a new message; a redelivery doesn't move it.
+- After the 200, each conversation with a new message gets a doorbell: a Queue message with only the store and
+  conversation IDs. D1 holds the work, and the cron sweep re-rings what a lost doorbell left.
+- A number that isn't a member gets one fixed reply and nothing of the store is read. Only keyed hashes
+  (`SENDER_HASH_SALT`) of its phone number and message ID are kept, at most 20 per sender, store and day, deleted
+  after 7 days. The notice is sent from the request, which alone holds the phone number, with up to 3 tries. Only a
+  notice that is being sent, was sent, or has an unknown outcome holds the sender's 24-hour slot; a later message
+  retries one that failed.
+- Delivery statuses only move a sent row's status forward. One that arrives before the send result is stored is
+  kept for up to an hour under a hash of the message ID, and applied when the result is stored.
+
+### Processing: one conversation at a time
+
+- **Lease.** A doorbell's consumer leases the conversation for 60 s by the database's clock and extends it before
+  each job. The lease ID is a fencing token: every write is one D1 batch whose guards (the lease is held, the job is
+  in the state the transition expects) fail the whole batch (rule 6). A stale consumer's writes are refused and it
+  stops. A consumer that finds the lease busy re-rings in 3 s.
+- **Settle.** One statement counts the open jobs and lists them, oldest first by (ordering time, receive time, ID),
+  but only once every open job is at least 3 s old, so a burst is handled together. Until then the consumer hands
+  off: it releases the lease and re-rings for when the newest message has settled. A round takes up to 25 jobs; an
+  invocation runs up to 5 rounds, then hands off.
+- **Order.** Before every job, the round's first included, the consumer checks whether a message arrived after the
+  round's snapshot; if one did, it hands off and continues in order once that message has settled. A job's start
+  batch also checks that the job is its conversation's next one: when an open message sorts before it (one that
+  arrived after that check), nothing is written and the consumer hands off the same way. A job waiting for its retry
+  time holds back every later job of its conversation.
+- **Retries.** A failed attempt is retried after 5 s times the attempt number. The third failure ends the job with
+  an honest reply in Spanish, as does a job whose last attempt died with its consumer. A photo or voice note without
+  a usable media ID ends at once with its own reply.
+- **Media.** The consumer downloads a message's media and stores it in R2 at `stores/<store>/media/<asset>/<sha256>`,
+  an immutable key. D1 records the key only through a fenced write. The download is still a stub, so every photo and
+  voice note ends with "No pude descargar…" after its retries.
+- **Handler.** `JobHandler` (`src/application/ports.ts`) is where the engine plugs in: it gets the job and
+  `isNewestOfBurst`, and returns replies already rendered. Today `placeholderHandler` acknowledges a burst with one
+  reply from its newest message.
+
+### How a burst closes
+
+- A job is told `isNewestOfBurst` only when it was its conversation's last open job as its round began; never the
+  last job of a full round with more open jobs behind it.
+- A reply marked `closesBurst` closes the burst. That is decided per job: if any reply of a job closes the burst, the
+  job's completion batch writes all of its replies only when no other job of the conversation is open, and otherwise
+  writes none of them (logged as `burst_reply_withheld`). The job still completes, and the burst's later job answers.
+  Other jobs' replies are written as they come.
+- So a burst gets one closing reply, from its last job, however many rounds or invocations it takes. When that last
+  job fails, the burst gets the job's failure reply instead.
+
+### The outbox
+
+- **Writing.** Replies are written in the same batch as the job transition that produced them. They are split
+  before the batch into parts of at most 4096 UTF-16 code units: at whitespace, else between graphemes. A single
+  grapheme longer than the limit is cut by code units, never inside a surrogate pair. Each row gets a send order
+  (`seq`, unique across the outbox; the insert takes the next number, and D1 runs one batch at a time) and its group:
+  the job, the reply's index and the part's index. Every row expires; the placeholder, failure replies and the
+  unknown-sender notice after an hour.
+- **Send order.** A conversation's rows go out one at a time, in `seq` order: a row can go only when every earlier
+  row of its conversation has settled (sent, failed, expired or `unknown_delivery`). The dispatcher runs after each
+  doorbell for that conversation, and from the sweep. It lists only the oldest unsettled row of each conversation
+  whose window is open, so rows that can't go out never fill its page.
+- **Groups.** When a row ends unsent (failed, expired or `unknown_delivery`), the later rows of its group are failed
+  as `predecessor_not_sent` in the same batch, and the sweep repeats that. A confirmation never goes out without the
+  draft before it. Other groups aren't affected.
+- **Claims.** A dispatcher claims a row for 30 s by the database's clock, which reserves one send attempt; the claim
+  re-checks the conversation's order and the group in the same statement, and a row in `sending` is never claimed
+  again. After its reads, the dispatcher confirms the claim and extends it by 30 s. A fresh time, taken after that
+  confirmation, decides expiry and the window right before the send. A confirmation that took over 5 s isn't sent
+  on, since the claim might not outlast the send's 10 s timeout: the row goes back to pending (a notice's last try
+  ends it). `markSent` and every settle run as one batch guarded by the claim: a stale or repeated call writes
+  nothing, early statuses and group stops included, and logs `outbox_claim_lost`.
+- **Outcomes.** Sent: the provider message ID is kept for members only, since it embeds the phone number. A 429 is
+  retried, up to 5 attempts; another 4xx fails the row. A 5xx, a timeout, a dropped connection or an unreadable 200
+  becomes `unknown_delivery` and is never sent again automatically: at most once. A dispatcher that dies mid-send
+  leaves its row `sending`; once the claim has run out, the sweep marks it `unknown_delivery`.
+- **24-hour window.** It runs from our receive time of the member's newest message. A reply whose window has closed
+  waits as `waiting_window`, with its attempt given back, and goes out when the member writes again if it hasn't
+  expired by then.
+- **Sweep, every minute.** Re-rings conversations with due jobs older than 30 s and no live lease, expires rows,
+  settles claims that ran out, stops groups, marks closed windows, ends notices pending for over 15 minutes, deletes
+  old unknown-sender records and early statuses, then sends up to 50 rows.
+
+### Known limits
+
+- Two clocks: leases and claims run on D1's clock; settling, retries, reply expiry and the 24-hour window use the
+  Worker's.
+- `unknown_delivery` rows need a person to follow up. Whether Meta can answer 5xx after sending is unknown.
+- A dispatcher that dies mid-send holds back its conversation's later replies until the first sweep after its claim
+  ends (about 90 s), and stops the rest of that group.
+- The media download is a stub. A stale writer can leave an unpublished R2 object behind, and nothing cleans those up.
+- Messages over a conversation's hourly cap are dropped and logged, not queued. A conversation that keeps receiving
+  messages less than 3 s apart keeps waiting to settle.
+- The send order relies on D1 running one batch at a time. Subqueries inside updates, `UPDATE … FROM`, `RETURNING`,
+  the membership trigger, `unixepoch('subsec')` and `Intl.Segmenter` are verified on local D1 and workerd only, not
+  on a deployed database. How WhatsApp counts characters is unknown.

@@ -34,13 +34,17 @@ The model only proposes. Nothing changes stock until the owner confirms the exac
 
 ## Status
 
-October 26, 2026, before the kickoff: planning documents and agent setup only. There is no application code yet.
+October 28, 2026: the foundation is built and tested. The engine, invoice and voice understanding, and stock
+answers come next.
 
 ## Built during the hackathon
 
 The first commit (tag `pre-event-baseline`) holds only planning documents and agent configuration prepared before the
 kickoff: the PRD, `docs/`, `AGENTS.md`, `CLAUDE.md` and repository settings. It contains no application code.
 Everything after it is hackathon work. This list grows as features land.
+
+- October 28: the foundation. WhatsApp webhooks are verified and saved before they're acknowledged, worked through
+  in order per conversation, and answered through an outbox. Numbers that aren't members get one fixed reply.
 
 ## Repository layout
 
@@ -63,11 +67,19 @@ docs/
 
 ## Development setup
 
-Prerequisites: Node.js 22, a Cloudflare account (Wrangler runs through `npx`), a Meta Model API key, and a Meta for
-Developers app with a WhatsApp test number.
+Prerequisites: Node.js 22. Tests and the local simulator need nothing else. Running against real WhatsApp needs a
+Cloudflare account (Wrangler runs through `npx`) and a Meta for Developers app with a WhatsApp test number.
 
-There is nothing to install or run yet. The first engineering task adds `npm install`, `npm test` and `npm run dev`,
-and updates this section. Local secrets go in `.dev.vars`, which git ignores. Never commit them.
+```bash
+npm ci
+npm test                            # Vitest in the Workers runtime, local D1 with every migration applied
+npm run typecheck
+npm run dev:sim                     # local Worker, fake secrets, a synthetic store; nothing is sent to WhatsApp
+npm run simulate -- --text "Hola"   # in a second terminal: a signed fake webhook, then the outbox
+```
+
+To run against a real WhatsApp test number, copy `.dev.vars.example` to `.dev.vars`, fill it in, and run
+`npm run dev`. Git ignores `.dev.vars`; never commit it. Tests blank every secret, whatever `.dev.vars` holds.
 
 ## How it's built
 

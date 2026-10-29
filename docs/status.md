@@ -3,7 +3,7 @@
 Shared state for every agent: what's true now, what's next, what's open, what bit us. Keep it short. Anything a
 command can tell you (git log, test results, CI) doesn't belong here. Decisions go in [decisions.md](decisions.md).
 
-Last updated: Tue Oct 27, 2026, afternoon Honduras time, by Claude Code (team offer sent).
+Last updated: Wed Oct 28, 2026, morning Honduras time, by Claude Code (foundation part 1, round 4 fixes).
 
 ## Now
 
@@ -29,6 +29,10 @@ Last updated: Tue Oct 27, 2026, afternoon Honduras time, by Claude Code (team of
   original, 4/6 held-out -- corrections right, product lift gap stands);
   E4 interpret 6/6 on saved transcripts. No e1-v5 (no original-15
   regression). ~$1.12 of $5 total.
+- Foundation part 1 (Claude Code, `claude/foundation`, uncommitted, Oct 28): WhatsApp intake, in-order processing
+  per conversation and the outbox, answering with a placeholder until the engine lands. Three Codex reviews, each
+  followed by fixes; waits on Angel's review and commit. What runs and its limits: [architecture.md](architecture.md#part-1-as-built);
+  history: [handoff](handoffs/2026-10-28-foundation-part-1.md). The media download is still a stub.
 
 ## Next
 
