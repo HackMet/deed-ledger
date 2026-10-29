@@ -1,4 +1,5 @@
-# Johan AI
+# deed-ledger
+Agent claims become facts only after the effect is read back from the real system — idempotent, fail-closed, and auditable. A temporal fact memory gates downstream decisions, so cancellations stop what depended on them.
 
 A WhatsApp inventory assistant for small stores. The owner photographs a supplier invoice, sends a voice note, or
 asks what's left. Meta's models turn that into a draft, the owner confirms it, and an auditable ledger records it
