@@ -1,6 +1,6 @@
 # Day-one experiment contracts (v1)
 
-Source: `/home/angel-rodas/angel/hackathon-kb/planning/experiment-contracts.md`
+Source: `../hackathon-kb/planning/experiment-contracts.md`
 (frozen v1). The schemas, tool contracts, interfaces, runner CLI and result-card
 template below are copied verbatim in meaning. Lanes may not change them.
 Changes go through Angel.

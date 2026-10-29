@@ -3,7 +3,7 @@
   "asr_model": "muse-voice-transcribe-1.0",
   "e1_model": "muse-spark-1.3",
   "e1_prompt_version": "e1-v4",
-  "transcripts_from": "/home/angel-rodas/angel/hackathon-audio/wav/e4-transcripts.json",
+  "transcripts_from": "../hackathon-audio/wav/e4-transcripts.json",
   "price_source": "https://dev.meta.ai/docs/pricing-rate-limits",
   "cost_basis": "estimated list-price (voice $0.18/audio-hour whole seconds; spark $1.25/M in, $4.25/M out)",
   "totals": {

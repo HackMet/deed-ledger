@@ -5,8 +5,8 @@
 //
 // Step 1 (transcribe; key from MODEL_API_KEY env):
 //   node spikes/voice/run_e4.js --step transcribe --cases ./spikes/cases/e4 \
-//     --audio /home/angel-rodas/angel/hackathon-audio/wav --conversions <wav/e4-conversion.json> \
-//     --out /home/angel-rodas/angel/hackathon-audio/wav/e4-transcripts.json
+//     --audio ../hackathon-audio/wav --conversions <wav/e4-conversion.json> \
+//     --out ../hackathon-audio/wav/e4-transcripts.json
 // Step 2 (interpret; REVIEW transcripts for filename mismatches first):
 //   node spikes/voice/run_e4.js --step interpret --transcripts <above> \
 //     --cases ./spikes/cases/e4 --e1cases ./spikes/cases/e1 \

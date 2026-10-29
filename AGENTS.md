@@ -14,6 +14,8 @@ are building it for the Meta Global AI Developer Hackathon (Indie track).
   confirms → receipt recorded exactly once in an auditable ledger → stock questions answered truthfully.
 - **Status:** foundation built (webhook intake, ordered processing, outbox, store isolation). Engine, perception
   and answers are next; `docs/status.md` has the details.
+- **Team:** two people (D-37). Angel owns perception, WhatsApp, media, answers, the web view and deploys. His
+  teammate owns the engine, the ledger and fact memory. Work in the other person's area only when they agree.
 - **Time zones:** Angel works in Honduras time (CST, UTC−6, no daylight saving). The organizers publish Eastern Time,
   which moves from UTC−4 to UTC−5 on November 1. Convert, and name the zone.
 
@@ -33,7 +35,7 @@ Also: `docs/security-privacy.md`, `docs/testing.md`, `docs/workflow.md` (handoff
 Authority, highest first: official hackathon rules → accepted decisions → PRD → plan → other docs → code comments.
 
 - If a requirement is missing or two sources conflict, don't guess. Add the question under "Open" in
-  `docs/status.md` and ask Angel.
+  `docs/status.md` and ask the person running your session.
 - For small, reversible choices, take the conservative option and mention it in your handoff.
 - Never invent facts about providers, the rules or the store. Write "unknown".
 - Some rules below apply proposed decisions as defaults (D-09, D-10, D-14, D-19). Follow them until Angel accepts or
@@ -107,7 +109,9 @@ Authority, highest first: official hackathon rules → accepted decisions → PR
   the same time, use your own git worktree (`docs/workflow.md`).
 - Never edit another agent's worktree or branch, and never overwrite changes you didn't make. If you find unexpected
   changes, stop and report.
-- Agents don't commit, push, merge, deploy or rewrite history unless Angel asks in that session. Never force-push.
+- Every change reaches `main` through a pull request.
+- Agents don't commit, push, merge, deploy or rewrite history unless the person running the session asks. Never
+  force-push.
 - Commit messages: one short imperative line ("Add webhook signature check"). No AI attribution trailers.
 - Don't run commands that generate instruction files (`muse init`, Codex `/init`).
 

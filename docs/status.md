@@ -3,58 +3,48 @@
 Shared state for every agent: what's true now, what's next, what's open, what bit us. Keep it short. Anything a
 command can tell you (git log, test results, CI) doesn't belong here. Decisions go in [decisions.md](decisions.md).
 
-Last updated: Wed Oct 28, 2026, morning Honduras time, by Claude Code (foundation part 1, round 4 fixes).
+Last updated: Thu Oct 29, 2026, morning Honduras time, by Claude Code (first PRs into the team repo).
 
 ## Now
 
-- Repository initialized: docs, agent instructions, spike cases on `main`. No application code.
-- Kickoff today at 10:00 AM Honduras time. Product code starts after it (D-17, proposed; U4 asks whether Oct 27 is
-  the real start).
+- Two-person team (D-37). Angel owns perception, WhatsApp, media, answers, the web view and deploys. His teammate
+  owns the engine: drafts, confirmations, the save batch, the ledger and fact memory. The engine runs in this same
+  Worker.
+- This repo is the team's. The first PRs bring in the planning docs, the spikes and foundation part 1.
+- Foundation part 1 is built and reviewed: WhatsApp intake, in-order processing per conversation, the outbox and store
+  isolation. It answers with a placeholder until the engine plugs in at `JobHandler` (`src/application/ports.ts`).
+  The media download is still a stub. Details: [architecture.md](architecture.md#part-1-as-built),
+  [handoff](handoffs/2026-10-28-foundation-part-1.md).
+- Spikes are done (handoffs in [handoffs/](handoffs/)): invoice and voice understanding work on Muse Spark with
+  structured output (E1 19/21, E3 10/10, E2 5/6, E5 9/9); voice transcription 6/6 (E4); voice notes decode to WAV
+  inside the Worker (A1). E7 was not run.
 - Johan agreed (Oct 26, per Angel): real store data, filming, and public use of the store's name, the town, his name
   and the product name. His written message is the record.
-- Meta credits claimed, card on file. Cloudflare: Angel's existing account, already on Workers Paid.
-- The first commit is unblocked and waits only on Angel's word.
-- E1-E8 prep (Muse orchestrator, ~9:45 PM): date gate NOT passed (Oct 26 in
-  ET/Honduras, U4 unanswered) → contracts + 53 fixed cases (+2 fixtures) only,
-  no runner or model calls. Lanes wait for Oct 27 00:00 ET; see the handoff.
-- E1-E8 Phase 1 (Muse orchestrator, Oct 27 AM): all lanes green-ish, merged
-  to `main` Oct 27 (E1 14/15, E3 10/10, E6 4/4, E8 3/3, E2 5/6, E5
-  9/9; ~$0.75 of $5). Needs Angel: Phase 2 go. Cards in KB planning/2026-10-27-phase1-result-cards.md.
-- E4 voice (Muse, Oct 27 AM, `spike/voice-e4`, merged): transcription
-  6/6, interpretation 4/6 strict (E4-05 correction flip is genuine; E4-02
-  filler-echo is a scoring artifact); E1-02 rescored PASS offline (E1
-  15/15); ~$0.81 of $5 total. E7 not run. OGG->WAV: WASM-in-consumer
-  leads, needs T2 CPU benchmark.
-- e1-v4 fix (Muse, Oct 27 AM, `spike/e1-v4`, merged): E1 19/21 (15/15
-  original, 4/6 held-out -- corrections right, product lift gap stands);
-  E4 interpret 6/6 on saved transcripts. No e1-v5 (no original-15
-  regression). ~$1.12 of $5 total.
-- Foundation part 1 (Claude Code, `claude/foundation`, uncommitted, Oct 28): WhatsApp intake, in-order processing
-  per conversation and the outbox, answering with a placeholder until the engine lands. Three Codex reviews, each
-  followed by fixes; waits on Angel's review and commit. What runs and its limits: [architecture.md](architecture.md#part-1-as-built);
-  history: [handoff](handoffs/2026-10-28-foundation-part-1.md). The media download is still a stub.
 
 ## Next
 
-| # | Task | Agent | Notes |
+| # | Task | Owner | Notes |
 |---|---|---|---|
-| 1 | Day-0 admin | Angel | [Plan, day 0](hackathon-plan.md#day-0-today-angel) |
-| 2 | T1 walking skeleton | Claude Code | After the kickoff and the Meta app setup |
-| 3 | T2 voice notes to text | Muse Code | After T1's scaffold commit; own worktree |
-| 4 | T3 invoice photo → reviewed draft | Claude Code, Codex review | Needs 5 consented invoice photos |
+| 1 | Contract v1 between perception and the engine | Angel and teammate | The engine's entry point is `JobHandler` |
+| 2 | One-page spec of minimal fact memory: evidence, validity window, how a cancellation blocks what depends on it | Teammate | Decides open questions 4 and 5 of the technical proposal |
+| 3 | Engine: drafts, confirmation, save batch, ledger | Teammate | The save shares one D1 batch with closing the job and queuing the reply |
+| 4 | Invoice photo to checked proposal, media download, voice adapter | Angel (Claude Code) | Builds on the E1/E3 and A1 spikes |
+| 5 | First deploy | Angel | Needs the Meta app, test phones and Cloudflare resources |
+
+Gate: Thursday Oct 29, 8:00 PM Honduras time. An invoice photo is confirmed and saved once, on the deployed app.
 
 ## Open: waiting on someone
 
 | What | Who | Since |
 |---|---|---|
 | What Johan wants first: inventory or fiado (PRD Q-01) | Angel → Johan | Oct 24 |
-| Organizer questions U1–U4 and U7 (Muse Code expected? credits for Muse? credit window? start time? live product?) | Angel → Discord | Oct 26 |
+| Organizer questions U1–U4, U6 and U7 (Muse Code counted? credits for Muse? credit window? start time? planning docs written before the event? live product?) | Angel → Discord | Oct 26 |
 | Check the credits' expiry date (10-day window, U3) and the spend alert | Angel | Oct 26 |
-| Repository license, GitHub repo name, when it goes public (after the summary) | Angel | Oct 26 |
+| Repository license, and when it goes public (right before submitting) | Team | Oct 26 |
 | Muse Code: Contributor mode off, foreign-context check, sandbox, plan or API key (separate session) | Angel | Oct 26 |
 | Proposed decisions D-09, D-10, D-14, D-15, D-16, D-17, D-19 | Angel | Oct 26 |
-| Team: offer sent Oct 27 to a possible teammate (accepted builder, Indie track): they would own perception (photos and voice in, checked proposals out); Angel keeps the engine and the product. Waiting on a reply. Before they write code: prize split and code ownership in writing, Johan's OK for real data, repo access, a written spec for the perception/engine boundary. T2 and T3 owners change only once they agree | Teammate → Angel | Oct 27 |
-| Product and team name: "Johan AI" is a working title, to be picked later | Angel | Oct 27 |
+| Decisions D-20 to D-36 were made Oct 28 in the product and technical proposals and are not in [decisions.md](decisions.md) yet | Angel → Claude Code | Oct 28 |
+| Product and team name: "Johan AI" is a working title, to be picked with the team | Team | Oct 27 |
 
 ## Traps
 
