@@ -65,3 +65,12 @@ export function savedReply(claim: ReceiptClaim): string {
 
 export const ALREADY_SAVED = "Esa factura ya quedó registrada. No la repetí.";
 export const NOTHING_PENDING = "No tengo ninguna factura por confirmar. Mandame la foto y la reviso.";
+
+/**
+ * The tap arrived for an older version of the draft: say what changed and ask once. Never blames
+ * the owner, never shows a revision number (PRD §6.1).
+ */
+export const DRAFT_CHANGED = "Esa factura cambió después de que la mandé. Te paso la versión nueva para que la revises.";
+
+/** Something the fact depends on was cancelled: one concrete question, not a failure. */
+export const DEPENDENCY_CANCELLED = "No puedo registrarla porque algo que necesita quedó cancelado. ¿La volvemos a armar?";

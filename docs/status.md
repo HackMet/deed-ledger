@@ -27,6 +27,10 @@ Last updated: Fri Oct 30, 2026, afternoon Honduras time, by Claude Code (fact le
   `FactCommit` in `domain/facts.ts`, `D1FactLedger.statementsFor` turning one into a `Commit` (D-41), post-guards that
   the fence now runs inside the batch, cancellation as compensating movements, and the dependency gate G4. On local D1
   only, **not deployed**. The chain's trace records T1 to T5 as PASS.
+- Every guard now has a read before it that answers the owner, with the guard left as the backstop
+  for a race (D-42): a used operation key reads as `duplicate`, a stale draft revision as
+  `rejected`/`stale_version`, a cancelled dependency as a rejection carrying the dead ids. A guard
+  that fires after a clear read is a real race, and `processor.ts` retries it.
 - The supplier-invoice receipt handler has its own tests but is **not wired into the composition root**, and has not
   been run through `npm run dev:sim` or `npm run simulate` (port 8787 was busy on Oct 30). Its chain task is recorded
   as **FAIL** in the trace, and the work is now issue #60, a cut-candidate. The handoff task is recorded as
@@ -61,7 +65,7 @@ staff use the preparation list on their own phones. If the console can't pass, i
 | Repository license, and when it goes public (right before submitting) | Team | Oct 26 |
 | Decisions made since Oct 28 aren't in [decisions.md](decisions.md) yet | Angel → Claude Code | Oct 28 |
 | Product and team name: "Johan AI" is a working title | Team | Oct 27 |
-| D-41 (fact memory under `Commit`) is Proposed and needs Angel's acceptance | Angel | Oct 30 |
+| D-41 (fact memory under `Commit`) and D-42 (read before every guard) are Proposed and need Angel's acceptance | Angel | Oct 30 |
 
 ## Traps
 

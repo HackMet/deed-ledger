@@ -1,6 +1,9 @@
+import { type FactPrecheckReads, precheckFact } from "../../domain/fact-precheck";
 import type { EvidenceRef, FactCommit } from "../../domain/facts";
 import {
   ALREADY_SAVED,
+  DEPENDENCY_CANCELLED,
+  DRAFT_CHANGED,
   draftReply,
   FIXTURE_CLAIM,
   isConfirmation,
@@ -58,8 +61,10 @@ export function receiptHandler(deps: {
   readonly clock: Clock;
   /** Turns the domain fact into the `Commit` the job's batch runs (D-40, D-41). */
   readonly ledger: { statementsFor(lease: Lease, commit: FactCommit, nowMs: number): Commit };
+  /** The read before the write: what the records already say about this fact. */
+  readonly precheck: { read(lease: Lease, commit: FactCommit): Promise<FactPrecheckReads> };
 }): JobHandler {
-  const { drafts, ids, clock, ledger } = deps;
+  const { drafts, ids, clock, ledger, precheck } = deps;
 
   return {
     async handle(input) {
@@ -121,6 +126,15 @@ export function receiptHandler(deps: {
             unitCostCentavos: line.unitCostCentavos,
           })),
         };
+        // Read before writing. A guard answers by failing the batch, which is right for a race and
+        // wrong for something the records already settle, so ask them first and answer the owner.
+        const stopped = precheckFact(commit, await precheck.read(lease, commit), now);
+        if (stopped !== null) {
+          if (stopped.outcome.type === "duplicate") return reply(ALREADY_SAVED);
+          if (stopped.deadDependencies !== undefined) return reply(DEPENDENCY_CANCELLED);
+          if (stopped.outcome.type === "rejected" && stopped.outcome.reason === "stale_version") return reply(DRAFT_CHANGED);
+          return reply(NOTHING_PENDING);
+        }
         return { replies: reply(savedReply(draft.claim)).replies, commits: [ledger.statementsFor(lease, commit, now)] };
       }
 

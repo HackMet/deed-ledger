@@ -1,5 +1,6 @@
 import { FactRefusedError, PermanentWriteError } from "../../application/errors";
 import type { Commit, Lease } from "../../application/ports";
+import type { FactPrecheckReads } from "../../domain/fact-precheck";
 import type { FactCommit } from "../../domain/facts";
 import type { Guard } from "./fence";
 
@@ -191,5 +192,59 @@ export class D1FactLedger implements FactLedger {
       },
     ];
     return { guards, statements, post };
+  }
+}
+
+/**
+ * The reads behind `precheckFact`, in one place, for one proposed fact.
+ *
+ * Three statements, not three round trips per dependency: the gate's answer is the set of ids that
+ * are closed, foreign or absent, which is the complement of what G4 counts.
+ */
+export class D1FactPrecheck {
+  constructor(private readonly db: D1Database) {}
+
+  async read(lease: Lease, commit: FactCommit): Promise<FactPrecheckReads> {
+    const businessId = lease.businessId;
+
+    const used = await this.db
+      .prepare(`SELECT 1 AS used FROM facts WHERE business_id = ? AND operation_key = ?`)
+      .bind(businessId, commit.operationKey)
+      .first<{ used: number }>();
+
+    const draft =
+      commit.draft === null
+        ? null
+        : await this.db
+            .prepare(
+              `SELECT revision, state, expires_at_ms AS expiresAtMs FROM drafts
+               WHERE business_id = ? AND conversation_id = ? AND id = ?`,
+            )
+            .bind(businessId, lease.conversationId, commit.draft.id)
+            .first<{ revision: number; state: string; expiresAtMs: number }>();
+
+    let deadDependencies: readonly string[] = [];
+    if (commit.dependsOn.length > 0) {
+      const { results } = await this.db
+        .prepare(
+          `WITH RECURSIVE requested(id) AS (SELECT value FROM json_each(?)),
+             ancestors(id) AS (
+               SELECT id FROM requested
+               UNION
+               SELECT d.depends_on_fact_id FROM fact_dependencies d
+               JOIN ancestors a ON d.fact_id = a.id WHERE d.business_id = ?
+             )
+           SELECT a.id AS id FROM ancestors a
+           WHERE NOT EXISTS (SELECT 1 FROM facts f WHERE f.business_id = ? AND f.id = a.id)
+              OR EXISTS (SELECT 1 FROM fact_closures c WHERE c.business_id = ? AND c.fact_id = a.id)`,
+        )
+        .bind(JSON.stringify(commit.dependsOn), businessId, businessId, businessId)
+        .all<{ id: string }>();
+      deadDependencies = results.map((row) => row.id);
+    }
+
+    // The first outcome isn't stored yet: `operations` is the engine's table (#11). Until it
+    // exists, a used key is reported as a duplicate whose first outcome is unknown.
+    return { firstOutcome: used === null ? null : { type: "nothing" }, draft, deadDependencies };
   }
 }

@@ -2,7 +2,8 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { FactRefusedError, PermanentWriteError } from "../src/application/errors";
 import type { Commit, Lease, OutboxDraft } from "../src/application/ports";
-import { D1FactLedger } from "../src/infrastructure/d1/fact-ledger";
+import { D1FactLedger, D1FactPrecheck } from "../src/infrastructure/d1/fact-ledger";
+import { precheckFact } from "../src/domain/fact-precheck";
 import type { EvidenceRef, FactCommit } from "../src/domain/facts";
 import { conversationOf, type Harness, harness, OUTLIVES_TEST_MS, rows } from "./helpers/harness";
 import { newPhone, seedStore } from "./helpers/seed";
@@ -334,4 +335,72 @@ describe("a cancellation closes a fact and blocks everything that depends on it 
     ).rejects.toEqual(new FactRefusedError("dependency_not_live"));
     expect((await ledgerOf(ours.store.businessId)).facts).toBe(0);
   });
+
+  // The read before the write (D-41): the records answer, the guard backs it up.
+    it("a cancelled ancestor is reported by the precheck, so nothing has to fail", async () => {
+      const h = harness();
+      const s = await storeWithDraft(h);
+      const ancestor = await admit(h, s, (tap) => linkOf(h, s, tap));
+      await cancel(h, s, ancestor.factId);
+
+      const tap = await s.nextJob();
+      const proposed = linkOf(h, s, tap, { dependsOn: [ancestor.factId] });
+      const reads = await new D1FactPrecheck(env.DB).read(s.lease, proposed);
+      expect(reads.deadDependencies).toEqual([ancestor.factId]);
+
+      const stopped = precheckFact(proposed, reads, h.clock.now());
+      expect(stopped?.outcome).toEqual({ type: "rejected", reason: "invalid_state", order: null });
+      expect(stopped?.deadDependencies).toEqual([ancestor.factId]);
+    });
+
+    it("the precheck finds a cancelled ancestor at depth 3, like the gate does", async () => {
+      const h = harness();
+      const s = await storeWithDraft(h);
+      const a = await admit(h, s, (tap) => linkOf(h, s, tap));
+      const b = await admit(h, s, (tap) => linkOf(h, s, tap, { dependsOn: [a.factId] }));
+      const c = await admit(h, s, (tap) => linkOf(h, s, tap, { dependsOn: [b.factId] }));
+      await cancel(h, s, a.factId);
+
+      const tap = await s.nextJob();
+      const reads = await new D1FactPrecheck(env.DB).read(s.lease, linkOf(h, s, tap, { dependsOn: [c.factId] }));
+      expect(reads.deadDependencies).toContain(a.factId);
+    });
+
+    it("a dependency in another store is dead to us, before any batch runs", async () => {
+      const h = harness();
+      const ours = await storeWithDraft(h);
+      const theirs = await storeWithDraft(h);
+      const foreign = await admit(h, theirs, (tap) => linkOf(h, theirs, tap));
+
+      const tap = await ours.nextJob();
+      const reads = await new D1FactPrecheck(env.DB).read(ours.lease, linkOf(h, ours, tap, { dependsOn: [foreign.factId] }));
+      expect(reads.deadDependencies).toEqual([foreign.factId]);
+    });
+
+    it("a live ancestor and an unused key read clear, so the commit is built", async () => {
+      const h = harness();
+      const s = await storeWithDraft(h);
+      const ancestor = await admit(h, s, (tap) => linkOf(h, s, tap));
+
+      const tap = await s.nextJob();
+      const proposed = linkOf(h, s, tap, { dependsOn: [ancestor.factId] });
+      const reads = await new D1FactPrecheck(env.DB).read(s.lease, proposed);
+      expect(reads.deadDependencies).toEqual([]);
+      expect(reads.firstOutcome).toBeNull();
+      expect(precheckFact(proposed, reads, h.clock.now())).toBeNull();
+    });
+
+    it("an operation key already in facts reads as used, so the engine answers duplicate", async () => {
+      const h = harness();
+      const s = await storeWithDraft(h);
+      const tap = await s.nextJob();
+      const receipt = s.confirmation(tap);
+      await h.deps.jobs.completeJob(s.lease, tap, h.clock.now(), [reply()], false, [toCommit(h, s.lease, receipt)]);
+
+      const again = await s.nextJob();
+      const reads = await new D1FactPrecheck(env.DB).read(s.lease, s.confirmation(again));
+      expect(reads.firstOutcome).not.toBeNull();
+      expect(precheckFact(s.confirmation(again), reads, h.clock.now())?.outcome.type).toBe("duplicate");
+    });
 });
+

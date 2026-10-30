@@ -3,7 +3,7 @@ import { env } from "cloudflare:workers";
 import { receiptHandler } from "../src/application/engine/receipt-handler";
 import { randomIds } from "../src/infrastructure/runtime";
 import { D1ReceiptDrafts } from "../src/infrastructure/d1/draft-store";
-import { D1FactLedger } from "../src/infrastructure/d1/fact-ledger";
+import { D1FactLedger, D1FactPrecheck } from "../src/infrastructure/d1/fact-ledger";
 import { ALREADY_SAVED } from "../src/domain/receipt";
 import { FakeClock } from "./helpers/fakes";
 import { type Harness, harness, rows } from "./helpers/harness";
@@ -16,7 +16,13 @@ function receiptFlow() {
   const clock = new FakeClock();
   return harness({
     clock,
-    jobHandler: receiptHandler({ drafts: new D1ReceiptDrafts(env.DB), ids: randomIds, clock, ledger: new D1FactLedger(env.DB) }),
+    jobHandler: receiptHandler({
+      drafts: new D1ReceiptDrafts(env.DB),
+      ids: randomIds,
+      clock,
+      ledger: new D1FactLedger(env.DB),
+      precheck: new D1FactPrecheck(env.DB),
+    }),
   });
 }
 
@@ -103,5 +109,47 @@ describe("a receipt photo becomes a draft, and 'confirmar' saves it once", () =>
     expect(h.sentTo(phone).filter((body) => body.startsWith("Guardado")).length).toBe(1);
     // The second tap is answered from the stored fact, not by another attempt to save.
     expect(h.sentTo(phone).filter((body) => body === ALREADY_SAVED).length).toBe(1);
+  });
+
+  // Typed "confirmar" carries no revision (`isConfirmation`), and the handler pins the commit to
+  // the revision it just read, so this slice cannot produce a stale tap. The button path does
+  // (`confirm:<order>:v<version>`, docs/contract.md) and belongs to the engine, issue #11. What is
+  // testable here is the other half of the rule: when the records move between the read and the
+  // batch, the guard still refuses, nothing is saved, and the retry's read answers the owner.
+  it("the guard still refuses when the draft moves after the precheck: a real race saves nothing", async () => {
+    const clock = new FakeClock();
+    let raced = false;
+    const h = harness({
+      clock,
+      jobHandler: receiptHandler({
+        drafts: new D1ReceiptDrafts(env.DB),
+        ids: randomIds,
+        clock,
+        ledger: new D1FactLedger(env.DB),
+        // The reads come back clear, then the draft is revised before the batch runs: exactly the
+        // window the guard exists for.
+        precheck: {
+          async read(lease, commit) {
+            const reads = await new D1FactPrecheck(env.DB).read(lease, commit);
+            if (!raced) {
+              raced = true;
+              await env.DB.prepare(`UPDATE drafts SET revision = revision + 1 WHERE business_id = ?`).bind(lease.businessId).run();
+            }
+            return reads;
+          },
+        },
+      }),
+    });
+    const { phone, store } = await ownerStore();
+    await say(h, store, imageMessage({ from: phone, id: wamid(), timestampS: nowS(h), mediaId: "m-receipt-race" }));
+    await say(h, store, textMessage({ from: phone, id: wamid(), timestampS: nowS(h), body: "confirmar" }));
+
+    // G3 did not hold, so the batch rolled back: no fact, and the draft is still pending.
+    expect((await ledger(store.businessId)).facts).toBe(0);
+    expect(
+      (await rows<{ state: string }>(`SELECT state FROM drafts WHERE business_id = ?`, store.businessId))[0]!.state,
+    ).toBe("pending");
+    // Nothing claimed otherwise: the owner was never told it was saved.
+    expect(h.sentTo(phone).filter((body) => body.startsWith("Guardado"))).toEqual([]);
   });
 });
