@@ -3,48 +3,57 @@
 Shared state for every agent: what's true now, what's next, what's open, what bit us. Keep it short. Anything a
 command can tell you (git log, test results, CI) doesn't belong here. Decisions go in [decisions.md](decisions.md).
 
-Last updated: Thu Oct 29, 2026, morning Honduras time, by Claude Code (first PRs into the team repo).
+Last updated: Fri Oct 30, 2026, morning Honduras time, by Claude Code (engine commits, contract draft, console).
 
 ## Now
 
-- Two-person team (D-37). Angel owns perception, WhatsApp, media, answers, the web view and deploys. His teammate
-  owns the engine: drafts, confirmations, the save batch, the ledger and fact memory. The engine runs in this same
-  Worker.
-- This repo is the team's. The first PRs bring in the planning docs, the spikes and foundation part 1.
-- Foundation part 1 is built and reviewed: WhatsApp intake, in-order processing per conversation, the outbox and store
-  isolation. It answers with a placeholder until the engine plugs in at `JobHandler` (`src/application/ports.ts`).
-  The media download is still a stub. Details: [architecture.md](architecture.md#part-1-as-built),
-  [handoff](handoffs/2026-10-28-foundation-part-1.md).
-- Spikes are done (handoffs in [handoffs/](handoffs/)): invoice and voice understanding work on Muse Spark with
-  structured output (E1 19/21, E3 10/10, E2 5/6, E5 9/9); voice transcription 6/6 (E4); voice notes decode to WAV
-  inside the Worker (A1). E7 was not run.
-- Johan agreed (Oct 26, per Angel): real store data, filming, and public use of the store's name, the town, his name
-  and the product name. His written message is the record.
+- The product is now an order assistant: customers order on WhatsApp, Johan and staff work from a phone console,
+  and both end in the same engine. The team's PRD v1.2 and Tech Spec v3 describe it; they were shared with the
+  teammate on Oct 30 and aren't in this repo yet (`PRD.md` and `architecture.md` still describe the earlier
+  inventory flow).
+- Two-person team (D-37). Angel owns conversations, perception, replies, the console and deploys. His teammate owns
+  the engine (orders, payments, sales, fiado, stock, prices, fact memory) on D1 fenced batches.
+- Foundation part 1 is built: WhatsApp intake, in-order processing, the outbox, store isolation
+  ([architecture.md](architecture.md#part-1-as-built)). On the team repo it sits on `claude/base-layer`; the stacked
+  PRs merged into each other, so `main` has only the planning docs until a PR from `claude/base-layer` lands.
+- Built Oct 30 on `claude/job-outcome-commits`, uncommitted
+  ([handoff](handoffs/2026-10-30-commits-contract-console.md)):
+  - `JobOutcome.commits`: the engine's writes save in the batch that completes the job. This unblocks the engine.
+  - Contract v1 draft ([contract.md](contract.md)): types and fixtures between perception, the engine and the
+    console. For the spec meeting; not agreed.
+  - The console's preparation list, on an in-memory pretend engine, in local dev mode only (no login yet).
+- Spikes are done (handoffs in [handoffs/](handoffs/)): Muse Spark reads invoices and orders with structured output;
+  voice transcription 6/6; voice notes decode to WAV inside the Worker.
+- Two independent reviews of Tech Spec v3 (Oct 30) both said "build with changes". The contract draft takes in their
+  fixes for line references, multi-part messages, staff-only kinds, confirmed prices and the claim check.
 
 ## Next
 
 | # | Task | Owner | Notes |
 |---|---|---|---|
-| 1 | Contract v1 between perception and the engine | Angel and teammate | The engine's entry point is `JobHandler` |
-| 2 | One-page spec of minimal fact memory: evidence, validity window, how a cancellation blocks what depends on it | Teammate | Decides open questions 4 and 5 of the technical proposal |
-| 3 | Engine: drafts, confirmation, save batch, ledger | Teammate | The save shares one D1 batch with closing the job and queuing the reply |
-| 4 | Invoice photo to checked proposal, media download, voice adapter | Angel (Claude Code) | Builds on the E1/E3 and A1 spikes |
-| 5 | First deploy | Angel | Needs the Meta app, test phones and Cloudflare resources |
+| 1 | Spec meeting: agree contract v1 and its open questions | Both | [contract.md](contract.md#open-for-the-meeting) |
+| 2 | PR `claude/base-layer` into `main` on the team repo | Angel | Merge commit, not squash |
+| 3 | Engine on the contract, saving through `JobOutcome.commits` | Teammate | Replaces the pretend engine |
+| 4 | Console login (invite QR, sessions, roles), then a deploy | Angel (Claude Code) | Needed for the console gate |
+| 5 | Replies and the claim check; perception for customer orders | Angel (Claude Code) | Against the contract fixtures |
+| 6 | The two-minute "te respondemos en un momento" fallback | Angel (Claude Code) | Specified, not built |
 
-Gate: Thursday Oct 29, 8:00 PM Honduras time. An invoice photo is confirmed and saved once, on the deployed app.
+Gate: Saturday Oct 31, 8:00 PM Honduras time. A customer order runs end to end on fixtures through the engine, and
+staff use the preparation list on their own phones. If the console can't pass, it is cut and the scope replanned.
 
 ## Open: waiting on someone
 
 | What | Who | Since |
 |---|---|---|
-| What Johan wants first: inventory or fiado (PRD Q-01) | Angel → Johan | Oct 24 |
-| Organizer questions U1–U4, U6 and U7 (Muse Code counted? credits for Muse? credit window? start time? planning docs written before the event? live product?) | Angel → Discord | Oct 26 |
-| Check the credits' expiry date (10-day window, U3) and the spend alert | Angel | Oct 26 |
+| A change while packing: does the customer reconfirm (PRD) or not (Tech Spec order life)? | Team | Oct 30 |
+| One open order per customer, or several? | Team | Oct 30 |
+| The teammate's own spec, to compare against the contract | Teammate → Angel | Oct 29 |
+| Real WhatsApp payloads (text, photo, voice, location pin, button tap) captured on the test number | Angel | Oct 30 |
+| The pilot's WhatsApp number, and how judges try the product | Angel | Oct 29 |
+| Organizer questions U1–U4, U6 and U7 | Angel → Discord | Oct 26 |
 | Repository license, and when it goes public (right before submitting) | Team | Oct 26 |
-| Muse Code: Contributor mode off, foreign-context check, sandbox, plan or API key (separate session) | Angel | Oct 26 |
-| Proposed decisions D-09, D-10, D-14, D-15, D-16, D-17, D-19 | Angel | Oct 26 |
-| Decisions D-20 to D-36 were made Oct 28 in the product and technical proposals and are not in [decisions.md](decisions.md) yet | Angel → Claude Code | Oct 28 |
-| Product and team name: "Johan AI" is a working title, to be picked with the team | Team | Oct 27 |
+| Decisions made since Oct 28 aren't in [decisions.md](decisions.md) yet | Angel → Claude Code | Oct 28 |
+| Product and team name: "Johan AI" is a working title | Team | Oct 27 |
 
 ## Traps
 

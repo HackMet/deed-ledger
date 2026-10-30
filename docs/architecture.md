@@ -181,8 +181,13 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
   an immutable key. D1 records the key only through a fenced write. The download is still a stub, so every photo and
   voice note ends with "No pude descargar…" after its retries.
 - **Handler.** `JobHandler` (`src/application/ports.ts`) is where the engine plugs in: it gets the job and
-  `isNewestOfBurst`, and returns replies already rendered. Today `placeholderHandler` acknowledges a burst with one
-  reply from its newest message.
+  `isNewestOfBurst`, and returns replies already rendered plus optional `commits`. Today `placeholderHandler`
+  acknowledges a burst with one reply from its newest message.
+- **Commits.** A `Commit` is the engine's guards and statements. `completeJob` runs them in the batch that completes
+  the job, after the lease and job guards, so a stale writer gets `StaleWriteError` first. The facts, the job's
+  completion and its replies save together or not at all; commits save even when a closing reply is withheld. A
+  commit guard that doesn't hold rolls back everything and the job retries (`commit_refused`), reading the records
+  again; a constraint violation fails the job with its failure reply (`commit_rejected`).
 
 ### How a burst closes
 
@@ -228,6 +233,17 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
   settles claims that ran out, stops groups, marks closed windows, ends notices pending for over 15 minutes, deletes
   old unknown-sender records and early statuses, then sends up to 50 rows.
 
+### The engine boundary and the console (dev only)
+
+- The contract between perception, the engine and the console is `src/domain/contract/` with the `Engine` interface
+  in `src/application/engine.ts`; [contract.md](contract.md) explains it. It is a draft until the spec meeting.
+- `Runtime.engine` is null until the real engine is wired in. With `DEV_CONSOLE=1` (only the local simulator sets
+  it) it is an in-memory pretend engine (`src/infrastructure/memory/`) seeded with synthetic orders. It follows the
+  contract's version, operation-key and role rules but saves to memory and forgets on restart.
+- `/console/preparacion` renders the preparation list server-side for a 360 px screen and refreshes every 15 s.
+  Each button posts one action to `/console/acciones` with the version on screen and its own operation key; the
+  result redirects back with a notice when the tap was refused. Without dev mode every `/console` path is a 404.
+
 ### Known limits
 
 - Two clocks: leases and claims run on D1's clock; settling, retries, reply expiry and the 24-hour window use the
@@ -235,6 +251,7 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
 - `unknown_delivery` rows need a person to follow up. Whether Meta can answer 5xx after sending is unknown.
 - A dispatcher that dies mid-send holds back its conversation's later replies until the first sweep after its claim
   ends (about 90 s), and stops the rest of that group.
+- The console has no login, sessions or CSRF protection yet, which is why it only runs in dev mode.
 - The media download is a stub. A stale writer can leave an unpublished R2 object behind, and nothing cleans those up.
 - Messages over a conversation's hourly cap are dropped and logged, not queued. A conversation that keeps receiving
   messages less than 3 s apart keeps waiting to settle.

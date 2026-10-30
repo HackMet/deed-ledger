@@ -5,15 +5,17 @@ live in `docs/`.
 
 ## The project
 
-Johan AI turns a small store owner's WhatsApp photos and voice notes into a trustworthy inventory ledger. The pilot
-store is Punto de Ventas Johan, a mercadito in Tocoa, Colón, Honduras, where the records are kept in a notebook. We
-are building it for the Meta Global AI Developer Hackathon (Indie track).
+Johan AI is an order assistant for a small store that runs on a notebook. Customers order on WhatsApp with text,
+photos and voice notes; the owner and staff prepare orders and record sales from a phone console; one engine records
+everything exactly once. The pilot store is Punto de Ventas Johan, a mercadito in Tocoa, Colón, Honduras. We are
+building it for the Meta Global AI Developer Hackathon (Indie track).
 
 - **Deadline:** Wednesday, November 4, 2026, 9:00 PM ET (8:00 PM Honduras time).
-- **Goal:** one convincing flow that works end to end, powered by Meta models. Invoice photo → reviewed draft → owner
-  confirms → receipt recorded exactly once in an auditable ledger → stock questions answered truthfully.
-- **Status:** foundation built (webhook intake, ordered processing, outbox, store isolation). Engine, perception
-  and answers are next; `docs/status.md` has the details.
+- **Goal:** one convincing flow that works end to end, powered by Meta models. A customer's order in any form →
+  readback → the customer confirms → the preparation list → staff tap Listo → the customer hears "listo", each step
+  exactly once and only when the record exists.
+- **Status:** foundation built (webhook intake, ordered processing, outbox, store isolation). Contract v1 is a draft
+  (`docs/contract.md`); the engine, perception, replies and the console are next. `docs/status.md` has the details.
 - **Team:** two people (D-37). Angel owns perception, WhatsApp, media, answers, the web view and deploys. His
   teammate owns the engine, the ledger and fact memory. Work in the other person's area only when they agree.
 - **Time zones:** Angel works in Honduras time (CST, UTC−6, no daylight saving). The organizers publish Eastern Time,
