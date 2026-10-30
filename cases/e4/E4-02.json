@@ -1,0 +1,13 @@
+{
+  "id": "E4-02",
+  "tags": ["voice", "pack-trap"],
+  "input": { "type": "audio", "file": "e4-e1-03.wav" },
+  "reference_transcript": "Entraron dos cajas de doce leches.",
+  "interpretation_case": "E1-03",
+  "expected": {
+    "transcript_must_mention": ["dos", "cajas", "doce", "leches"],
+    "interpretation": "per E1-03 expected"
+  },
+  "recording_spec": "Record Oct 27. Synthetic speech or volunteer-spoken render of the reference transcript. Scored artifact is WAV 16 kHz mono. No real voice notes.",
+  "notes": "Pack-size trap through audio. A transcription miss on dos/doce must not become a silent interpretation guess."
+}

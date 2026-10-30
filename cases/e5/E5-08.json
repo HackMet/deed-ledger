@@ -1,0 +1,13 @@
+{
+  "id": "E5-08",
+  "tags": ["ambiguous", "count-vs-pack"],
+  "context": { "store": "A" },
+  "input": { "type": "text", "body": "Vendí 12 leches." },
+  "expected": {
+    "verdict": "ask",
+    "candidates": ["P-LECHE12A", "P-LECHE12B"],
+    "must_ask": true,
+    "must_not_contain": []
+  },
+  "notes": "Twelve leches could be units or a pack, and matches both x12 packs. Must ask which product (and units), never assume."
+}

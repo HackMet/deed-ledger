@@ -1,0 +1,14 @@
+{
+  "id": "E3-04",
+  "tags": ["fiado", "answerable"],
+  "context": { "today": "2026-10-27", "store": "A" },
+  "input": { "type": "text", "body": "¿Quién me debe?" },
+  "expected": {
+    "verdict": "answer",
+    "count": 2,
+    "record_ids": ["F-001", "F-002"],
+    "must_mention": ["Carlos", "Marta"],
+    "must_not_contain": ["F-003"]
+  },
+  "notes": "Two pending entries. The paid F-003 must not appear. Amounts come from entries (200.00 + 75.00); the tool returns no total, so the app must not invent one as a cited figure."
+}

@@ -1,0 +1,17 @@
+{
+  "id": "E1-09",
+  "tags": ["correction", "spoken-style"],
+  "input": { "type": "text", "body": "No, fueron diez, no doce." },
+  "expected": {
+    "kind": "correction",
+    "must_equal": {
+      "quantity_text": "diez",
+      "quantity_value": 10,
+      "targets_open_draft": true
+    },
+    "must_be_null": ["product_text", "amount_minor"],
+    "must_ask": false,
+    "must_not_contain": ["12"]
+  },
+  "notes": "Spoken-style correction of the open draft. Restates the corrected field only; the rejected 12 must not survive."
+}

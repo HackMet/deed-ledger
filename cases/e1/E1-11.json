@@ -1,0 +1,19 @@
+{
+  "id": "E1-11",
+  "tags": ["sale", "missing-product"],
+  "input": { "type": "text", "body": "Vendí tres a veinte cada uno." },
+  "expected": {
+    "kind": "sale",
+    "must_equal": {
+      "quantity_value": 3,
+      "amount_minor": 2000,
+      "amount_basis": "per_unit",
+      "targets_open_draft": false
+    },
+    "must_be_null": ["product_text"],
+    "must_ask": true,
+    "must_not_contain": [],
+    "must_mention": ["qué"]
+  },
+  "notes": "Sale with no product. Keep the stated numbers, leave product null, and ask which product it was."
+}

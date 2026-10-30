@@ -1,0 +1,18 @@
+{
+  "id": "E1-05",
+  "tags": ["expense", "unambiguous"],
+  "input": { "type": "text", "body": "Gasté trescientos en hielo." },
+  "expected": {
+    "kind": "expense",
+    "must_equal": {
+      "product_text": "hielo",
+      "amount_minor": 30000,
+      "amount_basis": "total",
+      "targets_open_draft": false
+    },
+    "must_be_null": ["quantity_value", "unit_text", "counterparty_text"],
+    "must_ask": false,
+    "must_not_contain": []
+  },
+  "notes": "Clean expense. Single stated figure for the whole expense reads as total."
+}

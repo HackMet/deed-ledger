@@ -1,0 +1,13 @@
+{
+  "id": "E5-06",
+  "tags": ["unknown-product", "ask-create"],
+  "context": { "store": "A" },
+  "input": { "type": "text", "body": "Entraron 3 jugos de mango." },
+  "expected": {
+    "verdict": "ask_create",
+    "candidates": [],
+    "must_ask": true,
+    "must_not_contain": ["P-COCA", "P-LECHE", "P-JUGO1L-B"]
+  },
+  "notes": "Mango juice is not in catalog A. Must propose creating a new product and ask, never force-match to Coca, leche, or store B juice."
+}

@@ -1,0 +1,14 @@
+{
+  "id": "E2-05",
+  "tags": ["printed-invoice", "needs-context", "promo"],
+  "input": { "type": "image", "file": "e2-05-promo-invoice.png" },
+  "expected": {
+    "lines": [
+      { "description": "Caja mixta 12", "invoice_quantity": "2", "invoice_unit": "caja", "units_per_pack": null, "unit_cost_minor": 18000, "currency": "HNL", "ambiguities": ["contents of the mixed box are not on the paper"] },
+      { "description": "Bono café", "invoice_quantity": "2", "invoice_unit": "und", "units_per_pack": null, "unit_cost_minor": null, "currency": null, "ambiguities": ["promo or free units; no cost printed"] }
+    ],
+    "line_count": 2
+  },
+  "image_spec": "Render Oct 27. Printed invoice, two rows: '2 caja Caja mixta 12 L180.00' and '2 und Bono café (promo)' with no price on the second row.",
+  "notes": "Line 1 needs context no paper provides; line 2 has no cost, so unit_cost stays null (absent means unknown, never zero)."
+}

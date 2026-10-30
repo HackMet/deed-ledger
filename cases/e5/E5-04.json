@@ -1,0 +1,13 @@
+{
+  "id": "E5-04",
+  "tags": ["match", "pack-content"],
+  "context": { "store": "A" },
+  "input": { "type": "text", "body": "Entró una caja de leche x12 de litro." },
+  "expected": {
+    "verdict": "match",
+    "product_id": "P-LECHE12B",
+    "must_ask": false,
+    "must_not_contain": ["P-LECHE12A"]
+  },
+  "notes": "De litro selects the 12x1L pack. The 12x200ml pack must not be chosen."
+}

@@ -1,0 +1,13 @@
+{
+  "id": "E5-07",
+  "tags": ["cross-store", "alias-isolation"],
+  "context": { "store": "B" },
+  "input": { "type": "text", "body": "Entraron 5 cocas." },
+  "expected": {
+    "verdict": "match",
+    "product_id": "P-COCA2L-B",
+    "must_ask": false,
+    "must_not_contain": ["P-COCA2L", "P-COCA500"]
+  },
+  "notes": "Same words as E5-01 but in store B, where only one Coca exists. Must match store B stock and never surface store A IDs. Substring care: P-COCA2L-B contains P-COCA2L, so the lane must compare IDs exactly, not by substring."
+}

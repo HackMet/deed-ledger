@@ -1,0 +1,16 @@
+{
+  "id": "E8-03",
+  "tags": ["delayed-correction"],
+  "scenario": "Draft D-2003 (store A) sits open; a correction arrives after a long delay naming that draft.",
+  "steps": [
+    { "step": 1, "action": "create_draft", "args": { "draft_id": "D-2003", "store": "A", "kind": "sale" } },
+    { "step": 2, "action": "wait", "args": { "draft_id": "D-2003", "delay": "long" } },
+    { "step": 3, "action": "correct_draft", "args": { "draft_id": "D-2003", "store": "A", "changes": { "quantity_value": 10 } } }
+  ],
+  "expected": {
+    "commits": 0,
+    "rejects": [],
+    "final": { "draft_id": "D-2003", "revision": 2, "correction_on_wrong_draft": false }
+  },
+  "notes": "The late correction lands on D-2003 (revision 2) if still open, else triggers a clean restart with an echo. It must never attach to a different draft."
+}

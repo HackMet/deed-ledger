@@ -1,0 +1,16 @@
+{
+  "id": "E1-14",
+  "tags": ["inquiry", "stock"],
+  "input": { "type": "text", "body": "¿Cuántas leches me quedan?" },
+  "expected": {
+    "kind": "inquiry",
+    "must_equal": {
+      "product_text": "leches",
+      "targets_open_draft": false
+    },
+    "must_be_null": ["quantity_value", "amount_minor", "counterparty_text"],
+    "must_ask": false,
+    "must_not_contain": []
+  },
+  "notes": "Stock inquiry names the product but states no quantity. E1 classifies; E3 answers with the baseline caveat."
+}

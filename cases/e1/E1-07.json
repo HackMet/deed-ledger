@@ -1,0 +1,18 @@
+{
+  "id": "E1-07",
+  "tags": ["fiado_payment", "unambiguous"],
+  "input": { "type": "text", "body": "Don Carlos pagó doscientos de lo que debía." },
+  "expected": {
+    "kind": "fiado_payment",
+    "must_equal": {
+      "counterparty_text": "Don Carlos",
+      "amount_minor": 20000,
+      "amount_basis": "total",
+      "targets_open_draft": false
+    },
+    "must_be_null": ["product_text", "quantity_value", "unit_text"],
+    "must_ask": false,
+    "must_not_contain": []
+  },
+  "notes": "Clean payment against a debt. No product involved."
+}

@@ -1,0 +1,13 @@
+{
+  "id": "E4-05",
+  "tags": ["voice", "correction"],
+  "input": { "type": "audio", "file": "e4-e1-09.wav" },
+  "reference_transcript": "No, fueron diez, no doce.",
+  "interpretation_case": "E1-09",
+  "expected": {
+    "transcript_must_mention": ["diez", "doce"],
+    "interpretation": "per E1-09 expected"
+  },
+  "recording_spec": "Record Oct 27. Synthetic speech or volunteer-spoken render of the reference transcript. Scored artifact is WAV 16 kHz mono. No real voice notes.",
+  "notes": "Short correction; diez/doce discrimination is the transcription risk. Downstream must target the open draft."
+}

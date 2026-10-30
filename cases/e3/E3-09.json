@@ -1,0 +1,13 @@
+{
+  "id": "E3-09",
+  "tags": ["day-summary", "answerable"],
+  "context": { "today": "2026-10-27", "store": "A" },
+  "input": { "type": "text", "body": "Dame el cierre de hoy." },
+  "expected": {
+    "verdict": "answer",
+    "record_ids": ["S-001", "S-002", "S-003", "X-001", "X-002", "F-001", "F-002"],
+    "must_mention": ["205", "345"],
+    "must_not_contain": ["S-004", "S-B01", "F-003"]
+  },
+  "notes": "Close: sales L205.50 in 3 records, expenses L345.00 in 2 records, 2 pending fiado. Yesterday, store B, and paid fiado stay out."
+}

@@ -1,0 +1,19 @@
+{
+  "id": "E1-15",
+  "tags": ["supplier_receipt", "unit-ambiguity"],
+  "input": { "type": "text", "body": "Entró un saco de arroz." },
+  "expected": {
+    "kind": "supplier_receipt",
+    "must_equal": {
+      "product_text": "arroz",
+      "quantity_text": "un saco",
+      "unit_text": "saco",
+      "targets_open_draft": false
+    },
+    "must_be_null": ["quantity_value", "amount_minor"],
+    "must_ask": true,
+    "must_not_contain": ["100", "50", "25"],
+    "must_mention": ["saco"]
+  },
+  "notes": "One sack is stated but stock units are unknown, so quantity_value stays null. Never guess the sack weight in libras (25, 50, 100 are the classic inventions). Ask how many libras the sack holds."
+}

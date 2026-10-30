@@ -1,0 +1,13 @@
+{
+  "id": "E4-01",
+  "tags": ["voice", "sale"],
+  "input": { "type": "audio", "file": "e4-e1-01.wav" },
+  "reference_transcript": "Vendí tres refrescos a veinte cada uno.",
+  "interpretation_case": "E1-01",
+  "expected": {
+    "transcript_must_mention": ["tres", "refrescos", "veinte"],
+    "interpretation": "per E1-01 expected"
+  },
+  "recording_spec": "Record Oct 27. Synthetic speech or volunteer-spoken render of the reference transcript, Honduran Spanish phrasing, quiet room. Scored artifact is WAV 16 kHz mono. No real voice notes.",
+  "notes": "Score transcription (domain terms present?) separately from interpretation (E1-01 pass/fail on the transcript actually produced)."
+}

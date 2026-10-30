@@ -1,0 +1,16 @@
+{
+  "id": "E8-01",
+  "tags": ["abandon", "resume"],
+  "scenario": "Owner starts draft D-2001 (store A), abandons it mid-review, and returns later with a follow-up message.",
+  "steps": [
+    { "step": 1, "action": "create_draft", "args": { "draft_id": "D-2001", "store": "A", "kind": "supplier_receipt" } },
+    { "step": 2, "action": "abandon", "args": { "draft_id": "D-2001", "store": "A" } },
+    { "step": 3, "action": "ingest_message", "args": { "message_id": "M-6001", "store": "A", "kind": "text", "body": "Sí, eran 10 cajas." } }
+  ],
+  "expected": {
+    "commits": 0,
+    "rejects": [],
+    "final": { "draft_id": "D-2001", "resumed_or_restarted": true, "correction_lost": false }
+  },
+  "notes": "Resume the open draft or restart cleanly with an echo; either way the follow-up correction must not be lost or applied to a wrong draft."
+}

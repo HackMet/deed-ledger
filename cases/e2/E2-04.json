@@ -1,0 +1,15 @@
+{
+  "id": "E2-04",
+  "tags": ["printed-invoice", "stained-total"],
+  "input": { "type": "image", "file": "e2-04-stained-invoice.png" },
+  "expected": {
+    "lines": [
+      { "description": "Leche entera 1L", "invoice_quantity": "6", "invoice_unit": "caja", "units_per_pack": null, "unit_cost_minor": 4500, "currency": "HNL", "ambiguities": [] },
+      { "description": "Mantequilla 1 lb", "invoice_quantity": "8", "invoice_unit": "unidad", "units_per_pack": null, "unit_cost_minor": 3200, "currency": "HNL", "ambiguities": [] }
+    ],
+    "line_count": 2,
+    "must_not_contain": ["526", "52600"]
+  },
+  "image_spec": "Render Oct 27. Same style as E2-01 with two rows (6 caja Leche entera 1L L45.00; 8 unidad Mantequilla 1 lb L32.00) and a coffee stain covering the totals box so no total is legible.",
+  "notes": "The stained total (L526.00) must never be reconstructed: no guessing, no arithmetic into a line. Lines stay exact."
+}

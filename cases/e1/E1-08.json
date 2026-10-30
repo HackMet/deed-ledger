@@ -1,0 +1,13 @@
+{
+  "id": "E1-08",
+  "tags": ["inquiry", "sales"],
+  "input": { "type": "text", "body": "¿Cuánto vendí hoy?" },
+  "expected": {
+    "kind": "inquiry",
+    "must_equal": { "targets_open_draft": false },
+    "must_be_null": ["product_text", "quantity_value", "amount_minor", "counterparty_text"],
+    "must_ask": false,
+    "must_not_contain": []
+  },
+  "notes": "Kind classification only. Answering is E3 downstream; E1 must not invent a figure or ask a clarifying question."
+}

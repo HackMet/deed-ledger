@@ -1,0 +1,15 @@
+{
+  "id": "E2-01",
+  "tags": ["printed-invoice", "clean"],
+  "input": { "type": "image", "file": "e2-01-printed-invoice.png" },
+  "expected": {
+    "lines": [
+      { "description": "Leche entera 1L", "invoice_quantity": "12", "invoice_unit": "caja", "units_per_pack": "12", "unit_cost_minor": 4500, "currency": "HNL", "ambiguities": [] },
+      { "description": "Arroz 25 lb", "invoice_quantity": "4", "invoice_unit": "saco", "units_per_pack": null, "unit_cost_minor": 62500, "currency": "HNL", "ambiguities": [] },
+      { "description": "Azúcar 5 lb", "invoice_quantity": "10", "invoice_unit": "bolsa", "units_per_pack": null, "unit_cost_minor": 9800, "currency": "HNL", "ambiguities": [] }
+    ],
+    "line_count": 3
+  },
+  "image_spec": "Render Oct 27 (deterministic script, no AI images needed). White printed invoice, header FACTURA 000123, date 2026-10-27, table with columns Cant / Unidad / Descripción / P.Unit: rows 12 caja Leche entera 1L x12 L45.00; 4 saco Arroz 25 lb L625.00; 10 bolsa Azúcar 5 lb L98.00. Totals row optional; lane must not score it as a line.",
+  "notes": "Clean baseline. Lane scores missed/extra lines and exact fields separately. units_per_pack set only on line 1, where x12 is printed."
+}

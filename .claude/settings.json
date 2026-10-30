@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(./.dev.vars)",
+      "Read(**/.dev.vars)",
+      "Bash(wrangler deploy*)",
+      "Bash(npx wrangler* deploy*)",
+      "Bash(npm run deploy*)",
+      "Bash(git push --force*)",
+      "Bash(git push -f*)",
+      "Bash(git push * --force*)",
+      "Bash(git push * -f*)",
+      "Bash(git push * +*)"
+    ]
+  }
+}

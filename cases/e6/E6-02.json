@@ -1,0 +1,17 @@
+{
+  "id": "E6-02",
+  "tags": ["stale-revision"],
+  "scenario": "Draft D-1002 (store A) is corrected to revision 2; a late confirm for revision 1 arrives first.",
+  "steps": [
+    { "step": 1, "action": "create_draft", "args": { "draft_id": "D-1002", "store": "A", "kind": "sale" } },
+    { "step": 2, "action": "correct_draft", "args": { "draft_id": "D-1002", "store": "A", "changes": { "quantity_value": 10 } } },
+    { "step": 3, "action": "confirm", "args": { "draft_id": "D-1002", "revision": 1, "store": "A", "operation_key": "K-1002-stale" } },
+    { "step": 4, "action": "confirm", "args": { "draft_id": "D-1002", "revision": 2, "store": "A", "operation_key": "K-1002" } }
+  ],
+  "expected": {
+    "commits": 1,
+    "rejects": [3],
+    "final": { "draft_id": "D-1002", "state": "committed", "committed_revision": 2 }
+  },
+  "notes": "Step 3 approves a superseded revision and must fail loudly. Only the current revision 2 commits."
+}

@@ -1,0 +1,16 @@
+{
+  "id": "E1-13",
+  "tags": ["correction", "product-switch"],
+  "input": { "type": "text", "body": "No era Coca, era Pepsi." },
+  "expected": {
+    "kind": "correction",
+    "must_equal": {
+      "product_text": "Pepsi",
+      "targets_open_draft": true
+    },
+    "must_be_null": ["quantity_value", "amount_minor"],
+    "must_ask": false,
+    "must_not_contain": []
+  },
+  "notes": "Product switch on the open draft. Restates the corrected product only; quantities carry over server-side."
+}

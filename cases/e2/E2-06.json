@@ -1,0 +1,14 @@
+{
+  "id": "E2-06",
+  "tags": ["printed-invoice", "handwritten-correction"],
+  "input": { "type": "image", "file": "e2-06-corrected-invoice.png" },
+  "expected": {
+    "lines": [
+      { "description": "Leche entera 1L", "invoice_quantity": "12", "invoice_unit": "caja", "units_per_pack": null, "unit_cost_minor": 4500, "currency": "HNL", "ambiguities": ["handwritten note says 10, not 12"] },
+      { "description": "Arroz 25 lb", "invoice_quantity": "4", "invoice_unit": "saco", "units_per_pack": null, "unit_cost_minor": 62500, "currency": "HNL", "ambiguities": [] }
+    ],
+    "line_count": 2
+  },
+  "image_spec": "Render Oct 27. Printed invoice with two rows (12 caja Leche entera 1L L45.00; 4 saco Arroz 25 lb L625.00) plus blue-ink handwriting next to line 1 reading 'fueron 10'.",
+  "notes": "Extraction keeps the printed 12 and flags the handwritten 10 as an ambiguity. Choosing between them is review work; received_quantity stays server-side null until the owner confirms."
+}

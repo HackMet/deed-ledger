@@ -1,0 +1,13 @@
+{
+  "id": "E4-04",
+  "tags": ["voice", "fiado"],
+  "input": { "type": "audio", "file": "e4-e1-06.wav" },
+  "reference_transcript": "Don Carlos llevó dos libras de arroz fiado.",
+  "interpretation_case": "E1-06",
+  "expected": {
+    "transcript_must_mention": ["Carlos", "libras", "arroz", "fiado"],
+    "interpretation": "per E1-06 expected"
+  },
+  "recording_spec": "Record Oct 27. Synthetic speech or volunteer-spoken render of the reference transcript. Scored artifact is WAV 16 kHz mono. No real voice notes.",
+  "notes": "Name plus domain terms (libras, fiado) are the transcription risks. Interpretation must still ask for the missing amount."
+}

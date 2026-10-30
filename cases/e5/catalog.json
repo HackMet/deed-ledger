@@ -1,0 +1,15 @@
+{
+  "notes": "Synthetic trap catalog for E5. Store partitions are strict: store B never sees store A aliases or IDs.",
+  "stores": {
+    "A": [
+      { "product_id": "P-COCA2L", "name": "Coca 2 litros", "aliases": ["coca 2l", "coca de dos litros", "coca grande"], "unit": "unidad" },
+      { "product_id": "P-COCA500", "name": "Coca 500 ml", "aliases": ["coca 500", "coca pequeña", "coquita"], "unit": "unidad" },
+      { "product_id": "P-LECHE12A", "name": "leche caja x12 (200 ml c/u)", "aliases": ["leche caja x12", "caja de leche"], "unit": "unidad", "pack_unit": "caja", "units_per_pack": 12, "pack_content": "12x200ml" },
+      { "product_id": "P-LECHE12B", "name": "leche caja x12 (1 L c/u)", "aliases": ["leche caja x12", "caja de leche grande"], "unit": "unidad", "pack_unit": "caja", "units_per_pack": 12, "pack_content": "12x1L" }
+    ],
+    "B": [
+      { "product_id": "P-COCA2L-B", "name": "Coca 2 litros", "aliases": ["coca 2l", "coca de dos litros"], "unit": "unidad" },
+      { "product_id": "P-JUGO1L-B", "name": "Jugo de naranja 1L", "aliases": ["jugo de naranja", "jugo 1l"], "unit": "unidad" }
+    ]
+  }
+}

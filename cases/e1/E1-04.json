@@ -1,0 +1,20 @@
+{
+  "id": "E1-04",
+  "tags": ["sale", "price-ambiguity"],
+  "input": { "type": "text", "body": "Vendí dos cajas de jugos a ciento cincuenta." },
+  "expected": {
+    "kind": "sale",
+    "must_equal": {
+      "product_text": "jugos",
+      "quantity_value": 2,
+      "unit_text": "cajas",
+      "amount_minor": 15000,
+      "targets_open_draft": false
+    },
+    "must_be_null": ["amount_basis"],
+    "must_ask": true,
+    "must_not_contain": ["30000", "300", "7500", "75"],
+    "must_mention": ["150"]
+  },
+  "notes": "150 stated but coverage unclear: per box or total. Echo 15000 with basis null and ask. Never derive 300 (2x150) or 75 (150/2)."
+}
