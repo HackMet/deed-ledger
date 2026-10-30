@@ -56,8 +56,8 @@ against the types and the fixtures; `npm run typecheck` fails when a fixture sto
 - Operation keys as above. The `operations` table is the single anchor for idempotency; the engine's facts reference
   it. A repeated key is answered from `operations` before any commit is built (`duplicate` with the first outcome);
   the UNIQUE rule only settles races.
-- A `Commit` may carry `post` guards, checked after its statements in the same batch. Until the fence runs them,
-  `completeJob` refuses a commit that has any.
+- A `Commit` may carry `post` guards, checked after its statements in the same batch, so they can read what the
+  statements wrote. One that doesn't hold rolls the whole batch back: no fact, no reply, the job stays open.
 - `Commit` naming D1 types in the application layer is a decision (D-40), not debt.
 - Tables use `business_id` (existing schema), not Tech Spec v3's `store_id`.
 

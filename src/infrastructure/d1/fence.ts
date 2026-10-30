@@ -16,8 +16,9 @@ export function fencedBatch(
   lease: Lease,
   guards: readonly Guard[],
   statements: readonly D1PreparedStatement[],
+  post: readonly Guard[] = [],
 ): Promise<D1Result[]> {
-  return guardedBatch(db, [leaseGuard(lease), ...guards], statements);
+  return guardedBatch(db, [leaseGuard(lease), ...guards], statements, post);
 }
 
 /**
@@ -25,27 +26,32 @@ export function fencedBatch(
  *
  * Each guard is an insert into batch_guards whose NOT NULL `ok` is the guard's value; a NULL fails
  * the whole batch. (A guarded UPDATE that matches no rows wouldn't fail, so a guard must insert.)
- * The last statement deletes the guard rows. After a failure the guards are read back in order,
- * never inferred from error text, and the first one that doesn't hold throws its error.
+ * `guards` are inserted before the statements; `post` guards after them, so they can check what the
+ * statements wrote, and a failing post guard rolls the statements back with it.
+ * The last statement deletes the guard rows. After a failure the guards are read back in order
+ * (pre, then post), never inferred from error text, and the first one that doesn't hold throws its error.
  */
 export async function guardedBatch(
   db: D1Database,
   guards: readonly Guard[],
   statements: readonly D1PreparedStatement[],
+  post: readonly Guard[] = [],
 ): Promise<D1Result[]> {
-  const ids = guards.map(() => crypto.randomUUID());
-  const guardStatements = guards.map((guard, n) =>
-    db.prepare(`INSERT INTO batch_guards (guard_id, ok) VALUES (?, (${guard.holdsSql}))`).bind(ids[n], ...guard.params),
-  );
+  const all = [...guards, ...post];
+  const ids = all.map(() => crypto.randomUUID());
+  const insertGuard = (guard: Guard, n: number) =>
+    db.prepare(`INSERT INTO batch_guards (guard_id, ok) VALUES (?, (${guard.holdsSql}))`).bind(ids[n], ...guard.params);
+  const guardStatements = guards.map((guard, n) => insertGuard(guard, n));
+  const postStatements = post.map((guard, n) => insertGuard(guard, guards.length + n));
   const cleanup = db
     .prepare(`DELETE FROM batch_guards WHERE guard_id IN (${ids.map(() => "?").join(", ")})`)
     .bind(...ids);
 
   try {
-    const results = await db.batch([...guardStatements, ...statements, cleanup]);
-    return results.slice(guards.length, -1);
+    const results = await db.batch([...guardStatements, ...statements, ...postStatements, cleanup]);
+    return results.slice(guards.length, guards.length + statements.length);
   } catch (error) {
-    for (const guard of guards) {
+    for (const guard of all) {
       if (!(await holds(db, guard))) throw guard.error();
     }
     if (error instanceof Error && error.message.includes("SQLITE_CONSTRAINT")) {
