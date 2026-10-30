@@ -3,7 +3,7 @@
 Shared state for every agent: what's true now, what's next, what's open, what bit us. Keep it short. Anything a
 command can tell you (git log, test results, CI) doesn't belong here. Decisions go in [decisions.md](decisions.md).
 
-Last updated: Fri Oct 30, 2026, morning Honduras time, by Claude Code (engine commits, contract draft, console).
+Last updated: Fri Oct 30, 2026, afternoon Honduras time, by Claude Code (fact ledger onto the contract).
 
 ## Now
 
@@ -23,6 +23,14 @@ Last updated: Fri Oct 30, 2026, morning Honduras time, by Claude Code (engine co
     console. For the spec meeting; not agreed.
   - The console's preparation list, on an in-memory pretend engine. Console login (#22) is in PR #61
     (`claude/console-login`).
+- Fact memory is plumbing under the engine (#11), not a deliverable of its own: the ledger migration `0004_ledger.sql`,
+  `FactCommit` in `domain/facts.ts`, `D1FactLedger.statementsFor` turning one into a `Commit` (D-41), post-guards that
+  the fence now runs inside the batch, cancellation as compensating movements, and the dependency gate G4. On local D1
+  only, **not deployed**. The chain's trace records T1 to T5 as PASS.
+- The supplier-invoice receipt handler has its own tests but is **not wired into the composition root**, and has not
+  been run through `npm run dev:sim` or `npm run simulate` (port 8787 was busy on Oct 30). Its chain task is recorded
+  as **FAIL** in the trace, and the work is now issue #60, a cut-candidate. The handoff task is recorded as
+  **BLOCKED**: it could not open a PR.
 - Spikes are done (handoffs in [handoffs/](handoffs/)): Muse Spark reads invoices and orders with structured output;
   voice transcription 6/6; voice notes decode to WAV inside the Worker.
 - Two independent reviews of Tech Spec v3 (Oct 30) both said "build with changes". The contract draft takes in their
@@ -53,6 +61,7 @@ staff use the preparation list on their own phones. If the console can't pass, i
 | Repository license, and when it goes public (right before submitting) | Team | Oct 26 |
 | Decisions made since Oct 28 aren't in [decisions.md](decisions.md) yet | Angel → Claude Code | Oct 28 |
 | Product and team name: "Johan AI" is a working title | Team | Oct 27 |
+| D-41 (fact memory under `Commit`) is Proposed and needs Angel's acceptance | Angel | Oct 30 |
 
 ## Traps
 
