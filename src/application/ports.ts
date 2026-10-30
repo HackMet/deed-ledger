@@ -227,6 +227,13 @@ export interface JobOutcome {
   readonly commits?: readonly Commit[];
 }
 
+/** Reads of fact memory, for the engine and for the answers. */
+export interface FactQuery {
+  isLive(tenant: Tenant, factId: string, atMs: number): Promise<boolean>;
+  /** Null means unknown, never zero. */
+  balance(tenant: Tenant, productId: string): Promise<{ readonly qtyMilli: number } | null>;
+}
+
 export interface JobHandler {
   handle(input: JobInput): Promise<JobOutcome>;
 }

@@ -64,3 +64,15 @@ export function describeError(error: unknown): string {
   if (error.message.startsWith("D1_")) return `${error.name}: ${error.message.slice(0, 200)}`;
   return error.name;
 }
+
+/**
+ * A fact refused inside its commit batch: the draft isn't the pending, unexpired revision the
+ * commit pins, or something it depends on is no longer live. Nothing in the batch was applied.
+ */
+export class FactRefusedError extends Error {
+  override readonly name = "FactRefusedError";
+
+  constructor(readonly reason: "draft_not_pending" | "dependency_not_live") {
+    super(`fact refused: ${reason}`);
+  }
+}
