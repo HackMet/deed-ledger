@@ -1,16 +1,11 @@
 import { JobConflictError, LeaseLostError, PermanentWriteError } from "../../application/errors";
-import type { Lease } from "../../application/ports";
+import type { BatchGuard, Lease } from "../../application/ports";
 
 /** The database's own clock in Unix epoch milliseconds. Every lease decision uses it. */
 export const DB_NOW_MS = "CAST(unixepoch('subsec') * 1000 AS INTEGER)";
 
 /** A precondition that must hold inside the batch, and how to re-check it after a failure. */
-export interface Guard {
-  /** SQL for a value that is 1 when the precondition holds and NULL otherwise. */
-  readonly holdsSql: string;
-  readonly params: readonly unknown[];
-  readonly error: () => Error;
-}
+export type Guard = BatchGuard;
 
 /**
  * Runs statements as one D1 batch (one transaction) that applies only while `lease` is held,

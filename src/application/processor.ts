@@ -13,8 +13,8 @@ import {
   settleDelaySeconds,
 } from "../domain/processing";
 import { splitText } from "../domain/text";
-import { describeError, LeaseLostError, StaleSnapshotError, StaleWriteError } from "./errors";
-import type { ConversationRef, Deps, Job, Lease, OutboxDraft, ReplyDraft } from "./ports";
+import { describeError, LeaseLostError, PermanentWriteError, StaleSnapshotError, StaleWriteError } from "./errors";
+import type { ConversationRef, Deps, Job, JobOutcome, Lease, OutboxDraft, ReplyDraft } from "./ports";
 
 export type ProcessOutcome =
   | "idle" // nothing to do
@@ -143,18 +143,32 @@ async function runJob(deps: Deps, lease: Lease, job: Job, newestOfBurst: boolean
     return failOrDefer(deps, lease, job, attempt, "media_unavailable", couldNotDownload(job.kind));
   }
 
-  let replies: readonly ReplyDraft[];
+  let outcome: JobOutcome;
   try {
-    replies = (await deps.jobHandler.handle({ lease, job, isNewestOfBurst: newestOfBurst })).replies;
+    outcome = await deps.jobHandler.handle({ lease, job, isNewestOfBurst: newestOfBurst });
   } catch (error) {
     if (error instanceof StaleWriteError) throw error;
     deps.log.warn("job_attempt_failed", { ...fields, reason: describeError(error) });
     return failOrDefer(deps, lease, job, attempt, "attempt_failed", couldNotProcess(job.kind));
   }
-  const drafts = toOutbox(deps, job, replies);
+  const drafts = toOutbox(deps, job, outcome.replies);
   // Closing the burst is decided for the job, not per reply: its replies are written together or not at all.
-  const closesBurst = replies.some((reply) => reply.closesBurst === true);
-  const written = await deps.jobs.completeJob(lease, job.id, deps.clock.now(), drafts, closesBurst);
+  const closesBurst = outcome.replies.some((reply) => reply.closesBurst === true);
+  let written: number;
+  try {
+    written = await deps.jobs.completeJob(lease, job.id, deps.clock.now(), drafts, closesBurst, outcome.commits);
+  } catch (error) {
+    if (error instanceof StaleWriteError) throw error;
+    // Nothing was saved. A refused commit guard (the records moved on) is worth another attempt,
+    // which reads them again; a constraint violation fails the same way every time.
+    deps.log.warn("job_commit_refused", { ...fields, reason: describeError(error) });
+    if (error instanceof PermanentWriteError) {
+      await deps.jobs.failJob(lease, job.id, "commit_rejected", deps.clock.now(), failureReply(deps, job, couldNotProcess(job.kind)));
+      deps.log.warn("job_failed", { ...fields, attempts: attempt, reason: "commit_rejected" });
+      return { status: "failed" };
+    }
+    return failOrDefer(deps, lease, job, attempt, "commit_refused", couldNotProcess(job.kind));
+  }
   if (written < drafts.length) {
     // Another job of the conversation is open (one arrived while this one ran): the burst isn't
     // over, so its closing replies are left to its last job.

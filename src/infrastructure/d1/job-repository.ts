@@ -1,5 +1,6 @@
 import { JobConflictError, StaleSnapshotError } from "../../application/errors";
 import type {
+  Commit,
   ConversationRef,
   Job,
   JobRepository,
@@ -219,17 +220,23 @@ export class D1JobRepository implements JobRepository {
     nowMs: number,
     replies: readonly OutboxDraft[],
     closesBurst: boolean,
+    commits: readonly Commit[] = [],
   ): Promise<number> {
-    const [, ...inserted] = await fencedBatch(this.db, lease, [this.runningGuard(lease, jobId)], [
+    const commitStatements = commits.flatMap((commit) => commit.statements);
+    // The lease and job guards come first: a stale writer gets StaleWriteError, not a commit's error.
+    const guards = [this.runningGuard(lease, jobId), ...commits.flatMap((commit) => commit.guards)];
+    const results = await fencedBatch(this.db, lease, guards, [
       this.db
         .prepare(
           `UPDATE inbound_messages SET job_state = 'done', job_finished_at_ms = ?
            WHERE business_id = ? AND conversation_id = ? AND id = ?`,
         )
         .bind(nowMs, lease.businessId, lease.conversationId, jobId),
+      ...commitStatements,
       // The job's replies are one group: when they close the burst, every one carries the same check.
       ...replies.map((reply) => this.outboxInsert(lease, jobId, reply, nowMs, closesBurst)),
     ]);
+    const inserted = results.slice(1 + commitStatements.length);
     return inserted.filter((result) => result.meta.changes === 1).length;
   }
 

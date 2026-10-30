@@ -196,9 +196,30 @@ export interface ReplyDraft {
   readonly closesBurst?: boolean;
 }
 
+/** A precondition checked inside a batch: `holdsSql` is 1 when it holds, NULL otherwise. */
+export interface BatchGuard {
+  readonly holdsSql: string;
+  readonly params: readonly unknown[];
+  /** Thrown when the batch fails and this is the first guard that doesn't hold. */
+  readonly error: () => Error;
+}
+
+/**
+ * Engine writes that land with the job or not at all. The engine's repositories build them; the
+ * job repository runs them in the batch that completes the job, after the lease and job guards.
+ * A guard that doesn't hold, or a statement that breaks a constraint, rolls back the whole batch:
+ * no fact, no reply, and the job stays open.
+ */
+export interface Commit {
+  readonly guards: readonly BatchGuard[];
+  readonly statements: readonly D1PreparedStatement[];
+}
+
 export interface JobOutcome {
   /** Replies rendered by code, written to the outbox in the same batch that completes the job. */
   readonly replies: readonly ReplyDraft[];
+  /** Saved in that same batch, whether or not the replies are withheld for closing a burst early. */
+  readonly commits?: readonly Commit[];
 }
 
 export interface JobHandler {
@@ -346,9 +367,10 @@ export interface JobRepository {
   /** Publishes a stored object for an asset of a job running under this lease. */
   publishMedia(lease: Lease, jobId: string, assetId: string, stored: StoredMedia, nowMs: number): Promise<void>;
   /**
-   * Completes the job and writes its replies, one group. With `closesBurst`, the group is written
-   * only if no other job of the conversation is open, checked inside the batch: all or none.
-   * Returns how many replies were written.
+   * Completes the job, saves its commits and writes its replies, one batch. With `closesBurst`, the
+   * replies are written only if no other job of the conversation is open, checked inside the batch:
+   * all or none. The commits don't depend on that. Returns how many replies were written. A commit
+   * guard that doesn't hold throws its own error; a constraint violation, PermanentWriteError.
    */
   completeJob(
     lease: Lease,
@@ -356,6 +378,7 @@ export interface JobRepository {
     nowMs: number,
     replies: readonly OutboxDraft[],
     closesBurst: boolean,
+    commits?: readonly Commit[],
   ): Promise<number>;
   deferJob(lease: Lease, jobId: string, errorCode: string, retryAfterMs: number): Promise<void>;
   failJob(lease: Lease, jobId: string, errorCode: string, nowMs: number, replies: readonly OutboxDraft[]): Promise<void>;
