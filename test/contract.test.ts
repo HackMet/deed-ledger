@@ -9,7 +9,22 @@ import {
 } from "../src/domain/contract/observation";
 import type { OrderView } from "../src/domain/contract/outcomes";
 import { isCentavos, isDecimalString, toThousandths } from "../src/domain/contract/numbers";
-import { allOrders, allReadings, burstText, firstOrder, firstOrderMatches, ids, moreSugar, packingContext } from "./fixtures/contract";
+import {
+  allOrders,
+  allReadings,
+  burstText,
+  changedOrder,
+  confirmedOrder,
+  confirmTap,
+  firstOrder,
+  firstOrderMatches,
+  ids,
+  moreSugar,
+  orderChanged,
+  orderReconfirmed,
+  packingContext,
+  reconfirmTap,
+} from "./fixtures/contract";
 
 /** Every value in an object tree, with the key it sits under. */
 function* walk(value: unknown, key = ""): Generator<[string, unknown]> {
@@ -108,6 +123,14 @@ describe("contract fixtures", () => {
     expect(change.kind).toBe("order_change");
     if (change.kind !== "order_change") return;
     for (const edit of change.edits) if (edit.op !== "add" && edit.target.ref !== null) expect(refs.has(edit.target.ref)).toBe(true);
+  });
+
+  it("send a change while packing back to the customer, who confirms the new version", () => {
+    expect(orderChanged).toMatchObject({ type: "order_changed", order: { state: "por_confirmar", version: 2 } });
+    expect(changedOrder.queuePosition).toBe(confirmedOrder.queuePosition);
+    expect(reconfirmTap.action).toMatchObject({ type: "confirm_order", version: changedOrder.version });
+    expect(reconfirmTap.operationKey).not.toBe(confirmTap.operationKey);
+    expect(orderReconfirmed).toMatchObject({ type: "order_confirmed", order: { state: "preparando", version: 2 } });
   });
 
   it("total an order exactly from its lines, and only when every price is known", () => {

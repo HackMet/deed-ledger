@@ -45,8 +45,6 @@ staff use the preparation list on their own phones. If the console can't pass, i
 
 | What | Who | Since |
 |---|---|---|
-| A change while packing: does the customer reconfirm (PRD) or not (Tech Spec order life)? | Team | Oct 30 |
-| One open order per customer, or several? | Team | Oct 30 |
 | The teammate's own spec, to compare against the contract | Teammate → Angel | Oct 29 |
 | Real WhatsApp payloads (text, photo, voice, location pin, button tap) captured on the test number | Angel | Oct 30 |
 | The pilot's WhatsApp number, and how judges try the product | Angel | Oct 29 |

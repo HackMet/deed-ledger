@@ -47,7 +47,8 @@ export interface EngineResult {
 export interface Engine {
   /**
    * A customer's burst, observations in order. Console-only kinds (sale_report and the like) are
-   * refused here whatever perception said. Order-line labels ("L2") are the engine's: line N of the
+   * refused here whatever perception said. A customer has at most one open order (not entregado or
+   * cancelado): a new customer_order while one is open adds to it. Order-line labels ("L2") are the engine's: line N of the
    * open order's current version is "LN".
    */
   onBurst(context: CustomerContext, reading: BurstReading, matches: readonly LineMatch[]): Promise<EngineResult>;

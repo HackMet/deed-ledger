@@ -78,7 +78,10 @@ export type EngineOutcome =
   | { readonly type: "ask"; readonly question: QuestionCode; readonly line: number | null; readonly order: OrderView | null }
   | { readonly type: "readback"; readonly order: OrderView }
   | { readonly type: "order_confirmed"; readonly order: OrderView }
-  /** A change after confirming: a new version, back on the list. */
+  /**
+   * A change after confirming: a new version in por_confirmar, read back for the customer to
+   * confirm again. Taps on the old version are refused; the order keeps its place on the list.
+   */
   | { readonly type: "order_changed"; readonly order: OrderView }
   | { readonly type: "order_cancelled"; readonly order: OrderView }
   | { readonly type: "order_status"; readonly order: OrderView | null }

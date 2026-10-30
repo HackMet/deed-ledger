@@ -29,6 +29,11 @@ against the types and the fixtures; `npm run typecheck` fails when a fixture sto
 - **Unknown is `null`.** Quantities are decimal strings; money is integer centavos.
 - **Only Johan's price reaches a customer.** A line's `unitPrice` is the confirmed price or `null`; an order's total is
   `null` while any price is unknown. A staff-proposed price waits in Pendientes.
+- **A change after confirming goes back to the customer.** It makes a new version in `por_confirmar`, read back
+  with Confirmar, Corregir and Cancelar; taps on the old version are refused, and the order keeps its place on the
+  list. Confirmed again, it returns to `preparando` (or `confirmado` if nobody had started).
+- **One open order per customer.** An order is open until `entregado` or `cancelado`; a new order message while
+  one is open adds to it.
 - **Every action has an operation key and an actor** from the session or conversation; order actions carry the
   version on screen. A reused key returns `duplicate` with the first outcome; a stale version returns `rejected`.
   Typed "confirmar" and the button share one key: `confirm:<order>:v<version>`.
@@ -47,11 +52,8 @@ against the types and the fixtures; `npm run typecheck` fails when a fixture sto
 
 1. **Kinds added beyond Tech Spec v3:** `clarification` (an answer to the engine's last question: "de litro") and
    `customer_name`. The PRD's first order needs both.
-2. **A change while packing:** the PRD has the customer reconfirm ("¿Está bien así?"); the spec's order life goes
-   straight to a new `preparando` version. Which one?
-3. **One open order per customer,** or several?
-4. **Who matches lines to the catalog:** here it's code on the perception side (barcode, exact name, known alias) and
+2. **Who matches lines to the catalog:** here it's code on the perception side (barcode, exact name, known alias) and
    staff through `match_line`. Does the Deed core expect to match?
-5. **Operation keys:** rooted in the job ID for a message, `confirm:<order>:v<version>` for a readback. Fine for the
+3. **Operation keys:** rooted in the job ID for a message, `confirm:<order>:v<version>` for a readback. Fine for the
    Deed core's `operations` table?
-6. **Kerly's spec:** not read yet. Anything here that conflicts with it wins a discussion, not a default.
+4. **Kerly's spec:** not read yet. Anything here that conflicts with it wins a discussion, not a default.

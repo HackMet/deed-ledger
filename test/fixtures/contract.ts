@@ -185,15 +185,22 @@ export const confirmedOrder: OrderView = { ...readbackOrder, state: "confirmado"
 export const orderConfirmed: EngineOutcome = { type: "order_confirmed", order: confirmedOrder };
 export const orderStatus: EngineOutcome = { type: "order_status", order: confirmedOrder };
 
-/** Version 2 after "que sean 3": azúcar goes from 2 to 3, total from L 315 to L 345. */
+/**
+ * Version 2 after "que sean 3" while staff were packing: azúcar goes from 2 to 3, total from L 315
+ * to L 345. It waits for the customer to confirm again, keeping its place on the list.
+ */
 export const changedOrder: OrderView = {
   ...confirmedOrder,
   version: 2,
-  state: "preparando",
+  state: "por_confirmar",
   lines: confirmedOrder.lines.map((l) => (l.lineId === "line-3" ? { ...l, quantity: "3" } : l)),
   total: 34500,
 };
 export const orderChanged: EngineOutcome = { type: "order_changed", order: changedOrder };
+
+/** Confirmed again: back to preparando, since staff had started. */
+export const reconfirmedOrder: OrderView = { ...changedOrder, state: "preparando" };
+export const orderReconfirmed: EngineOutcome = { type: "order_confirmed", order: reconfirmedOrder };
 
 // ---------------------------------------------------------------------------------------------
 // Actions
@@ -202,6 +209,13 @@ export const confirmTap: ActionEnvelope<CustomerAction> = {
   operationKey: "confirm:order-0001:v1",
   actor: { type: "customer", customerId: CUSTOMER },
   action: { type: "confirm_order", orderId: ORDER, version: 1 },
+};
+
+/** The readback of version 2, confirmed again: a new key, since it's a new version. */
+export const reconfirmTap: ActionEnvelope<CustomerAction> = {
+  operationKey: "confirm:order-0001:v2",
+  actor: { type: "customer", customerId: CUSTOMER },
+  action: { type: "confirm_order", orderId: ORDER, version: 2 },
 };
 
 const staff = { type: "member", memberId: STAFF, role: "staff" } as const;
@@ -225,12 +239,12 @@ export const staleReady: ActionEnvelope<ConsoleAction> = {
   action: { type: "mark_ready", orderId: ORDER, version: 1 },
 };
 
-export const staleRejected: EngineOutcome = { type: "rejected", reason: "stale_version", order: changedOrder };
+export const staleRejected: EngineOutcome = { type: "rejected", reason: "stale_version", order: reconfirmedOrder };
 
 /** The same confirm tap delivered twice: nothing saved the second time. */
 export const duplicateConfirm: EngineOutcome = { type: "duplicate", first: orderConfirmed };
 
-export const readyOrder: OrderView = { ...changedOrder, version: 2, state: "listo", queuePosition: null };
+export const readyOrder: OrderView = { ...reconfirmedOrder, state: "listo", queuePosition: null };
 export const readyNotice: CustomerNotice = { customerId: CUSTOMER, notice: { type: "order_ready", order: readyOrder } };
 
 /** What "Tu pedido ya está listo. Total L 345." claims, checked before it's sent. */
@@ -240,7 +254,7 @@ export const readyClaims: readonly Claim[] = [
 ];
 
 export const allReadings = { firstOrder, sizeAnswer, pickup, whenReady, moreSugar, addAndPickup, injectedInstructions };
-export const allOrders = { readbackOrder, confirmedOrder, changedOrder, readyOrder };
+export const allOrders = { readbackOrder, confirmedOrder, changedOrder, reconfirmedOrder, readyOrder };
 
 /** Each burst's text or transcript by position (null for a photo), for checking evidence spans. */
 export const burstText: Record<keyof typeof allReadings, readonly (string | null)[]> = {
