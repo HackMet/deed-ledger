@@ -1,7 +1,7 @@
 # Development workflow
 
-How Claude Code, Muse Code and Codex share one repo without stepping on each other. No orchestration platform: git
-branches, worktrees, a few files, and Angel deciding who does what.
+How two people and their coding agents share one repo without stepping on each other. No orchestration platform:
+git branches, worktrees, pull requests, a few files, and each person deciding the work in their own area (D-37).
 
 ## Who does what
 
@@ -24,7 +24,7 @@ save it for reviews that matter. Don't switch tools just to switch.
 
 ## Task lifecycle
 
-1. Angel assigns a task to an agent in status.md.
+1. The owner of the area assigns a task to an agent in status.md.
 2. Create a branch `<agent>/<slug>` from `main`: `claude/whatsapp-intake`, `muse/voice-pipeline`,
    `codex/review-commit-batch`.
 3. If another agent is working at the same time, give each agent its own worktree, next to the repo (Angel's usual
@@ -40,8 +40,9 @@ save it for reviews that matter. Don't switch tools just to switch.
 4. Implement with tests and run the whole suite.
 5. Write the handoff (below) and update status.md.
 6. Review: the integrating agent (usually Claude) reruns the tests, reads the diff and checks the handoff's claims.
-   Codex reviews the riskiest diffs. Angel commits and merges. `muse/*` branches merge with a merge commit
-   (`git merge --no-ff`, never squash), so Muse Code's share stays visible in the history (D-14).
+   Codex reviews the riskiest diffs. The person running the session commits and opens a pull request into `main`.
+   `muse/*` branches merge with a merge commit (`git merge --no-ff`, never squash), so Muse Code's share stays
+   visible in the history (D-14).
 7. Clean up: `git worktree remove ../hackathon-muse-voice-pipeline` and delete the merged branch.
 
 ## Handoff format

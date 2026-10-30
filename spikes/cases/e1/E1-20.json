@@ -1,0 +1,20 @@
+{
+  "id": "E1-20",
+  "tags": ["sale", "filler", "held-out"],
+  "input": { "type": "text", "body": "Vendi pues tres refrescos a veinte cada uno" },
+  "expected": {
+    "kind": "sale",
+    "must_equal": {
+      "product_text": "refrescos",
+      "quantity_text": "tres",
+      "quantity_value": 3,
+      "amount_minor": 2000,
+      "amount_basis": "per_unit",
+      "targets_open_draft": false
+    },
+    "must_be_null": ["unit_text", "counterparty_text"],
+    "must_ask": false,
+    "must_not_contain": []
+  },
+  "notes": "Held-out. E1-01 with leading filler 'pues' and no punctuation or accents (ASR style). Same figures as E1-01."
+}

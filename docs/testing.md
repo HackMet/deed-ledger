@@ -1,13 +1,13 @@
 # Testing and validation
 
-No code exists yet. This is the plan that T1's scaffold implements. When commands exist, they go in `AGENTS.md`.
+The foundation implements the first layers of this plan. Commands live in `AGENTS.md`.
 
 ## Layers
 
 | Layer | Covers | When it runs |
 |---|---|---|
 | Domain unit tests | Units and pack conversions, money, receipt state machine, intent → command mapping | Every run |
-| Storage integration tests | D1 schema, the commit batch, idempotency, tenant isolation, ledger and balances agreeing | Every run, against local D1 (Vitest with Cloudflare's Workers test pool; T1 confirms the package) |
+| Storage integration tests | D1 schema, the commit batch, idempotency, tenant isolation, ledger and balances agreeing | Every run, against local D1 (Vitest 4.1 with `@cloudflare/vitest-plugin`, the renamed Workers pool; storage is isolated per test file, not per test) |
 | Contract tests | Meta Model API (vision, structured output, transcription) and WhatsApp payloads, replayed from recorded fixtures through fakes | Every run, no network |
 | Live smoke tests | Real API calls with synthetic inputs | Only with `LIVE_TESTS=1`; they spend credits |
 | Benchmarks | Extraction accuracy, voice-intent accuracy, time to finalize a receipt | On demand, over consented data kept outside the repo |

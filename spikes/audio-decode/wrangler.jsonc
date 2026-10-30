@@ -1,0 +1,9 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "audio-decode-spike",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-10-01",
+  "alias": { "@eshaz/web-worker": "./src/no-web-worker.ts" },
+  // The production queue consumer would raise this if 30 s ever proved tight (Workers Paid: up to 300000).
+  "limits": { "cpu_ms": 30000 }
+}

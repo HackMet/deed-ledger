@@ -1,0 +1,19 @@
+{
+  "id": "E1-17",
+  "tags": ["correction", "spoken-style", "no-punctuation", "held-out"],
+  "input": { "type": "text", "body": "No eran tres botellas eran siete botellas de aceite" },
+  "expected": {
+    "kind": "correction",
+    "must_equal": {
+      "product_text": "aceite",
+      "quantity_text": "siete botellas",
+      "quantity_value": 7,
+      "unit_text": "botellas",
+      "targets_open_draft": true
+    },
+    "must_be_null": ["amount_minor", "amount_basis", "counterparty_text"],
+    "must_ask": false,
+    "must_not_contain": ["3", "tres"]
+  },
+  "notes": "Held-out. Spoken correction with no punctuation. Asserted figure is siete; rejected tres must appear nowhere."
+}

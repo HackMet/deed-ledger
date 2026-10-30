@@ -1,9 +1,9 @@
 # deed-ledger
 Agent claims become facts only after the effect is read back from the real system — idempotent, fail-closed, and auditable. A temporal fact memory gates downstream decisions, so cancellations stop what depended on them.
 
-A WhatsApp inventory assistant for small stores. The owner photographs a supplier invoice, sends a voice note, or
-asks what's left. Meta's models turn that into a draft, the owner confirms it, and an auditable ledger records it
-exactly once.
+An order assistant for small stores. Customers order on WhatsApp with text, photos of their list or voice notes;
+Meta's models read what they sent, the customer confirms a readback, and staff prepare the order from a phone. An
+auditable ledger records every step exactly once.
 
 Built for the [Meta Global AI Developer Hackathon](https://dev.meta.ai/events/global-hackathon), Indie track,
 October 26 to November 4, 2026.
@@ -22,25 +22,31 @@ store runs through the same flows to show the product serves other businesses wi
 
 ## What it will do
 
-| The owner sends | What happens | Meta model |
+| Who sends what | What happens | Meta model |
 |---|---|---|
-| A photo of a supplier invoice | Draft receipt: lines, quantities, units, costs; unclear items become questions | Muse Spark (image understanding, structured output) |
-| A voice note: "Vinieron dos cajas de doce leches" | A proposed action, read back for confirmation | Muse Voice Transcribe + Muse Spark |
-| "¿Cuántas Coca de dos litros me quedan?" | The recorded quantity, and how reliable it is | Muse Spark (intent) + the ledger |
-| "Confirmar" | One atomic, idempotent ledger entry; a receipt number and a review link | None. Deterministic code decides |
+| A customer: a photo of a handwritten list, then "y agregale dos libras de azúcar" | One order, one question at a time, then a readback with every line and the total | Muse Spark (image understanding, structured output) + Muse Voice Transcribe |
+| A customer: "Confirmar" | The order goes on the preparation list, exactly once | None. Deterministic code decides |
+| Staff: Listo, No hay, on the console | The customer hears "listo" only after the tap; an out-of-stock line becomes one question | None |
+| Staff: a voice note of a walk-in sale | A sale with its prices, saved in one tap | Muse Voice Transcribe + Muse Spark |
 
-The model only proposes. Nothing changes stock until the owner confirms the exact draft. Scope and what's deferred:
-[docs/hackathon-plan.md](docs/hackathon-plan.md).
+The model only proposes. Nothing is saved until a person confirms it, and nothing is said without a record behind it.
 
 ## Status
 
-October 26, 2026, before the kickoff: planning documents and agent setup only. There is no application code yet.
+October 30, 2026: the foundation is built and tested. The contract between understanding and the engine is a draft,
+and the staff's preparation list runs locally. The engine, order understanding, replies and the console's login come
+next.
 
 ## Built during the hackathon
 
 The first commit (tag `pre-event-baseline`) holds only planning documents and agent configuration prepared before the
 kickoff: the PRD, `docs/`, `AGENTS.md`, `CLAUDE.md` and repository settings. It contains no application code.
 Everything after it is hackathon work. This list grows as features land.
+
+- October 28: the foundation. WhatsApp webhooks are verified and saved before they're acknowledged, worked through
+  in order per conversation, and answered through an outbox. Numbers that aren't members get one fixed reply.
+- October 30: the engine's saves land in the same batch that completes a message's job. The draft contract between
+  understanding, the engine and the console. The staff's preparation list, running locally on a pretend engine.
 
 ## Repository layout
 
@@ -54,6 +60,7 @@ docs/
   PRD.md                       product requirements (working copy of the PDF)
   architecture.md              flow, boundaries, checked provider facts, open decisions
   decisions.md                 decision log
+  contract.md                  the contract between perception, the engine and the console (draft)
   security-privacy.md          security, privacy and legal checklist
   testing.md                   test layers, acceptance suite, benchmark protocol
   workflow.md                  how Claude Code, Muse Code and Codex share the repo
@@ -63,11 +70,19 @@ docs/
 
 ## Development setup
 
-Prerequisites: Node.js 22, a Cloudflare account (Wrangler runs through `npx`), a Meta Model API key, and a Meta for
-Developers app with a WhatsApp test number.
+Prerequisites: Node.js 22. Tests and the local simulator need nothing else. Running against real WhatsApp needs a
+Cloudflare account (Wrangler runs through `npx`) and a Meta for Developers app with a WhatsApp test number.
 
-There is nothing to install or run yet. The first engineering task adds `npm install`, `npm test` and `npm run dev`,
-and updates this section. Local secrets go in `.dev.vars`, which git ignores. Never commit them.
+```bash
+npm ci
+npm test                            # Vitest in the Workers runtime, local D1 with every migration applied
+npm run typecheck
+npm run dev:sim                     # local Worker, fake secrets, a synthetic store; nothing is sent to WhatsApp
+npm run simulate -- --text "Hola"   # in a second terminal: a signed fake webhook, then the outbox
+```
+
+To run against a real WhatsApp test number, copy `.dev.vars.example` to `.dev.vars`, fill it in, and run
+`npm run dev`. Git ignores `.dev.vars`; never commit it. Tests blank every secret, whatever `.dev.vars` holds.
 
 ## How it's built
 

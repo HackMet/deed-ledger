@@ -1,0 +1,768 @@
+{
+  "exp": "E1",
+  "model": "muse-spark-1.3",
+  "prompt_version": "e1-v4",
+  "started_at": "2026-10-27T15:09:29.443Z",
+  "finished_at": "2026-10-27T15:12:12.941Z",
+  "strict_nullable_test": {
+    "accepted": true,
+    "detail": "strict:true accepted nullable [\"type\",\"null\"] on first live call"
+  },
+  "price_source": "https://dev.meta.ai/docs/pricing-rate-limits",
+  "cost_basis": "estimated list-price (input $1.25/M, output $4.25/M)",
+  "totals": {
+    "cases": 21,
+    "passed": 19,
+    "failed_ids": [
+      "E1-16",
+      "E1-17"
+    ],
+    "api_calls": 21,
+    "retries": 0,
+    "input_tokens": 23010,
+    "output_tokens": 50720,
+    "latency_ms_p50": 5851,
+    "latency_ms_p95": 18570,
+    "cost_usd_list": 0.24432250000000005
+  },
+  "cases": [
+    {
+      "id": "E1-01",
+      "pass": true,
+      "failures": [],
+      "output": {
+        "ambiguities": [],
+        "amount_basis": "per_unit",
+        "amount_minor": 2000,
+        "counterparty_text": null,
+        "kind": "sale",
+        "missing": [],
+        "owner_reply": "Anotado: vendiste 3 refrescos a 20 cada uno.",
+        "product_text": "refrescos",
+        "quantity_text": "tres",
+        "quantity_value": 3,
+        "targets_open_draft": false,
+        "unit_text": null
+      },
+      "latency_ms": 5851,
+      "retried": 0,
+      "api_calls": 1,
+      "usage": {
+        "completion_tokens": 1769,
+        "prompt_tokens": 1097,
+        "total_tokens": 2866,
+        "completion_tokens_details": {
+          "reasoning_tokens": 1683
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "cost_usd": 0.0088895
+    },
+    {
+      "id": "E1-02",
+      "pass": true,
+      "failures": [],
+      "output": {
+        "ambiguities": [],
+        "amount_basis": null,
+        "amount_minor": null,
+        "counterparty_text": null,
+        "kind": "supplier_receipt",
+        "missing": [],
+        "owner_reply": "Anotado: entraron 12 unidades de leche.",
+        "product_text": "leche",
+        "quantity_text": "12 unidades",
+        "quantity_value": 12,
+        "targets_open_draft": false,
+        "unit_text": "unidades"
+      },
+      "latency_ms": 3740,
+      "retried": 0,
+      "api_calls": 1,
+      "usage": {
+        "completion_tokens": 1349,
+        "prompt_tokens": 1095,
+        "total_tokens": 2444,
+        "completion_tokens_details": {
+          "reasoning_tokens": 1266
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "cost_usd": 0.007102
+    },
+    {
+      "id": "E1-03",
+      "pass": true,
+      "failures": [],
+      "output": {
+        "ambiguities": [
+          "No está confirmado si cada caja trae 12 unidades"
+        ],
+        "amount_basis": null,
+        "amount_minor": null,
+        "counterparty_text": null,
+        "kind": "supplier_receipt",
+        "missing": [
+          "quantity_value"
+        ],
+        "owner_reply": "Cada caja trae 12?",
+        "product_text": "leches",
+        "quantity_text": "dos cajas de doce",
+        "quantity_value": null,
+        "targets_open_draft": false,
+        "unit_text": "cajas"
+      },
+      "latency_ms": 8335,
+      "retried": 0,
+      "api_calls": 1,
+      "usage": {
+        "completion_tokens": 2777,
+        "prompt_tokens": 1096,
+        "total_tokens": 3873,
+        "completion_tokens_details": {
+          "reasoning_tokens": 2683
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "cost_usd": 0.01317225
+    },
+    {
+      "id": "E1-04",
+      "pass": true,
+      "failures": [],
+      "output": {
+        "ambiguities": [
+          "no está claro si 150 es por caja o en total"
+        ],
+        "amount_basis": null,
+        "amount_minor": 15000,
+        "counterparty_text": null,
+        "kind": "sale",
+        "missing": [
+          "amount_basis"
+        ],
+        "owner_reply": "Decime, los 150 son por caja o en total?",
+        "product_text": "jugos",
+        "quantity_text": "dos cajas",
+        "quantity_value": 2,
+        "targets_open_draft": false,
+        "unit_text": "cajas"
+      },
+      "latency_ms": 7424,
+      "retried": 0,
+      "api_calls": 1,
+      "usage": {
+        "completion_tokens": 2157,
+        "prompt_tokens": 1098,
+        "total_tokens": 3255,
+        "completion_tokens_details": {
+          "reasoning_tokens": 2057
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "cost_usd": 0.01053975
+    },
+    {
+      "id": "E1-05",
+      "pass": true,
+      "failures": [],
+      "output": {
+        "ambiguities": [],
+        "amount_basis": "total",
+        "amount_minor": 30000,
+        "counterparty_text": null,
+        "kind": "expense",
+        "missing": [],
+        "owner_reply": "Anotado: gastaste 300 en hielo.",
+        "product_text": "hielo",
+        "quantity_text": null,
+        "quantity_value": null,
+        "targets_open_draft": false,
+        "unit_text": null
+      },
+      "latency_ms": 3110,
+      "retried": 0,
+      "api_calls": 1,
+      "usage": {
+        "completion_tokens": 891,
+        "prompt_tokens": 1096,
+        "total_tokens": 1987,
+        "completion_tokens_details": {
+          "reasoning_tokens": 812
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "cost_usd": 0.00515675
+    },
+    {
+      "id": "E1-06",
+      "pass": true,
+      "failures": [],
+      "output": {
+        "ambiguities": [],
+        "amount_basis": null,
+        "amount_minor": null,
+        "counterparty_text": "Don Carlos",
+        "kind": "fiado_credit",
+        "missing": [
+          "amount_minor"
+        ],
+        "owner_reply": "Anotado: Don Carlos llevó 2 libras de arroz fiado. ¿Cuánto te debe?",
+        "product_text": "arroz",
+        "quantity_text": "dos libras",
+        "quantity_value": 2,
+        "targets_open_draft": false,
+        "unit_text": "libras"
+      },
+      "latency_ms": 5674,
+      "retried": 0,
+      "api_calls": 1,
+      "usage": {
+        "completion_tokens": 1948,
+        "prompt_tokens": 1097,
+        "total_tokens": 3045,
+        "completion_tokens_details": {
+          "reasoning_tokens": 1849
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "cost_usd": 0.00965025
+    },
+    {
+      "id": "E1-07",
+      "pass": true,
+      "failures": [],
+      "output": {
+        "ambiguities": [],
+        "amount_basis": "total",
+        "amount_minor": 20000,
+        "counterparty_text": "Don Carlos",
+        "kind": "fiado_payment",
+        "missing": [],
+        "owner_reply": "Anotado: Don Carlos pagó 200 de lo que debía.",
+        "product_text": null,
+        "quantity_text": null,
+        "quantity_value": null,
+        "targets_open_draft": false,
+        "unit_text": null
+      },
+      "latency_ms": 2988,
+      "retried": 0,
+      "api_calls": 1,
+      "usage": {
+        "completion_tokens": 1037,
+        "prompt_tokens": 1098,
+        "total_tokens": 2135,
+        "completion_tokens_details": {
+          "reasoning_tokens": 952
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "cost_usd": 0.00577975
+    },
+    {
+      "id": "E1-08",
+      "pass": true,
+      "failures": [],
+      "output": {
+        "ambiguities": [],
+        "amount_basis": null,
+        "amount_minor": null,
+        "counterparty_text": null,
+        "kind": "inquiry",
+        "missing": [],
+        "owner_reply": "Te reviso lo vendido hoy.",
+        "product_text": null,
+        "quantity_text": null,
+        "quantity_value": null,
+        "targets_open_draft": false,
+        "unit_text": null
+      },
+      "latency_ms": 5141,
+      "retried": 0,
+      "api_calls": 1,
+      "usage": {
+        "completion_tokens": 1544,
+        "prompt_tokens": 1092,
+        "total_tokens": 2636,
+        "completion_tokens_details": {
+          "reasoning_tokens": 1470
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "cost_usd": 0.007927
+    },
+    {
+      "id": "E1-09",
+      "pass": true,
+      "failures": [],
+      "output": {
+        "ambiguities": [],
+        "amount_basis": null,
+        "amount_minor": null,
+        "counterparty_text": null,
+        "kind": "correction",
+        "missing": [],
+        "owner_reply": "Anotado: fueron 10.",
+        "product_text": null,
+        "quantity_text": "diez",
+        "quantity_value": 10,
+        "targets_open_draft": true,
+        "unit_text": null
+      },
+      "latency_ms": 6162,
+      "retried": 0,
+      "api_calls": 1,
+      "usage": {
+        "completion_tokens": 1898,
+        "prompt_tokens": 1095,
+        "total_tokens": 2993,
+        "completion_tokens_details": {
+          "reasoning_tokens": 1822
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "cost_usd": 0.00943525
+    },
+    {
+      "id": "E1-10",
+      "pass": true,
+      "failures": [],
+      "output": {
+        "ambiguities": [],
+        "amount_basis": null,
+        "amount_minor": null,
+        "counterparty_text": null,
+        "kind": "cancel",
+        "missing": [],
+        "owner_reply": "Anotado: lo cancelo, no entró nada.",
+        "product_text": null,
+        "quantity_text": null,
+        "quantity_value": null,
+        "targets_open_draft": true,
+        "unit_text": null
+      },
+      "latency_ms": 2865,
+      "retried": 0,
+      "api_calls": 1,
+      "usage": {
+        "completion_tokens": 1016,
+        "prompt_tokens": 1095,
+        "total_tokens": 2111,
+        "completion_tokens_details": {
+          "reasoning_tokens": 938
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "cost_usd": 0.00568675
+    },
+    {
+      "id": "E1-11",
+      "pass": true,
+      "failures": [],
+      "output": {
+        "ambiguities": [],
+        "amount_basis": "per_unit",
+        "amount_minor": 2000,
+        "counterparty_text": null,
+        "kind": "sale",
+        "missing": [
+          "product_text"
+        ],
+        "owner_reply": "Decime ¿qué vendiste? Fueron 3 a 20 cada uno?",
+        "product_text": null,
+        "quantity_text": "tres",
+        "quantity_value": 3,
+        "targets_open_draft": false,
+        "unit_text": null
+      },
+      "latency_ms": 5392,
+      "retried": 0,
+      "api_calls": 1,
+      "usage": {
+        "completion_tokens": 1398,
+        "prompt_tokens": 1095,
+        "total_tokens": 2493,
+        "completion_tokens_details": {
+          "reasoning_tokens": 1309
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "cost_usd": 0.00731025
+    },
+    {
+      "id": "E1-12",
+      "pass": true,
+      "failures": [],
+      "output": {
+        "ambiguities": [],
+        "amount_basis": null,
+        "amount_minor": null,
+        "counterparty_text": null,
+        "kind": "adjustment",
+        "missing": [],
+        "owner_reply": "Anotado: se quebraron 4 huevos.",
+        "product_text": "huevos",
+        "quantity_text": "cuatro",
+        "quantity_value": 4,
+        "targets_open_draft": false,
+        "unit_text": null
+      },
+      "latency_ms": 5973,
+      "retried": 0,
+      "api_calls": 1,
+      "usage": {
+        "completion_tokens": 1796,
+        "prompt_tokens": 1093,
+        "total_tokens": 2889,
+        "completion_tokens_details": {
+          "reasoning_tokens": 1716
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 1009
+        }
+      },
+      "cost_usd": 0.00899925
+    },
+    {
+      "id": "E1-13",
+      "pass": true,
+      "failures": [],
+      "output": {
+        "ambiguities": [],
+        "amount_basis": null,
+        "amount_minor": null,
+        "counterparty_text": null,
+        "kind": "correction",
+        "missing": [],
+        "owner_reply": "Anotado: Pepsi.",
+        "product_text": "Pepsi",
+        "quantity_text": null,
+        "quantity_value": null,
+        "targets_open_draft": true,
+        "unit_text": null
+      },
+      "latency_ms": 4590,
+      "retried": 0,
+      "api_calls": 1,
+      "usage": {
+        "completion_tokens": 1592,
+        "prompt_tokens": 1094,
+        "total_tokens": 2686,
+        "completion_tokens_details": {
+          "reasoning_tokens": 1518
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "cost_usd": 0.0081335
+    },
+    {
+      "id": "E1-14",
+      "pass": true,
+      "failures": [],
+      "output": {
+        "ambiguities": [],
+        "amount_basis": null,
+        "amount_minor": null,
+        "counterparty_text": null,
+        "kind": "inquiry",
+        "missing": [],
+        "owner_reply": "Ya te digo cuántas leches te quedan.",
+        "product_text": "leches",
+        "quantity_text": null,
+        "quantity_value": null,
+        "targets_open_draft": false,
+        "unit_text": null
+      },
+      "latency_ms": 4080,
+      "retried": 0,
+      "api_calls": 1,
+      "usage": {
+        "completion_tokens": 1025,
+        "prompt_tokens": 1094,
+        "total_tokens": 2119,
+        "completion_tokens_details": {
+          "reasoning_tokens": 947
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "cost_usd": 0.00572375
+    },
+    {
+      "id": "E1-15",
+      "pass": true,
+      "failures": [],
+      "output": {
+        "ambiguities": [
+          "no se sabe cuántas libras trae el saco"
+        ],
+        "amount_basis": null,
+        "amount_minor": null,
+        "counterparty_text": null,
+        "kind": "supplier_receipt",
+        "missing": [
+          "quantity_value"
+        ],
+        "owner_reply": "¿De cuántas libras es el saco?",
+        "product_text": "arroz",
+        "quantity_text": "un saco",
+        "quantity_value": null,
+        "targets_open_draft": false,
+        "unit_text": "saco"
+      },
+      "latency_ms": 12403,
+      "retried": 0,
+      "api_calls": 1,
+      "usage": {
+        "completion_tokens": 3425,
+        "prompt_tokens": 1095,
+        "total_tokens": 4520,
+        "completion_tokens_details": {
+          "reasoning_tokens": 3328
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "cost_usd": 0.015925
+    },
+    {
+      "id": "E1-16",
+      "pass": false,
+      "failures": [
+        "must_equal.product_text: expected \"arroz\", got null"
+      ],
+      "output": {
+        "ambiguities": [],
+        "amount_basis": null,
+        "amount_minor": null,
+        "counterparty_text": null,
+        "kind": "correction",
+        "missing": [],
+        "owner_reply": "Anotado: 6 bolsas.",
+        "product_text": null,
+        "quantity_text": "seis bolsas",
+        "quantity_value": 6,
+        "targets_open_draft": true,
+        "unit_text": "bolsas"
+      },
+      "latency_ms": 18570,
+      "retried": 0,
+      "api_calls": 1,
+      "usage": {
+        "completion_tokens": 6109,
+        "prompt_tokens": 1096,
+        "total_tokens": 7205,
+        "completion_tokens_details": {
+          "reasoning_tokens": 6032
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "cost_usd": 0.02733325
+    },
+    {
+      "id": "E1-17",
+      "pass": false,
+      "failures": [
+        "must_equal.product_text: expected \"aceite\", got null"
+      ],
+      "output": {
+        "ambiguities": [],
+        "amount_basis": null,
+        "amount_minor": null,
+        "counterparty_text": null,
+        "kind": "correction",
+        "missing": [],
+        "owner_reply": "Anotado: 7 botellas.",
+        "product_text": null,
+        "quantity_text": "siete botellas",
+        "quantity_value": 7,
+        "targets_open_draft": true,
+        "unit_text": "botellas"
+      },
+      "latency_ms": 15434,
+      "retried": 0,
+      "api_calls": 1,
+      "usage": {
+        "completion_tokens": 4302,
+        "prompt_tokens": 1098,
+        "total_tokens": 5400,
+        "completion_tokens_details": {
+          "reasoning_tokens": 4222
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "cost_usd": 0.019656
+    },
+    {
+      "id": "E1-18",
+      "pass": true,
+      "failures": [],
+      "output": {
+        "ambiguities": [],
+        "amount_basis": "total",
+        "amount_minor": 30000,
+        "counterparty_text": null,
+        "kind": "correction",
+        "missing": [],
+        "owner_reply": "Anotado: 300.",
+        "product_text": null,
+        "quantity_text": null,
+        "quantity_value": null,
+        "targets_open_draft": true,
+        "unit_text": null
+      },
+      "latency_ms": 21481,
+      "retried": 0,
+      "api_calls": 1,
+      "usage": {
+        "completion_tokens": 6421,
+        "prompt_tokens": 1100,
+        "total_tokens": 7521,
+        "completion_tokens_details": {
+          "reasoning_tokens": 6346
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "cost_usd": 0.02866425
+    },
+    {
+      "id": "E1-19",
+      "pass": true,
+      "failures": [],
+      "output": {
+        "ambiguities": [],
+        "amount_basis": null,
+        "amount_minor": null,
+        "counterparty_text": null,
+        "kind": "supplier_receipt",
+        "missing": [],
+        "owner_reply": "Anotado: entraron 4 cajas de leche.",
+        "product_text": "leche",
+        "quantity_text": "cuatro cajas",
+        "quantity_value": 4,
+        "targets_open_draft": false,
+        "unit_text": "cajas"
+      },
+      "latency_ms": 5718,
+      "retried": 0,
+      "api_calls": 1,
+      "usage": {
+        "completion_tokens": 1510,
+        "prompt_tokens": 1094,
+        "total_tokens": 2604,
+        "completion_tokens_details": {
+          "reasoning_tokens": 1424
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "cost_usd": 0.007785
+    },
+    {
+      "id": "E1-20",
+      "pass": true,
+      "failures": [],
+      "output": {
+        "ambiguities": [],
+        "amount_basis": "per_unit",
+        "amount_minor": 2000,
+        "counterparty_text": null,
+        "kind": "sale",
+        "missing": [],
+        "owner_reply": "Anotado: vendiste 3 refrescos a 20 cada uno.",
+        "product_text": "refrescos",
+        "quantity_text": "tres",
+        "quantity_value": 3,
+        "targets_open_draft": false,
+        "unit_text": null
+      },
+      "latency_ms": 8911,
+      "retried": 0,
+      "api_calls": 1,
+      "usage": {
+        "completion_tokens": 3429,
+        "prompt_tokens": 1097,
+        "total_tokens": 4526,
+        "completion_tokens_details": {
+          "reasoning_tokens": 3343
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 1009
+        }
+      },
+      "cost_usd": 0.0159445
+    },
+    {
+      "id": "E1-21",
+      "pass": true,
+      "failures": [],
+      "output": {
+        "ambiguities": [
+          "no está claro si eran 8 o 9"
+        ],
+        "amount_basis": null,
+        "amount_minor": null,
+        "counterparty_text": null,
+        "kind": "correction",
+        "missing": [
+          "quantity"
+        ],
+        "owner_reply": "Fueron 8 o 9?",
+        "product_text": null,
+        "quantity_text": null,
+        "quantity_value": null,
+        "targets_open_draft": true,
+        "unit_text": null
+      },
+      "latency_ms": 9615,
+      "retried": 0,
+      "api_calls": 1,
+      "usage": {
+        "completion_tokens": 3327,
+        "prompt_tokens": 1095,
+        "total_tokens": 4422,
+        "completion_tokens_details": {
+          "reasoning_tokens": 3229
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 1009
+        }
+      },
+      "cost_usd": 0.0155085
+    }
+  ]
+}

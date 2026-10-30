@@ -1,0 +1,19 @@
+{
+  "id": "E1-19",
+  "tags": ["supplier_receipt", "filler-in-quantity", "held-out"],
+  "input": { "type": "text", "body": "Entraron eh cuatro cajas de leche" },
+  "expected": {
+    "kind": "supplier_receipt",
+    "must_equal": {
+      "product_text": "leche",
+      "quantity_text": "cuatro cajas",
+      "quantity_value": 4,
+      "unit_text": "cajas",
+      "targets_open_draft": false
+    },
+    "must_be_null": ["amount_minor", "amount_basis", "counterparty_text"],
+    "must_ask": false,
+    "must_not_contain": []
+  },
+  "notes": "Held-out. Filler 'eh' inside the quantity phrase must be dropped from the echo: 'cuatro cajas', not 'cuatro eh cajas'."
+}

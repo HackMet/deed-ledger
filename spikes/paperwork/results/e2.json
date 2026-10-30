@@ -1,0 +1,274 @@
+{
+  "experiment": "E2",
+  "date": "2026-10-27",
+  "model": "muse-spark-1.3",
+  "prompt_version": "e2-prompt-v2",
+  "price_source": "https://dev.meta.ai/docs/pricing-rate-limits",
+  "price_per_m": {
+    "input": 1.25,
+    "output": 4.25
+  },
+  "summary": {
+    "passed": 5,
+    "total": 6,
+    "failed_ids": [
+      "E2-02"
+    ],
+    "latency_p50_ms": 4196,
+    "latency_p95_ms": 9121,
+    "input_tokens": 12306,
+    "output_tokens": 10255,
+    "cost_usd_list": 0.058966
+  },
+  "cases": [
+    {
+      "id": "E2-01",
+      "pass": true,
+      "fails": [],
+      "output": {
+        "lines": [
+          {
+            "ambiguities": [],
+            "currency": "HNL",
+            "description": "Leche entera 1L",
+            "invoice_quantity": "12",
+            "invoice_unit": "caja",
+            "source_text": "12 caja Leche entera 1L x12 L45.00",
+            "unit_cost_minor": 4500,
+            "units_per_pack": "12"
+          },
+          {
+            "ambiguities": [],
+            "currency": "HNL",
+            "description": "Arroz 25 lb",
+            "invoice_quantity": "4",
+            "invoice_unit": "saco",
+            "source_text": "4 saco Arroz 25 lb L625.00",
+            "unit_cost_minor": 62500,
+            "units_per_pack": null
+          },
+          {
+            "ambiguities": [],
+            "currency": "HNL",
+            "description": "Azúcar 5 lb",
+            "invoice_quantity": "10",
+            "invoice_unit": "bolsa",
+            "source_text": "10 bolsa Azúcar 5 lb L98.00",
+            "unit_cost_minor": 9800,
+            "units_per_pack": null
+          }
+        ]
+      },
+      "latency_ms": 4840,
+      "input_tokens": 2051,
+      "output_tokens": 1582,
+      "cost_usd_list": 0.009287,
+      "model": "muse-spark-1.3",
+      "prompt_version": "e2-prompt-v2"
+    },
+    {
+      "id": "E2-02",
+      "pass": false,
+      "fails": [
+        "Jugo: invoice_quantity got \"7\", want null",
+        "Jugo: ambiguities presence got false, want true"
+      ],
+      "output": {
+        "lines": [
+          {
+            "ambiguities": [],
+            "currency": null,
+            "description": "Coca 2L",
+            "invoice_quantity": "5",
+            "invoice_unit": null,
+            "source_text": "Coca 2L --- 5",
+            "unit_cost_minor": null,
+            "units_per_pack": null
+          },
+          {
+            "ambiguities": [],
+            "currency": null,
+            "description": "Jugo",
+            "invoice_quantity": "7",
+            "invoice_unit": null,
+            "source_text": "Jugo --- 7",
+            "unit_cost_minor": null,
+            "units_per_pack": null
+          }
+        ]
+      },
+      "latency_ms": 9121,
+      "input_tokens": 2051,
+      "output_tokens": 2696,
+      "cost_usd_list": 0.014022,
+      "model": "muse-spark-1.3",
+      "prompt_version": "e2-prompt-v2"
+    },
+    {
+      "id": "E2-03",
+      "pass": true,
+      "fails": [],
+      "output": {
+        "lines": [
+          {
+            "ambiguities": [],
+            "currency": "HNL",
+            "description": "Harina 10 lb",
+            "invoice_quantity": null,
+            "invoice_unit": null,
+            "source_text": "Harina 10 lb L120.00",
+            "unit_cost_minor": 12000,
+            "units_per_pack": null
+          },
+          {
+            "ambiguities": [],
+            "currency": "HNL",
+            "description": "Aceite 1L",
+            "invoice_quantity": null,
+            "invoice_unit": null,
+            "source_text": "Aceite 1L L85.00",
+            "unit_cost_minor": 8500,
+            "units_per_pack": null
+          },
+          {
+            "ambiguities": [],
+            "currency": "HNL",
+            "description": "Sal 2 lb",
+            "invoice_quantity": null,
+            "invoice_unit": null,
+            "source_text": "Sal 2 lb L18.00",
+            "unit_cost_minor": 1800,
+            "units_per_pack": null
+          },
+          {
+            "ambiguities": [],
+            "currency": "HNL",
+            "description": "Café 1 lb",
+            "invoice_quantity": null,
+            "invoice_unit": null,
+            "source_text": "Café 1 lb L95.00",
+            "unit_cost_minor": 9500,
+            "units_per_pack": null
+          }
+        ]
+      },
+      "latency_ms": 4102,
+      "input_tokens": 2051,
+      "output_tokens": 1436,
+      "cost_usd_list": 0.008667,
+      "model": "muse-spark-1.3",
+      "prompt_version": "e2-prompt-v2"
+    },
+    {
+      "id": "E2-04",
+      "pass": true,
+      "fails": [],
+      "output": {
+        "lines": [
+          {
+            "ambiguities": [],
+            "currency": "HNL",
+            "description": "Leche entera 1L",
+            "invoice_quantity": "6",
+            "invoice_unit": "caja",
+            "source_text": "6 caja Leche entera 1L L45.00",
+            "unit_cost_minor": 4500,
+            "units_per_pack": null
+          },
+          {
+            "ambiguities": [],
+            "currency": "HNL",
+            "description": "Mantequilla 1 lb",
+            "invoice_quantity": "8",
+            "invoice_unit": "unidad",
+            "source_text": "8 unidad Mantequilla 1 lb L32.00",
+            "unit_cost_minor": 3200,
+            "units_per_pack": null
+          }
+        ]
+      },
+      "latency_ms": 4141,
+      "input_tokens": 2051,
+      "output_tokens": 1424,
+      "cost_usd_list": 0.008616,
+      "model": "muse-spark-1.3",
+      "prompt_version": "e2-prompt-v2"
+    },
+    {
+      "id": "E2-05",
+      "pass": true,
+      "fails": [],
+      "output": {
+        "lines": [
+          {
+            "ambiguities": [
+              "mixed-box contents not specified on paper"
+            ],
+            "currency": "HNL",
+            "description": "Caja mixta 12",
+            "invoice_quantity": "2",
+            "invoice_unit": "caja",
+            "source_text": "2 caja Caja mixta 12 L180.00",
+            "unit_cost_minor": 18000,
+            "units_per_pack": null
+          },
+          {
+            "ambiguities": [
+              "promo item with no price printed; promo/free nature not specified on paper"
+            ],
+            "currency": null,
+            "description": "Bono café (promo)",
+            "invoice_quantity": "2",
+            "invoice_unit": "und",
+            "source_text": "2 und Bono café (promo)",
+            "unit_cost_minor": null,
+            "units_per_pack": null
+          }
+        ]
+      },
+      "latency_ms": 4213,
+      "input_tokens": 2051,
+      "output_tokens": 1503,
+      "cost_usd_list": 0.008951,
+      "model": "muse-spark-1.3",
+      "prompt_version": "e2-prompt-v2"
+    },
+    {
+      "id": "E2-06",
+      "pass": true,
+      "fails": [],
+      "output": {
+        "lines": [
+          {
+            "ambiguities": [
+              "Handwritten note 'fueron 10' contradicts printed quantity 12; kept printed value."
+            ],
+            "currency": "HNL",
+            "description": "Leche entera 1L",
+            "invoice_quantity": "12",
+            "invoice_unit": "caja",
+            "source_text": "12 caja Leche entera 1L L45.00 fueron 10",
+            "unit_cost_minor": 4500,
+            "units_per_pack": null
+          },
+          {
+            "ambiguities": [],
+            "currency": "HNL",
+            "description": "Arroz 25 lb",
+            "invoice_quantity": "4",
+            "invoice_unit": "saco",
+            "source_text": "4 saco Arroz 25 lb L625.00",
+            "unit_cost_minor": 62500,
+            "units_per_pack": null
+          }
+        ]
+      },
+      "latency_ms": 4196,
+      "input_tokens": 2051,
+      "output_tokens": 1614,
+      "cost_usd_list": 0.009423,
+      "model": "muse-spark-1.3",
+      "prompt_version": "e2-prompt-v2"
+    }
+  ]
+}

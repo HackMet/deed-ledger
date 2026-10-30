@@ -77,6 +77,7 @@ Stock movements are append-only and record actor, source message, model ID, prom
 | `WHATSAPP_TOKEN` | same | Long-lived system-user token scoped to this app |
 | `WHATSAPP_APP_SECRET` | same | Checks webhook signatures |
 | `WHATSAPP_VERIFY_TOKEN` | same | Random |
+| `SENDER_HASH_SALT` | same | Random, long. Keys the hashes kept for numbers that aren't members; changing it resets their daily notice limit |
 | `LINK_SIGNING_SECRET` | same | Rotate if a link leaks |
 
 - `.dev.vars` is gitignored and blocked for Claude's Read tool. Muse Code and Codex can read files in the workspace,

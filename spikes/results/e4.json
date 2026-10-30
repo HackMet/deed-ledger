@@ -1,0 +1,377 @@
+{
+  "exp": "E4",
+  "asr_model": "muse-voice-transcribe-1.0",
+  "e1_model": "muse-spark-1.3",
+  "e1_prompt_version": "e1-v3",
+  "transcripts_from": "../hackathon-audio/wav/e4-transcripts.json",
+  "price_source": "https://dev.meta.ai/docs/pricing-rate-limits",
+  "cost_basis": "estimated list-price (voice $0.18/audio-hour whole seconds; spark $1.25/M in, $4.25/M out)",
+  "totals": {
+    "cases": 6,
+    "transcription_passed": 6,
+    "interpretation_passed": 4,
+    "not_scored": [],
+    "downstream_inventions": [],
+    "conversion_ms_p50": 107,
+    "transcribe_latency_ms_p50": 1094,
+    "transcribe_latency_ms_p95": 1401,
+    "interpret_latency_ms_p50": 5914,
+    "interpret_latency_ms_p95": 11700,
+    "transcribe_cost_usd": 0.001,
+    "interpret_cost_usd": 0.0556605,
+    "cost_usd_list": 0.0566605
+  },
+  "cases": [
+    {
+      "id": "E4-01",
+      "e1": "E1-01",
+      "wav": "e4-e1-01.wav",
+      "conversion_ms": 104,
+      "reference": "Vendí tres refrescos a veinte cada uno.",
+      "transcript": "Vendí tres refrescos, a veinte cada uno.",
+      "audio_duration_ms": 2880,
+      "transcribe_latency_ms": 1401,
+      "transcribe_retried": 0,
+      "transcribe_cost_usd": 0.00009999999999999999,
+      "terms_found": {
+        "tres": true,
+        "refrescos": true,
+        "veinte": true
+      },
+      "transcription_pass": true,
+      "best_match": {
+        "id": "E4-01",
+        "e1": "E1-01",
+        "overlap": 1
+      },
+      "mismatch": false,
+      "scored": true,
+      "interpret_latency_ms": 3661,
+      "interpret_usage": {
+        "completion_tokens": 1211,
+        "prompt_tokens": 922,
+        "total_tokens": 2133,
+        "completion_tokens_details": {
+          "reasoning_tokens": 1123
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 881
+        }
+      },
+      "interpret_cost_usd": 0.00629925,
+      "interpretation_pass": true,
+      "interpretation_failures": [],
+      "e1_output": {
+        "ambiguities": [],
+        "amount_basis": "per_unit",
+        "amount_minor": 2000,
+        "counterparty_text": null,
+        "kind": "sale",
+        "missing": [],
+        "owner_reply": "Anotado: vendiste 3 refrescos a 20 cada uno.",
+        "product_text": "refrescos",
+        "quantity_text": "tres",
+        "quantity_value": 3,
+        "targets_open_draft": false,
+        "unit_text": null
+      },
+      "downstream_invention": false
+    },
+    {
+      "id": "E4-02",
+      "e1": "E1-03",
+      "wav": "e4-e1-03.wav",
+      "conversion_ms": 115,
+      "reference": "Entraron dos cajas de doce leches.",
+      "transcript": "Acaban de entrar dos cajas eh de doce leches",
+      "audio_duration_ms": 4960,
+      "transcribe_latency_ms": 1328,
+      "transcribe_retried": 0,
+      "transcribe_cost_usd": 0.00019999999999999998,
+      "terms_found": {
+        "dos": true,
+        "cajas": true,
+        "doce": true,
+        "leches": true
+      },
+      "transcription_pass": true,
+      "best_match": {
+        "id": "E4-02",
+        "e1": "E1-03",
+        "overlap": 0.8333333333333334
+      },
+      "mismatch": false,
+      "scored": true,
+      "interpret_latency_ms": 6913,
+      "interpret_usage": {
+        "completion_tokens": 2131,
+        "prompt_tokens": 922,
+        "total_tokens": 3053,
+        "completion_tokens_details": {
+          "reasoning_tokens": 2023
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 881
+        }
+      },
+      "interpret_cost_usd": 0.01020925,
+      "interpretation_pass": false,
+      "interpretation_failures": [
+        "must_equal.quantity_text: expected \"dos cajas de doce\", got \"dos cajas eh de doce\""
+      ],
+      "e1_output": {
+        "ambiguities": [
+          "no está claro si cada caja trae 12 o son 12 en total"
+        ],
+        "amount_basis": null,
+        "amount_minor": null,
+        "counterparty_text": null,
+        "kind": "supplier_receipt",
+        "missing": [
+          "quantity_value"
+        ],
+        "owner_reply": "¿Cada caja trae 12?",
+        "product_text": "leches",
+        "quantity_text": "dos cajas eh de doce",
+        "quantity_value": null,
+        "targets_open_draft": false,
+        "unit_text": "cajas"
+      },
+      "downstream_invention": false
+    },
+    {
+      "id": "E4-03",
+      "e1": "E1-04",
+      "wav": "e4-e1-04.wav",
+      "conversion_ms": 110,
+      "reference": "Vendí dos cajas de jugos a ciento cincuenta.",
+      "transcript": "Vendí dos cajas de jugos a ciento cincuenta.",
+      "audio_duration_ms": 4000,
+      "transcribe_latency_ms": 1059,
+      "transcribe_retried": 0,
+      "transcribe_cost_usd": 0.00019999999999999998,
+      "terms_found": {
+        "dos": true,
+        "cajas": true,
+        "jugos": true,
+        "ciento cincuenta": true
+      },
+      "transcription_pass": true,
+      "best_match": {
+        "id": "E4-03",
+        "e1": "E1-04",
+        "overlap": 1
+      },
+      "mismatch": false,
+      "scored": true,
+      "interpret_latency_ms": 6000,
+      "interpret_usage": {
+        "completion_tokens": 2026,
+        "prompt_tokens": 922,
+        "total_tokens": 2948,
+        "completion_tokens_details": {
+          "reasoning_tokens": 1893
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "interpret_cost_usd": 0.009763,
+      "interpretation_pass": true,
+      "interpretation_failures": [],
+      "e1_output": {
+        "ambiguities": [
+          "no está claro si 150 es precio por caja o total por las 2 cajas"
+        ],
+        "amount_basis": null,
+        "amount_minor": 15000,
+        "counterparty_text": null,
+        "kind": "sale",
+        "missing": [
+          "amount_basis"
+        ],
+        "owner_reply": "¿Los 150 son por caja o por las 2 cajas en total?",
+        "product_text": "jugos",
+        "quantity_text": "dos cajas",
+        "quantity_value": 2,
+        "targets_open_draft": false,
+        "unit_text": "cajas"
+      },
+      "downstream_invention": false
+    },
+    {
+      "id": "E4-04",
+      "e1": "E1-06",
+      "wav": "e4-e1-06.wav",
+      "conversion_ms": 109,
+      "reference": "Don Carlos llevó dos libras de arroz fiado.",
+      "transcript": "DonDon Carlos llevó dos libras de arroz fiado ahorita,",
+      "audio_duration_ms": 4960,
+      "transcribe_latency_ms": 1168,
+      "transcribe_retried": 0,
+      "transcribe_cost_usd": 0.00019999999999999998,
+      "terms_found": {
+        "Carlos": true,
+        "libras": true,
+        "arroz": true,
+        "fiado": true
+      },
+      "transcription_pass": true,
+      "best_match": {
+        "id": "E4-04",
+        "e1": "E1-06",
+        "overlap": 0.875
+      },
+      "mismatch": false,
+      "scored": true,
+      "interpret_latency_ms": 11700,
+      "interpret_usage": {
+        "completion_tokens": 3134,
+        "prompt_tokens": 924,
+        "total_tokens": 4058,
+        "completion_tokens_details": {
+          "reasoning_tokens": 3036
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "interpret_cost_usd": 0.0144745,
+      "interpretation_pass": true,
+      "interpretation_failures": [],
+      "e1_output": {
+        "ambiguities": [],
+        "amount_basis": null,
+        "amount_minor": null,
+        "counterparty_text": "Don Carlos",
+        "kind": "fiado_credit",
+        "missing": [
+          "amount_minor"
+        ],
+        "owner_reply": "Anotadas 2 libras de arroz a Don Carlos, ¿cuánto te debe por eso?",
+        "product_text": "arroz",
+        "quantity_text": "dos libras",
+        "quantity_value": 2,
+        "targets_open_draft": false,
+        "unit_text": "libras"
+      },
+      "downstream_invention": false
+    },
+    {
+      "id": "E4-05",
+      "e1": "E1-09",
+      "wav": "e4-e1-09.wav",
+      "conversion_ms": 107,
+      "reference": "No, fueron diez, no doce.",
+      "transcript": "Ve, no fueron diez no doce",
+      "audio_duration_ms": 4560,
+      "transcribe_latency_ms": 1094,
+      "transcribe_retried": 0,
+      "transcribe_cost_usd": 0.00019999999999999998,
+      "terms_found": {
+        "diez": true,
+        "doce": true
+      },
+      "transcription_pass": true,
+      "best_match": {
+        "id": "E4-05",
+        "e1": "E1-09",
+        "overlap": 1
+      },
+      "mismatch": false,
+      "scored": true,
+      "interpret_latency_ms": 5914,
+      "interpret_usage": {
+        "completion_tokens": 1908,
+        "prompt_tokens": 918,
+        "total_tokens": 2826,
+        "completion_tokens_details": {
+          "reasoning_tokens": 1833
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "interpret_cost_usd": 0.0092565,
+      "interpretation_pass": false,
+      "interpretation_failures": [
+        "must_equal.quantity_text: expected \"diez\", got \"doce\"",
+        "must_equal.quantity_value: expected 10, got 12",
+        "must_not_contain: output contains \"12\""
+      ],
+      "e1_output": {
+        "ambiguities": [],
+        "amount_basis": null,
+        "amount_minor": null,
+        "counterparty_text": null,
+        "kind": "correction",
+        "missing": [],
+        "owner_reply": "Corregido: 12.",
+        "product_text": null,
+        "quantity_text": "doce",
+        "quantity_value": 12,
+        "targets_open_draft": true,
+        "unit_text": null
+      },
+      "downstream_invention": false
+    },
+    {
+      "id": "E4-06",
+      "e1": "E1-11",
+      "wav": "e4-e1-11.wav",
+      "conversion_ms": 101,
+      "reference": "Vendí tres a veinte cada uno.",
+      "transcript": "Vendí tres a veinte cada uno.",
+      "audio_duration_ms": 2960,
+      "transcribe_latency_ms": 912,
+      "transcribe_retried": 0,
+      "transcribe_cost_usd": 0.00009999999999999999,
+      "terms_found": {
+        "tres": true,
+        "veinte": true
+      },
+      "transcription_pass": true,
+      "best_match": {
+        "id": "E4-06",
+        "e1": "E1-11",
+        "overlap": 1
+      },
+      "mismatch": false,
+      "scored": true,
+      "interpret_latency_ms": 5156,
+      "interpret_usage": {
+        "completion_tokens": 1061,
+        "prompt_tokens": 919,
+        "total_tokens": 1980,
+        "completion_tokens_details": {
+          "reasoning_tokens": 964
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 881
+        }
+      },
+      "interpret_cost_usd": 0.005658,
+      "interpretation_pass": true,
+      "interpretation_failures": [],
+      "e1_output": {
+        "ambiguities": [
+          "no se sabe que producto fueron los 3"
+        ],
+        "amount_basis": "per_unit",
+        "amount_minor": 2000,
+        "counterparty_text": null,
+        "kind": "sale",
+        "missing": [
+          "product_text"
+        ],
+        "owner_reply": "¿Qué fueron los 3 que vendiste a 20 cada uno?",
+        "product_text": null,
+        "quantity_text": "tres",
+        "quantity_value": 3,
+        "targets_open_draft": false,
+        "unit_text": null
+      },
+      "downstream_invention": false
+    }
+  ]
+}

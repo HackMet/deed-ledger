@@ -1,0 +1,318 @@
+{
+  "experiment": "E6",
+  "date": "2026-10-27",
+  "model": "none (deterministic, zero model calls)",
+  "cases": [
+    {
+      "id": "E6-01",
+      "pass": true,
+      "checks": {
+        "rejects": {
+          "expected": [
+            3
+          ],
+          "actual": [
+            3
+          ]
+        },
+        "commits": {
+          "expected": 1,
+          "actual": 1
+        },
+        "final": {
+          "expected": {
+            "draft_id": "D-1001",
+            "state": "committed",
+            "committed_revision": 1
+          },
+          "actual": {
+            "draft_id": "D-1001",
+            "state": "committed",
+            "committed_revision": 1
+          }
+        }
+      },
+      "steps": [
+        {
+          "step": 1,
+          "action": "create_draft",
+          "ok": true,
+          "reason": null,
+          "args": {
+            "draft_id": "D-1001",
+            "store": "A",
+            "kind": "supplier_receipt"
+          },
+          "result": {
+            "ok": true,
+            "draft_id": "D-1001",
+            "revision": 1
+          }
+        },
+        {
+          "step": 2,
+          "action": "confirm",
+          "ok": true,
+          "reason": null,
+          "args": {
+            "draft_id": "D-1001",
+            "revision": 1,
+            "store": "A",
+            "operation_key": "K-1001"
+          },
+          "result": {
+            "ok": true,
+            "draft_id": "D-1001",
+            "committed_revision": 1
+          }
+        },
+        {
+          "step": 3,
+          "action": "confirm",
+          "ok": false,
+          "reason": "duplicate_operation",
+          "args": {
+            "draft_id": "D-1001",
+            "revision": 1,
+            "store": "A",
+            "operation_key": "K-1001"
+          },
+          "result": {
+            "ok": false,
+            "reason": "duplicate_operation",
+            "message": "Already recorded; ignoring repeat."
+          }
+        }
+      ]
+    },
+    {
+      "id": "E6-02",
+      "pass": true,
+      "checks": {
+        "rejects": {
+          "expected": [
+            3
+          ],
+          "actual": [
+            3
+          ]
+        },
+        "commits": {
+          "expected": 1,
+          "actual": 1
+        },
+        "final": {
+          "expected": {
+            "draft_id": "D-1002",
+            "state": "committed",
+            "committed_revision": 2
+          },
+          "actual": {
+            "draft_id": "D-1002",
+            "state": "committed",
+            "committed_revision": 2
+          }
+        }
+      },
+      "steps": [
+        {
+          "step": 1,
+          "action": "create_draft",
+          "ok": true,
+          "reason": null,
+          "args": {
+            "draft_id": "D-1002",
+            "store": "A",
+            "kind": "sale"
+          },
+          "result": {
+            "ok": true,
+            "draft_id": "D-1002",
+            "revision": 1
+          }
+        },
+        {
+          "step": 2,
+          "action": "correct_draft",
+          "ok": true,
+          "reason": null,
+          "args": {
+            "draft_id": "D-1002",
+            "store": "A",
+            "changes": {
+              "quantity_value": 10
+            }
+          },
+          "result": {
+            "ok": true,
+            "draft_id": "D-1002",
+            "revision": 2
+          }
+        },
+        {
+          "step": 3,
+          "action": "confirm",
+          "ok": false,
+          "reason": "stale_revision",
+          "args": {
+            "draft_id": "D-1002",
+            "revision": 1,
+            "store": "A",
+            "operation_key": "K-1002-stale"
+          },
+          "result": {
+            "ok": false,
+            "reason": "stale_revision",
+            "message": "This version is outdated; review the latest."
+          }
+        },
+        {
+          "step": 4,
+          "action": "confirm",
+          "ok": true,
+          "reason": null,
+          "args": {
+            "draft_id": "D-1002",
+            "revision": 2,
+            "store": "A",
+            "operation_key": "K-1002"
+          },
+          "result": {
+            "ok": true,
+            "draft_id": "D-1002",
+            "committed_revision": 2
+          }
+        }
+      ]
+    },
+    {
+      "id": "E6-03",
+      "pass": true,
+      "checks": {
+        "rejects": {
+          "expected": [
+            2
+          ],
+          "actual": [
+            2
+          ]
+        },
+        "commits": {
+          "expected": 0,
+          "actual": 0
+        },
+        "final": {
+          "expected": {
+            "draft_id": "D-1003",
+            "state": "open",
+            "committed_revision": null
+          },
+          "actual": {
+            "draft_id": "D-1003",
+            "state": "open",
+            "committed_revision": null
+          }
+        }
+      },
+      "steps": [
+        {
+          "step": 1,
+          "action": "create_draft",
+          "ok": true,
+          "reason": null,
+          "args": {
+            "draft_id": "D-1003",
+            "store": "A",
+            "kind": "expense"
+          },
+          "result": {
+            "ok": true,
+            "draft_id": "D-1003",
+            "revision": 1
+          }
+        },
+        {
+          "step": 2,
+          "action": "confirm",
+          "ok": false,
+          "reason": "wrong_store",
+          "args": {
+            "draft_id": "D-1003",
+            "revision": 1,
+            "store": "B",
+            "operation_key": "K-1003-x"
+          },
+          "result": {
+            "ok": false,
+            "reason": "wrong_store",
+            "message": "Draft not found in this store."
+          }
+        }
+      ]
+    },
+    {
+      "id": "E6-04",
+      "pass": true,
+      "checks": {
+        "rejects": {
+          "expected": [
+            2
+          ],
+          "actual": [
+            2
+          ]
+        },
+        "drafts_created": {
+          "expected": 1,
+          "actual": 1
+        },
+        "final": {
+          "expected": {
+            "open_drafts_for_M-5001": 1
+          },
+          "actual": {
+            "open_drafts_for_M-5001": 1
+          }
+        }
+      },
+      "steps": [
+        {
+          "step": 1,
+          "action": "ingest_message",
+          "ok": true,
+          "reason": null,
+          "args": {
+            "message_id": "M-5001",
+            "store": "A",
+            "kind": "image",
+            "ref": "e2-01-printed-invoice.png"
+          },
+          "result": {
+            "ok": true,
+            "draft_id": "D-M-5001",
+            "created": true
+          }
+        },
+        {
+          "step": 2,
+          "action": "ingest_message",
+          "ok": false,
+          "reason": "duplicate_message",
+          "args": {
+            "message_id": "M-5001",
+            "store": "A",
+            "kind": "image",
+            "ref": "e2-01-printed-invoice.png"
+          },
+          "result": {
+            "ok": false,
+            "reason": "duplicate_message",
+            "message": "Message already received; ignoring replay."
+          }
+        }
+      ]
+    }
+  ],
+  "passed": 4,
+  "total": 4
+}

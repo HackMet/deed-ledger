@@ -1,0 +1,60 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Working name until the team picks the product name.
+  "name": "store-assistant",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-23",
+
+  "observability": {
+    "enabled": true,
+    "logs": { "enabled": true, "invocation_logs": true },
+    // The webhook GET carries hub.verify_token in the query string.
+    "redact_query_string": true
+  },
+
+  "vars": {
+    "WHATSAPP_GRAPH_API_VERSION": "v26.0",
+    // "1" opens the console without login, on an in-memory pretend engine. Only the simulator sets it.
+    "DEV_CONSOLE": ""
+  },
+
+  // Values come from `wrangler secret put` when deployed, and from .dev.vars locally.
+  // Tests blank all of them (vitest.config.ts).
+  "secrets": {
+    "required": ["WHATSAPP_APP_SECRET", "WHATSAPP_VERIFY_TOKEN", "WHATSAPP_TOKEN", "SENDER_HASH_SALT"]
+  },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "store-assistant",
+      // database_id: set after `wrangler d1 create store-assistant` (Angel runs remote commands).
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  "r2_buckets": [
+    {
+      "binding": "MEDIA",
+      "bucket_name": "store-assistant-media"
+    }
+  ],
+
+  // The queue is a doorbell: a message only says "this conversation has work". D1 holds the work.
+  "queues": {
+    "producers": [{ "binding": "JOBS", "queue": "store-assistant-jobs" }],
+    "consumers": [
+      {
+        "queue": "store-assistant-jobs",
+        "max_batch_size": 10,
+        "max_batch_timeout": 1,
+        "max_retries": 5
+      }
+    ]
+  },
+
+  // Every minute: re-ring stranded jobs, retry the outbox.
+  "triggers": {
+    "crons": ["* * * * *"]
+  }
+}

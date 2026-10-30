@@ -1,0 +1,17 @@
+{
+  "id": "E1-18",
+  "tags": ["correction", "spoken-style", "amount", "held-out"],
+  "input": { "type": "text", "body": "Este no pague doscientos pague trescientos de luz" },
+  "expected": {
+    "kind": "correction",
+    "must_equal": {
+      "amount_minor": 30000,
+      "amount_basis": "total",
+      "targets_open_draft": true
+    },
+    "must_be_null": ["quantity_text", "quantity_value", "unit_text"],
+    "must_ask": false,
+    "must_not_contain": ["20000", "doscientos"]
+  },
+  "notes": "Held-out. Spoken amount correction with leading filler 'Este'. Asserted figure is trescientos (30000 total); rejected doscientos must appear nowhere. Product/counterparty left unconstrained."
+}
