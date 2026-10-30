@@ -3,6 +3,7 @@
  * Tests pass overrides for providers (channel, doorbell, media source, clock) and keep the real
  * D1 repositories.
  */
+import type { Engine } from "./application/engine";
 import { placeholderHandler } from "./application/placeholder-handler";
 import type { Deps } from "./application/ports";
 import { type Config, readConfig } from "./infrastructure/config";
@@ -11,6 +12,8 @@ import { D1JobRepository } from "./infrastructure/d1/job-repository";
 import { D1OutboxRepository } from "./infrastructure/d1/outbox-repository";
 import { D1TenancyRepository } from "./infrastructure/d1/tenancy-repository";
 import { HmacKeyedHasher } from "./infrastructure/keyed-hasher";
+import { demoOrders } from "./infrastructure/memory/demo-orders";
+import { MemoryEngine } from "./infrastructure/memory/memory-engine";
 import { QueueDoorbell } from "./infrastructure/queue-doorbell";
 import { R2MediaStore } from "./infrastructure/r2-media-store";
 import { consoleLogger, randomIds, realSleep, systemClock } from "./infrastructure/runtime";
@@ -21,20 +24,26 @@ import { SEND_TIMEOUT_MS } from "./domain/outbox";
 export interface Runtime {
   readonly config: Config;
   readonly deps: Deps;
+  /** Null until the real engine is wired in, except for the dev console's pretend engine. */
+  readonly engine: Engine | null;
 }
+
+/** One pretend engine per Worker isolate, so the dev console's taps last between requests. */
+const devEngine = new MemoryEngine(() => demoOrders(Date.now()));
 
 export type RuntimeOverrides = Partial<
   Pick<
     Deps,
     "clock" | "ids" | "log" | "sleep" | "hasher" | "doorbell" | "channel" | "mediaSource" | "mediaStore" | "jobHandler"
   >
-> & { readonly db?: D1Database };
+> & { readonly db?: D1Database; readonly engine?: Engine };
 
 export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtime {
   const config = readConfig(env);
   const db = overrides.db ?? env.DB;
   return {
     config,
+    engine: overrides.engine ?? (config.devConsole ? devEngine : null),
     deps: {
       clock: overrides.clock ?? systemClock,
       ids: overrides.ids ?? randomIds,

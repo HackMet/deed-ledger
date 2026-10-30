@@ -23,6 +23,11 @@ export const SIM_SECRETS = {
   SENDER_HASH_SALT: SIM.salt,
 };
 
+/** Plain settings for the simulated Worker: the console opens without login, on the pretend engine. */
+export const SIM_VARS = {
+  DEV_CONSOLE: "1",
+};
+
 /**
  * The environment for child processes: the caller's environment minus anything that looks like
  * a credential, plus the fake simulator secrets. Wrangler lets process.env override env files for

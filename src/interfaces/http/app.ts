@@ -4,13 +4,13 @@ import { describeError } from "../../application/errors";
 import { acceptEvents, type IntakeOutcome } from "../../application/intake";
 import type { Deps } from "../../application/ports";
 import type { Runtime } from "../../composition";
+import { consoleRoutes } from "./console";
+import type { HttpEnv } from "./env";
 import { parseWebhookPayload } from "../../integrations/whatsapp/payload";
 import { verifyTokenMatches, verifyWebhookSignature } from "../../integrations/whatsapp/signature";
 
 /** Meta's webhook payloads are up to 3 MB; anything bigger isn't from Meta. */
 const MAX_WEBHOOK_BYTES = 4 * 1024 * 1024;
-
-type HttpEnv = { Bindings: Env; Variables: { runtime: Runtime } };
 
 export function createHttpApp(makeRuntime: (env: Env) => Runtime) {
   const app = new Hono<HttpEnv>();
@@ -77,6 +77,8 @@ export function createHttpApp(makeRuntime: (env: Env) => Runtime) {
     c.executionCtx.waitUntil(afterIntake(deps, outcome));
     return c.text("ok", 200);
   });
+
+  app.route("/console", consoleRoutes());
 
   app.notFound((c) => c.text("Not found", 404));
 

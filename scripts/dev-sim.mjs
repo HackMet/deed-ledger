@@ -9,12 +9,12 @@
 import { spawn } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { queryLocal, SIM, SIM_SECRETS, simChildEnv, wrangler } from "./lib/sim.mjs";
+import { queryLocal, SIM, SIM_SECRETS, SIM_VARS, simChildEnv, wrangler } from "./lib/sim.mjs";
 
 mkdirSync(dirname(SIM.envFile), { recursive: true });
 writeFileSync(
   SIM.envFile,
-  `${Object.entries(SIM_SECRETS)
+  `${Object.entries({ ...SIM_SECRETS, ...SIM_VARS })
     .map(([name, value]) => `${name}=${value}`)
     .join("\n")}\n`,
 );

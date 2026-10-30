@@ -13,7 +13,9 @@
   },
 
   "vars": {
-    "WHATSAPP_GRAPH_API_VERSION": "v26.0"
+    "WHATSAPP_GRAPH_API_VERSION": "v26.0",
+    // "1" opens the console without login, on an in-memory pretend engine. Only the simulator sets it.
+    "DEV_CONSOLE": ""
   },
 
   // Values come from `wrangler secret put` when deployed, and from .dev.vars locally.
