@@ -213,6 +213,11 @@ export interface BatchGuard {
 export interface Commit {
   readonly guards: readonly BatchGuard[];
   readonly statements: readonly D1PreparedStatement[];
+  /**
+   * Checked after the statements, in the same batch: the facts were written as intended. Not run
+   * yet: until the fence runs them, completeJob refuses a commit that carries any.
+   */
+  readonly post?: readonly BatchGuard[];
 }
 
 export interface JobOutcome {

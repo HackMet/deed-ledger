@@ -130,6 +130,23 @@ describe("a job's commits save with the job (JobOutcome.commits)", () => {
     expect(h.sentTo(phone)).toEqual([couldNotProcess("text")]);
   });
 
+  it("refuses a commit with post guards until the fence runs them, and saves nothing", async () => {
+    const h = harness({
+      jobHandler: {
+        async handle(input) {
+          const { replies } = await placeholderHandler.handle(input);
+          const commit = factCommit(input, `post:${input.job.id}`);
+          return { replies, commits: [{ ...commit, post: commit.guards }] };
+        },
+      },
+    });
+    const { store } = await sendText(h, "seis huevos");
+    await h.deliver();
+
+    expect(await factsOf(store.businessId)).toEqual([]);
+    expect(await jobsOf(store.businessId)).toMatchObject([{ job_state: "failed", last_error: "commit_rejected" }]);
+  });
+
   it("saves the commits even when the closing reply is withheld for a newer message", async () => {
     const phone = newPhone();
     const store = await seedStore({ members: [{ phone, role: "owner" }] });

@@ -187,7 +187,8 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
   the job, after the lease and job guards, so a stale writer gets `StaleWriteError` first. The facts, the job's
   completion and its replies save together or not at all; commits save even when a closing reply is withheld. A
   commit guard that doesn't hold rolls back everything and the job retries (`commit_refused`), reading the records
-  again; a constraint violation fails the job with its failure reply (`commit_rejected`).
+  again; a constraint violation fails the job with its failure reply (`commit_rejected`). A commit's `post` guards
+  (checked after its statements) are refused the same way until the fence runs them (D-40 covers the D1 types).
 
 ### How a burst closes
 

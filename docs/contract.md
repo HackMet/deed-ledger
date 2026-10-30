@@ -48,12 +48,19 @@ against the types and the fixtures; `npm run typecheck` fails when a fixture sto
 - One receipt is one payment claim: bank and reference are unique per store.
 - Every guard covers what the decision read: order version, role, price, PAUSA.
 
+## Agreed (Oct 30)
+
+- `clarification` and `customer_name` are kinds.
+- Lines are matched to the catalog on the perception side (barcode, exact name, known alias) and by staff through
+  `match_line`. The engine never guesses a product.
+- Operation keys as above. The `operations` table is the single anchor for idempotency; the engine's facts reference
+  it. A repeated key is answered from `operations` before any commit is built (`duplicate` with the first outcome);
+  the UNIQUE rule only settles races.
+- A `Commit` may carry `post` guards, checked after its statements in the same batch. Until the fence runs them,
+  `completeJob` refuses a commit that has any.
+- `Commit` naming D1 types in the application layer is a decision (D-40), not debt.
+- Tables use `business_id` (existing schema), not Tech Spec v3's `store_id`.
+
 ## Open for the meeting
 
-1. **Kinds added beyond Tech Spec v3:** `clarification` (an answer to the engine's last question: "de litro") and
-   `customer_name`. The PRD's first order needs both.
-2. **Who matches lines to the catalog:** here it's code on the perception side (barcode, exact name, known alias) and
-   staff through `match_line`. Does the Deed core expect to match?
-3. **Operation keys:** rooted in the job ID for a message, `confirm:<order>:v<version>` for a readback. Fine for the
-   Deed core's `operations` table?
-4. **Kerly's spec:** not read yet. Anything here that conflicts with it wins a discussion, not a default.
+1. **Kerly's spec:** not read yet. Anything here that conflicts with it wins a discussion, not a default.

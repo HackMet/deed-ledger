@@ -1,4 +1,4 @@
-import { JobConflictError, StaleSnapshotError } from "../../application/errors";
+import { JobConflictError, PermanentWriteError, StaleSnapshotError } from "../../application/errors";
 import type {
   Commit,
   ConversationRef,
@@ -222,6 +222,10 @@ export class D1JobRepository implements JobRepository {
     closesBurst: boolean,
     commits: readonly Commit[] = [],
   ): Promise<number> {
+    // Ignoring a post guard would save a fact nobody checked: refuse until the fence runs them.
+    if (commits.some((commit) => (commit.post?.length ?? 0) > 0)) {
+      throw new PermanentWriteError("post guards are not supported yet");
+    }
     const commitStatements = commits.flatMap((commit) => commit.statements);
     // The lease and job guards come first: a stale writer gets StaleWriteError, not a commit's error.
     const guards = [this.runningGuard(lease, jobId), ...commits.flatMap((commit) => commit.guards)];
