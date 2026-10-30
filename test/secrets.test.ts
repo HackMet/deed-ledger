@@ -23,6 +23,7 @@ describe("test environment", () => {
       "0002_messaging.sql",
       "0003_console_auth.sql",
       "0004_ledger.sql",
+      "0005_orders.sql",
     ]);
   });
 
