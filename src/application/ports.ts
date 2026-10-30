@@ -461,6 +461,45 @@ export interface OutboxRepository {
   maintain(nowMs: number): Promise<OutboxMaintenance>;
 }
 
+/** A logged-in console member, from a session. The store comes from here, never from the request. */
+export interface ConsoleMember extends Tenant {
+  readonly userId: string;
+  readonly sessionId: string;
+  readonly role: "owner" | "staff";
+  readonly canApproveFiado: boolean;
+}
+
+export interface InvitePreview {
+  readonly storeName: string;
+}
+
+export interface MemberSummary {
+  readonly userId: string;
+  readonly displayName: string | null;
+  readonly role: "owner" | "staff";
+  readonly active: boolean;
+  readonly canApproveFiado: boolean;
+}
+
+/** Console invites and sessions. Tokens arrive and are stored hashed; times are the Worker's clock. */
+export interface ConsoleAuthRepository {
+  /** An invite that would open a session now, without using it. */
+  previewInvite(tokenHash: string, nowMs: number): Promise<InvitePreview | null>;
+  /**
+   * One batch: uses the invite and opens the session, only while the invite is unused and unexpired
+   * and its membership active. Null when it isn't, and then nothing was written.
+   */
+  acceptInvite(
+    tokenHash: string,
+    session: { readonly id: string; readonly tokenHash: string; readonly nowMs: number; readonly expiresAtMs: number },
+  ): Promise<ConsoleMember | null>;
+  /** The session's member while the session is open and the membership active; checked on every request. */
+  findSession(tokenHash: string, nowMs: number): Promise<ConsoleMember | null>;
+  /** Ends every open session of the member. Returns how many were open. */
+  revokeSessions(tenant: Tenant, userId: string, nowMs: number): Promise<number>;
+  listMembers(tenant: Tenant): Promise<MemberSummary[]>;
+}
+
 // ---------------------------------------------------------------------------------------------
 
 export interface Deps {
@@ -473,6 +512,7 @@ export interface Deps {
   readonly intake: IntakeRepository;
   readonly jobs: JobRepository;
   readonly outbox: OutboxRepository;
+  readonly consoleAuth: ConsoleAuthRepository;
   readonly doorbell: Doorbell;
   readonly channel: MessagingChannel;
   readonly mediaSource: MediaSource;

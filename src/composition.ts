@@ -7,6 +7,7 @@ import type { Engine } from "./application/engine";
 import { placeholderHandler } from "./application/placeholder-handler";
 import type { Deps } from "./application/ports";
 import { type Config, readConfig } from "./infrastructure/config";
+import { D1ConsoleAuthRepository } from "./infrastructure/d1/console-auth-repository";
 import { D1IntakeRepository } from "./infrastructure/d1/intake-repository";
 import { D1JobRepository } from "./infrastructure/d1/job-repository";
 import { D1OutboxRepository } from "./infrastructure/d1/outbox-repository";
@@ -54,6 +55,7 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
       intake: new D1IntakeRepository(db),
       jobs: new D1JobRepository(db),
       outbox: new D1OutboxRepository(db),
+      consoleAuth: new D1ConsoleAuthRepository(db),
       doorbell: overrides.doorbell ?? new QueueDoorbell(env.JOBS),
       channel:
         overrides.channel ??

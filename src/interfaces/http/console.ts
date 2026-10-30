@@ -1,20 +1,18 @@
 /**
- * The staff console: server-rendered pages for a 360 px Android screen. For now only the
- * preparation list, and only in dev mode (no login yet: a fixed demo store and staff member). The
- * list refreshes itself every few seconds; every button posts one action with its own operation key,
- * so a double tap saves once.
+ * The staff console: server-rendered pages for a 360 px Android screen, behind the login in
+ * `console/auth.ts`. The list refreshes itself every few seconds; every button posts one action with
+ * its own operation key and the session's CSRF value, so a double tap saves once.
  */
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
+import { csrf } from "hono/csrf";
 import { html } from "hono/html";
 import type { MemberContext } from "../../application/engine";
 import type { ActionEnvelope, ConsoleAction, LineMark } from "../../domain/contract/actions";
 import { formatLempiras } from "../../domain/contract/numbers";
 import type { EngineOutcome, OrderLineView, OrderView, PreparationCard } from "../../domain/contract/outcomes";
-import type { HttpEnv } from "./env";
+import { type ConsoleEnv, memberContext, registerEntryRoutes, requireCsrf, requireMember, requireOwner, simplePage } from "./console/auth";
 
 const REFRESH_SECONDS = 15;
-const DEV_STORE = "dev-store";
-const DEV_MEMBER = "dev-staff";
 
 /** What a tap's result tells the person who tapped, by key in the redirect. */
 const NOTICES = {
@@ -34,40 +32,56 @@ const STATE_LABELS: Partial<Record<OrderView["state"], string>> = {
 const MARK_LABELS: Record<LineMark, string> = { listo: "Listo", no_hay: "No hay", ofrecer_otro: "Otro ofrecido" };
 
 export function consoleRoutes() {
-  const app = new Hono<HttpEnv>();
+  const app = new Hono<ConsoleEnv>();
 
-  app.use("*", async (c, next) => {
-    const { config, engine } = c.get("runtime");
-    if (!config.devConsole || engine === null) return c.text("Not found", 404);
-    await next();
-  });
+  // Form posts from another site are refused, the login form included (its invite would otherwise
+  // let a stranger swap the victim's session for one in their store).
+  app.use("*", csrf());
+  registerEntryRoutes(app);
+  app.use("*", requireMember);
+  app.use("*", requireCsrf);
 
   app.get("/", (c) => c.redirect("/console/preparacion", 302));
 
   app.get("/preparacion", async (c) => {
-    const { engine, deps } = c.get("runtime");
-    const cards = await engine!.preparationList(devMember(deps.clock.now()));
+    const engine = c.get("runtime").engine;
+    if (engine === null) return engineNotReady(c);
+    const cards = await engine.preparationList(memberContext(c));
     const notice = c.req.query("aviso");
-    return c.html(page(cards, notice !== undefined && notice in NOTICES ? NOTICES[notice as NoticeKey] : null));
+    return c.html(page(cards, notice !== undefined && notice in NOTICES ? NOTICES[notice as NoticeKey] : null, c.get("csrf")));
   });
 
   app.post("/acciones", async (c) => {
     const { engine, deps } = c.get("runtime");
-    const member = devMember(deps.clock.now());
+    if (engine === null) return engineNotReady(c);
+    const member = memberContext(c);
     const envelope = parseAction(await c.req.parseBody(), member);
     if (envelope === null) return c.text("Bad request", 400);
-    const { outcome } = await engine!.onConsoleAction(member, envelope);
+    const { outcome } = await engine.onConsoleAction(member, envelope);
     deps.log.info("console_action", { businessId: member.businessId, outcome: outcome.type });
     const notice = noticeFor(outcome);
     const anchor = "orderId" in envelope.action ? `#${envelope.action.orderId}` : "";
     return c.redirect(`/console/preparacion${notice === null ? "" : `?aviso=${notice}`}${anchor}`, 303);
   });
 
+  app.get("/empleados", requireOwner, async (c) => {
+    const { deps } = c.get("runtime");
+    const members = await deps.consoleAuth.listMembers(c.get("member"));
+    return c.html(
+      simplePage(
+        "Empleados",
+        html`<ul>${members.map(
+          (m) => html`<li>${m.displayName ?? "Sin nombre"} · ${m.role === "owner" ? "Dueño" : "Empleado"}${m.active ? "" : " · quitado"}</li>`,
+        )}</ul>`,
+      ),
+    );
+  });
+
   return app;
 }
 
-function devMember(nowMs: number): MemberContext {
-  return { businessId: DEV_STORE, memberId: DEV_MEMBER, role: "staff", canApproveFiado: false, nowMs };
+function engineNotReady(c: Context<ConsoleEnv>) {
+  return c.html(simplePage("Consola", html`<p>La lista de pedidos no está lista todavía.</p>`), 503);
 }
 
 function noticeFor(outcome: EngineOutcome): NoticeKey | null {
@@ -114,7 +128,7 @@ function parseAction(form: Record<string, unknown>, member: MemberContext): Acti
 // ---------------------------------------------------------------------------------------------
 // Rendering. `html` escapes every interpolated string.
 
-function page(cards: readonly PreparationCard[], notice: string | null) {
+function page(cards: readonly PreparationCard[], notice: string | null, csrf: string) {
   return html`<!doctype html>
 <html lang="es">
 <head>
@@ -127,39 +141,39 @@ function page(cards: readonly PreparationCard[], notice: string | null) {
 <body>
 <header><h1>Pedidos por preparar</h1><a class="refresh" href="/console/preparacion">Actualizar</a></header>
 ${notice === null ? "" : html`<p class="notice" role="status">${notice}</p>`}
-${cards.length === 0 ? html`<p class="empty">No hay pedidos por preparar.</p>` : cards.map((card, n) => orderCard(card, n + 1))}
+${cards.length === 0 ? html`<p class="empty">No hay pedidos por preparar.</p>` : cards.map((card, n) => orderCard(card, n + 1, csrf))}
 </body>
 </html>`;
 }
 
-function orderCard(card: PreparationCard, position: number) {
+function orderCard(card: PreparationCard, position: number, csrf: string) {
   const { order } = card;
   const packing = order.state === "confirmado" || order.state === "preparando";
   const changed = new Set(card.changedLineIds);
   return html`<section class="order ${order.state}" id="${order.orderId}">
 <div class="head"><strong>${position}. ${card.customerName ?? "Cliente sin nombre"}</strong><span class="state">${STATE_LABELS[order.state] ?? ""}</span></div>
 <p class="meta">${fulfillmentText(order)} · Versión ${order.version}</p>
-<ul>${order.lines.map((line) => lineItem(order, line, packing, changed.has(line.lineId)))}</ul>
+<ul>${order.lines.map((line) => lineItem(order, line, packing, changed.has(line.lineId), csrf))}</ul>
 <p class="total">${order.total === null ? "Total: falta precio" : `Total ${formatLempiras(order.total)}`}</p>
-${orderButton(order)}
+${orderButton(order, csrf)}
 </section>`;
 }
 
-function lineItem(order: OrderView, line: OrderLineView, packing: boolean, changed: boolean) {
+function lineItem(order: OrderView, line: OrderLineView, packing: boolean, changed: boolean, csrf: string) {
   const name = line.productName ?? `"${line.text}"`;
   return html`<li class="${changed ? "changed" : ""}">
 <div class="line"><span>${name} × ${line.quantity ?? "?"}</span>${changed ? html`<em>Cambió</em>` : ""}${line.mark === null ? "" : html`<b class="mark ${line.mark}">${MARK_LABELS[line.mark]}</b>`}</div>
-${packing && line.mark === null ? html`<div class="buttons">${markButton(order, line, "listo", "Listo")}${markButton(order, line, "no_hay", "No hay")}</div>` : ""}
+${packing && line.mark === null ? html`<div class="buttons">${markButton(order, line, "listo", "Listo", csrf)}${markButton(order, line, "no_hay", "No hay", csrf)}</div>` : ""}
 </li>`;
 }
 
-function markButton(order: OrderView, line: OrderLineView, mark: LineMark, label: string) {
+function markButton(order: OrderView, line: OrderLineView, mark: LineMark, label: string, csrf: string) {
   return html`<form method="post" action="/console/acciones">
-${hidden(order, "mark_line")}<input type="hidden" name="lineId" value="${line.lineId}"><input type="hidden" name="mark" value="${mark}">
+${hidden(order, "mark_line", csrf)}<input type="hidden" name="lineId" value="${line.lineId}"><input type="hidden" name="mark" value="${mark}">
 <button class="${mark}">${label}</button></form>`;
 }
 
-function orderButton(order: OrderView) {
+function orderButton(order: OrderView, csrf: string) {
   const next =
     order.state === "confirmado"
       ? (["start_preparing", "Empezar"] as const)
@@ -169,12 +183,12 @@ function orderButton(order: OrderView) {
           ? (["mark_delivered", "Entregado"] as const)
           : null;
   if (next === null) return "";
-  return html`<form method="post" action="/console/acciones">${hidden(order, next[0])}<button class="primary">${next[1]}</button></form>`;
+  return html`<form method="post" action="/console/acciones">${hidden(order, next[0], csrf)}<button class="primary">${next[1]}</button></form>`;
 }
 
 /** Every form carries the version on screen and a fresh operation key: a double tap sends the same key. */
-function hidden(order: OrderView, type: string) {
-  return html`<input type="hidden" name="type" value="${type}"><input type="hidden" name="orderId" value="${order.orderId}"><input type="hidden" name="version" value="${order.version}"><input type="hidden" name="operationKey" value="${crypto.randomUUID()}">`;
+function hidden(order: OrderView, type: string, csrf: string) {
+  return html`<input type="hidden" name="type" value="${type}"><input type="hidden" name="orderId" value="${order.orderId}"><input type="hidden" name="version" value="${order.version}"><input type="hidden" name="operationKey" value="${crypto.randomUUID()}"><input type="hidden" name="csrf" value="${csrf}">`;
 }
 
 function fulfillmentText(order: OrderView): string {

@@ -20,6 +20,7 @@ const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
 export const TEST_APP_SECRET = "test-app-secret-not-real";
 export const TEST_VERIFY_TOKEN = "test-verify-token-not-real";
 export const TEST_SALT = "test-salt-not-real";
+export const TEST_LINK_SECRET = "test-link-secret-not-real";
 
 export function testEnv(overrides: Partial<Env> = {}): Env {
   return {
@@ -31,6 +32,7 @@ export function testEnv(overrides: Partial<Env> = {}): Env {
     WHATSAPP_VERIFY_TOKEN: TEST_VERIFY_TOKEN,
     WHATSAPP_TOKEN: "",
     SENDER_HASH_SALT: TEST_SALT,
+    LINK_SIGNING_SECRET: TEST_LINK_SECRET,
     ...overrides,
   } as Env;
 }

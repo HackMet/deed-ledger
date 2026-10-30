@@ -8,6 +8,8 @@ export interface Config {
   readonly whatsappToken: string;
   readonly senderHashSalt: string;
   readonly graphApiVersion: string;
+  /** Signs the console's CSRF values. Blank: the console's login fails closed. */
+  readonly linkSigningSecret: string;
   /** The console without login, on the in-memory pretend engine. Local simulator only. */
   readonly devConsole: boolean;
 }
@@ -19,6 +21,7 @@ export function readConfig(env: Env): Config {
     whatsappToken: env.WHATSAPP_TOKEN ?? "",
     senderHashSalt: env.SENDER_HASH_SALT ?? "",
     graphApiVersion: env.WHATSAPP_GRAPH_API_VERSION ?? "v26.0",
+    linkSigningSecret: env.LINK_SIGNING_SECRET ?? "",
     devConsole: String(env.DEV_CONSOLE ?? "") === "1",
   };
 }
