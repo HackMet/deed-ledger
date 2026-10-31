@@ -9,7 +9,7 @@ import { env } from "cloudflare:workers";
 import type { Engine } from "../../src/application/engine";
 import type { BurstMediaResolver } from "../../src/application/order-reading";
 import type { BurstReader } from "../../src/application/perception/reader";
-import type { Deps, JobHandler, MediaSource, ModelProvider } from "../../src/application/ports";
+import type { Deps, JobHandler, MediaSource, ModelProvider, Pendientes } from "../../src/application/ports";
 import { buildRuntime } from "../../src/composition";
 import { createWorker } from "../../src/index";
 import type { DoorbellMessage } from "../../src/infrastructure/queue-doorbell";
@@ -50,6 +50,7 @@ export interface HarnessOptions {
   readonly modelProvider?: ModelProvider;
   readonly burstMedia?: BurstMediaResolver;
   readonly burstReader?: BurstReader;
+  readonly pendientes?: Pendientes;
 }
 
 /** The real Worker (routes, D1 repositories, R2) with fake providers and a controllable clock. */
@@ -78,6 +79,7 @@ export function harness(options: HarnessOptions = {}) {
       ...(options.modelProvider === undefined ? {} : { modelProvider: options.modelProvider }),
       ...(options.burstMedia === undefined ? {} : { burstMedia: options.burstMedia }),
       ...(options.burstReader === undefined ? {} : { burstReader: options.burstReader }),
+      ...(options.pendientes === undefined ? {} : { pendientes: options.pendientes }),
     });
   const worker = createWorker(makeRuntime);
   const deps: Deps = makeRuntime(workerEnv).deps;

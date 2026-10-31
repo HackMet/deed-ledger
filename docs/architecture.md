@@ -260,6 +260,14 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
 - **Sweep, every minute.** Re-rings conversations with due jobs older than 30 s and no live lease, expires rows,
   settles claims that ran out, stops groups, marks closed windows, ends notices pending for over 15 minutes, deletes
   old unknown-sender records and early statuses, then sends up to 50 rows.
+- **The two-minute message.** In the same sweep, before the sends: a conversation whose oldest open message is more
+  than 2 minutes old (and under an hour), leased or not, with no outbox row written since that message arrived, gets
+  "Recibimos tu mensaje, te respondemos en un momento." and an urgent Pendientes item. One `INSERT … SELECT`
+  re-checks "still open, nothing written since" as it writes, and the dedupe key `slow_notice:<message>` is UNIQUE,
+  so overlapping sweeps or a sweep racing the answer queue it at most once, and never after the answer. The row has
+  no job group (its fate never stops the answer) and no claims (the claim check passes it as written). It expires
+  after 10 minutes and follows the 24-hour window like any row. With a minutely cron it is queued between 2 and 3
+  minutes in; the real answer follows when ready.
 
 ### Replies and the claim check
 

@@ -358,6 +358,26 @@ export interface OutboxDraft {
   readonly buttons?: readonly ReplyButton[];
 }
 
+/** A burst still waiting for its answer, named by its oldest open message. */
+export interface SlowBurst extends ConversationRef {
+  readonly inboundId: string;
+  readonly receivedAtMs: number;
+}
+
+/**
+ * The fixed "we got your message" line, as an outbox row. It belongs to no job's group, so its
+ * fate never stops the real answer. `claims` is always empty: the line says nothing about orders,
+ * prices or stock, so neither pass of the claim check has anything to check.
+ */
+export interface SlowNoticeDraft {
+  readonly id: string;
+  readonly kind: string;
+  readonly body: string;
+  readonly dedupeKey: string;
+  readonly expiresAtMs: number;
+  readonly claims: readonly [];
+}
+
 export type LeaseClaim = "claimed" | "busy" | "missing";
 
 export interface JobSnapshot {
@@ -413,6 +433,18 @@ export interface JobRepository {
   abandonJob(lease: Lease, jobId: string, errorCode: string, nowMs: number, replies: readonly OutboxDraft[]): Promise<void>;
   /** System sweep: conversations with due open jobs older than the cutoff and no live lease. */
   findStrandedConversations(cutoffMs: number, nowMs: number, limit: number): Promise<ConversationRef[]>;
+  /**
+   * System sweep: bursts still waiting for an answer, leased or not. One per conversation: its oldest
+   * open message, received in [`notBeforeMs`, `receivedBeforeMs`), with no outbox row of the
+   * conversation written at or after that message's arrival.
+   */
+  findSlowBursts(receivedBeforeMs: number, notBeforeMs: number, limit: number): Promise<SlowBurst[]>;
+  /**
+   * Queues the slow notice for that burst, in one statement that checks, as it writes, that the
+   * message is still open and nothing was written to the conversation since it arrived. The
+   * dedupe key is UNIQUE, so a burst gets it at most once. True only for the call that wrote it.
+   */
+  queueSlowNotice(burst: SlowBurst, notice: SlowNoticeDraft, nowMs: number): Promise<boolean>;
   /**
    * The burst a reading uses: the conversation's messages no reading has used yet, received at or
    * after `sinceMs`, in order, through `throughJobId` (which must be running under this lease).
@@ -642,6 +674,21 @@ export interface PendienteItem {
   readonly outboxId: string | null;
   /** The reply's template name. */
   readonly template: string | null;
+  readonly urgency?: PendienteUrgency;
+}
+
+/** How soon a person should look. Absent: in the normal course. */
+export type PendienteUrgency = "urgent";
+
+/** A customer is still waiting for an answer past the slow-notice limit: someone should look now. */
+export interface SlowReplyPendiente {
+  readonly kind: "slow_reply";
+  readonly urgency: "urgent";
+  readonly conversationId: string;
+  /** The burst's oldest open message. */
+  readonly inboundId: string;
+  /** The notice queued to the customer. */
+  readonly outboxId: string;
 }
 
 /**
@@ -649,7 +696,7 @@ export interface PendienteItem {
  * (the proposal there returns a Commit for the caller's own batch instead). Never throws.
  */
 export interface Pendientes {
-  raise(tenant: Tenant, item: PendienteItem): Promise<void>;
+  raise(tenant: Tenant, item: PendienteItem | SlowReplyPendiente): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------------------------
