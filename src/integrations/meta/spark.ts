@@ -4,6 +4,7 @@
  * the job queue retries, and the spend cap is reserved per attempt.
  */
 import type { ModelContentPart, ModelProvider, ModelRequest, ModelResult } from "../../application/ports";
+import { READING_MAX_MS } from "../../domain/processing";
 
 export const META_API_BASE = "https://api.meta.ai/v1";
 export const SPARK_MODEL = "muse-spark-1.3";
@@ -40,7 +41,8 @@ export class MuseSparkProvider implements ModelProvider {
     this.model = model;
     this.apiKey = options.apiKey;
     this.fetch = options.fetch;
-    this.timeoutMs = options.timeoutMs ?? 60_000;
+    // The order reading sizes the conversation lease from the same number.
+    this.timeoutMs = options.timeoutMs ?? READING_MAX_MS;
     this.baseUrl = options.baseUrl ?? META_API_BASE;
   }
 

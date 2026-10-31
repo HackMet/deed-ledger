@@ -14,11 +14,13 @@ import { BURST_LOOKBACK_MS, parseReadbackButton, type ReadbackAnswer, readbackOp
 import type { CustomerAction } from "../domain/contract/actions";
 import type { BurstReading } from "../domain/contract/observation";
 import type { EngineOutcome, OrderView, QuestionCode } from "../domain/contract/outcomes";
-import { RECEIVED_PLACEHOLDER } from "../domain/copy";
+import { couldNotProcess, RECEIVED_PLACEHOLDER } from "../domain/copy";
 import { ANSWER_NEW_READBACK, WHAT_TO_CORRECT } from "../domain/order-copy";
-import { PLACEHOLDER_TTL_MS } from "../domain/outbox";
+import { FAILURE_REPLY_TTL_MS, PLACEHOLDER_TTL_MS } from "../domain/outbox";
+import { attemptsExhausted } from "../domain/processing";
 import { safeReply } from "../domain/replies";
 import type { CustomerContext, Engine, EngineResult, LineMatch } from "./engine";
+import { BurstMediaUnreadableError } from "./errors";
 import { CUSTOMER_REPLY_TTL_MS, replyForOutcome } from "./replies";
 import type {
   Clock,
@@ -190,7 +192,14 @@ async function handleBurst(
   }
 
   const customerContext = context(lease, job, customer, nowMs);
-  const { reading, matches, pendingQuestion } = await deps.reader.read({ lease, messages, context: customerContext });
+  let read: BurstRead;
+  try {
+    read = await deps.reader.read({ lease, messages, context: customerContext });
+  } catch (error) {
+    if (!(error instanceof BurstMediaUnreadableError) || !givesUpOnMedia(job, error)) throw error;
+    return unreadableMediaOutcome(deps, lease, job, error, nowMs);
+  }
+  const { reading, matches, pendingQuestion } = read;
   const result = await deps.engine.onBurst(customerContext, reading, matches);
   deps.log.info("burst_read", {
     businessId: lease.businessId,
@@ -202,6 +211,41 @@ async function handleBurst(
   const name = customer.name === null ? givenName(reading, pendingQuestion) : null;
   const nameCommits = name === null ? [] : [deps.customers.saveNameCommit(lease, customer.id, name, nowMs)];
   return complete(deps, lease, job, customer, messages, result, null, closesBurst, nowMs, nameCommits);
+}
+
+/**
+ * A photo or voice note we couldn't read is retried like any failed reading, except when no retry
+ * can help: on the job's last attempt, or when every failure is permanent (a broken or over-long
+ * voice note, a photo format the model doesn't take), so the customer doesn't wait for retries.
+ */
+function givesUpOnMedia(job: Job, error: BurstMediaUnreadableError): boolean {
+  return attemptsExhausted(job.attempts + 1) || error.failures.every((failure) => failure.permanent);
+}
+
+/**
+ * Giving up on unreadable media: the customer is asked to send it again, once per kind, and only
+ * those messages count as read, so the resent one isn't read beside the old one. The rest of the
+ * burst stays unread and is read with the customer's next message. Nothing goes to the engine.
+ */
+function unreadableMediaOutcome(
+  deps: OrderHandlerDeps,
+  lease: Lease,
+  job: Job,
+  error: BurstMediaUnreadableError,
+  nowMs: number,
+): JobOutcome {
+  const kinds = [...new Set(error.failures.map((failure) => failure.kind))];
+  deps.log.info("burst_media_given_up", {
+    businessId: lease.businessId,
+    conversationId: lease.conversationId,
+    inboundId: job.id,
+    count: error.failures.length,
+  });
+  return {
+    // Never withheld as a burst-closing reply: a later reading won't see these messages again.
+    replies: kinds.map((kind) => ({ body: couldNotProcess(kind), ttlMs: FAILURE_REPLY_TTL_MS })),
+    commits: [deps.jobs.markReadCommit(lease, job.id, error.failures.map((failure) => failure.jobId), nowMs)],
+  };
 }
 
 /**

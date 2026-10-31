@@ -9,7 +9,7 @@ import { env } from "cloudflare:workers";
 import type { Engine } from "../../src/application/engine";
 import type { BurstMediaResolver } from "../../src/application/order-reading";
 import type { BurstReader } from "../../src/application/perception/reader";
-import type { Deps, JobHandler, MediaSource, ModelProvider, Pendientes } from "../../src/application/ports";
+import type { AudioDecoder, Deps, JobHandler, MediaSource, ModelProvider, Pendientes, Transcriber } from "../../src/application/ports";
 import { buildRuntime } from "../../src/composition";
 import { createWorker } from "../../src/index";
 import type { DoorbellMessage } from "../../src/infrastructure/queue-doorbell";
@@ -51,6 +51,9 @@ export interface HarnessOptions {
   readonly burstMedia?: BurstMediaResolver;
   readonly burstReader?: BurstReader;
   readonly pendientes?: Pendientes;
+  /** A fake transcriber; the default has a blank key and never reaches the network. */
+  readonly transcriber?: Transcriber;
+  readonly audioDecoder?: AudioDecoder;
 }
 
 /** The real Worker (routes, D1 repositories, R2) with fake providers and a controllable clock. */
@@ -80,6 +83,8 @@ export function harness(options: HarnessOptions = {}) {
       ...(options.burstMedia === undefined ? {} : { burstMedia: options.burstMedia }),
       ...(options.burstReader === undefined ? {} : { burstReader: options.burstReader }),
       ...(options.pendientes === undefined ? {} : { pendientes: options.pendientes }),
+      ...(options.transcriber === undefined ? {} : { transcriber: options.transcriber }),
+      ...(options.audioDecoder === undefined ? {} : { audioDecoder: options.audioDecoder }),
     });
   const worker = createWorker(makeRuntime);
   const deps: Deps = makeRuntime(workerEnv).deps;

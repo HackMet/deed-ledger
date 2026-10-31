@@ -165,7 +165,10 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
 ### Processing: one conversation at a time
 
 - **Lease.** A doorbell's consumer leases the conversation for 60 s by the database's clock and extends it before
-  each job. The lease ID is a fencing token: every write is one D1 batch whose guards (the lease is held, the job is
+  each job. Before each slow step of a reading (a voice note's transcription, the model call) the order reading
+  extends it again to the step's hard timeout plus 60 s (`TRANSCRIBE_MAX_MS`, `READING_MAX_MS` in
+  `src/domain/processing.ts`, also the adapters' default timeouts); an extension that finds the lease gone throws
+  `LeaseLostError`, so nothing slow or paid starts. The lease ID is a fencing token: every write is one D1 batch whose guards (the lease is held, the job is
   in the state the transition expects) fail the whole batch (rule 6). A stale consumer's writes are refused and it
   stops. A consumer that finds the lease busy re-rings in 3 s.
 - **Settle.** One statement counts the open jobs and lists them, oldest first by (ordering time, receive time, ID),
@@ -188,7 +191,8 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
   OGG/Opus to 16 kHz mono WAV in the consumer (A1: libopus Wasm from `opus-decoder`, extracted at build time, since
   Workers can't compile Wasm at runtime; over 10 minutes or a cut-off file is refused), and calls Muse Voice
   Transcribe (90 s timeout, Spanish bias, one attempt). It throws on any failure, so a handler that calls it gets the
-  job's retries and then "no pude escuchar tu nota de voz". Not wired into a handler yet (#17).
+  job's retries and then "no pude escuchar tu nota de voz". The order reading calls it (below). The decoder's
+  errors extend `UnreadableMediaError`: the same bytes fail the same way, so they aren't retried.
 - **Handler.** `JobHandler` (`src/application/ports.ts`) is where the engine plugs in: it gets the job and
   `isNewestOfBurst`, and returns replies already rendered plus optional `commits`. With an engine wired in, the order
   handler (`src/application/order-handler.ts`) runs; without one, `placeholderHandler` acknowledges a burst with one
@@ -208,12 +212,19 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
 - **Reading a burst (#17).** The reading's job asks the engine for perception's context (the open order's labelled
   lines and the question asked last, gap a) and the store's catalog (gap b), through `OrderReadingSource`
   (`src/application/order-reading.ts`, local until the contract has both). Each job becomes one message of the
-  burst, in order; photos and voice notes go through `BurstMediaResolver` (#26 reads the photo back from R2, #27
-  transcribes; until then a photo reads as "no disponible" and a voice note as an empty transcript). One Muse Spark
+  burst, in order; photos and voice notes go through `BurstMediaResolver`. The default, `storedMediaResolver`,
+  reads a photo's bytes back from R2 (store from the lease) and passes them as image content, and transcribes a
+  voice note (`transcribeVoiceNote`) and passes the transcript as that message's text, so its evidence points at the
+  voice note. Voice notes are transcribed one at a time. One Muse Spark
   call reads the burst; code matches lines by barcode, exact name or known alias, and `Engine.onBurst` gets the
   reading and those matches only (the model's label picks are logged and dropped until the contract has them). A
   reading that fails (spend cap, provider refusal or outage, output off the schema) throws `ReadingFailedError`:
-  the job retries and, after its last attempt, sends the failure reply; nothing is saved. Replies come from
+  the job retries and, after its last attempt, sends the failure reply; nothing is saved. A photo or voice note that
+  can't be read throws `BurstMediaUnreadableError` (every failure of the burst in it) before any model call: the
+  job retries, and on its last attempt, or at once when every failure is permanent (a broken or over-10-minute
+  note, a photo format the model doesn't take), the job completes with "Perdón, no pude escuchar tu nota de voz…" or
+  "Perdón, no pude leer tu foto…" (once per kind) and marks only those messages read. The rest of the burst stays
+  unread and is read with the customer's next message, so a resent note isn't read beside the old one. Replies come from
   `replyForOutcome` (templates, claims, buttons). The reader is wired in `composition.ts` when an engine with those
   reads exists and `MODEL_API_KEY` is set; otherwise a burst gets the placeholder.
 - **Customers.** `CustomerRepository` builds the channel-side commits the handler adds to the job's batch: the name
@@ -348,9 +359,8 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
 - The shared "Tienda" account isn't designed yet: every login is one member with a phone number.
 - The media download hasn't met a real webhook yet. A stale writer can leave an unpublished R2 object behind, and
   nothing cleans those up.
-- A transcription can take up to 90 s, longer than the 60 s conversation lease. The handler that calls it (#17) must
-  extend the lease around the call, or the lease must grow; until then a slow transcription ends in a refused
-  (stale) write and a retry.
+- A consumer that dies during a transcription holds its conversation for up to 150 s (the extended lease) before
+  the sweep can re-ring it, instead of 60 s.
 - Messages over a conversation's hourly cap are dropped and logged, not queued. A conversation that keeps receiving
   messages less than 3 s apart keeps waiting to settle.
 - The send order relies on D1 running one batch at a time. Subqueries inside updates, `UPDATE … FROM`, `RETURNING`,
