@@ -248,9 +248,10 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
   its SHA-256 hash, valid 15 minutes, one use, for one member. `GET /console/entrar?codigo=…` only shows it (a link
   preview can't use it up); the "Entrar" POST uses it and opens a session in one guarded batch, so two taps can't
   both win. The session cookie (`consola`, Path `/console`, HttpOnly, Secure, SameSite=Lax, 30 days) holds another
-  random token, also stored hashed. Every request re-reads the session and requires an active membership; "Quitar"
-  sets `revoked_at_ms`. Every POST carries a CSRF value, an HMAC of the session ID with `LINK_SIGNING_SECRET`;
-  without that secret the console answers 503. The store and the actor always come from the session.
+  random token, also stored hashed. Every request re-reads the session and requires an active membership;
+  `revokeSessions` sets `revoked_at_ms` (no route calls it yet: "Quitar" is #23). Every POST carries a CSRF
+  value, an HMAC of the session ID with `LINK_SIGNING_SECRET`; without that secret the console answers 503. The
+  store and the actor always come from the session. Cross-site and oversized (> 16 KiB) form posts are refused.
 - **First login:** `npm run admin:invite -- --phone-number-id … --phone … --role owner|staff [--remote]` adds the
   person as a member if needed and prints a link. The raw code is only printed, never written to disk.
 - **Dev mode** (`DEV_CONSOLE=1`, local simulator only) skips login and CSRF with a fixed demo member.

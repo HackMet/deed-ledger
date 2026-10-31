@@ -1,4 +1,4 @@
-import type { ConsoleAuthRepository, ConsoleMember, InvitePreview, MemberSummary, Tenant } from "../../application/ports";
+import type { ConsoleAuthRepository, ConsoleMember, InvitePreview, MemberSummary, NewConsoleSession, Tenant } from "../../application/ports";
 import { type Guard, guardedBatch } from "./fence";
 
 class InviteUnusableError extends Error {
@@ -13,32 +13,22 @@ interface SessionRow {
   can_approve_fiado: number;
 }
 
-/** An invite is usable while unused, unexpired, and its membership active. */
-const USABLE_INVITE = `SELECT 1 FROM console_invites i
+/** An invite is usable while unused, unexpired, and its membership active. Binds token hash, now. */
+const USABLE_INVITE = `FROM console_invites i
   JOIN memberships m ON m.business_id = i.business_id AND m.user_id = i.user_id
+  JOIN businesses b ON b.id = i.business_id
   WHERE i.token_hash = ? AND i.used_at_ms IS NULL AND i.expires_at_ms > ? AND m.active = 1`;
 
 export class D1ConsoleAuthRepository implements ConsoleAuthRepository {
   constructor(private readonly db: D1Database) {}
 
   async previewInvite(tokenHash: string, nowMs: number): Promise<InvitePreview | null> {
-    const row = await this.db
-      .prepare(
-        `SELECT b.name FROM console_invites i
-         JOIN memberships m ON m.business_id = i.business_id AND m.user_id = i.user_id
-         JOIN businesses b ON b.id = i.business_id
-         WHERE i.token_hash = ? AND i.used_at_ms IS NULL AND i.expires_at_ms > ? AND m.active = 1`,
-      )
-      .bind(tokenHash, nowMs)
-      .first<{ name: string }>();
+    const row = await this.db.prepare(`SELECT b.name ${USABLE_INVITE}`).bind(tokenHash, nowMs).first<{ name: string }>();
     return row === null ? null : { storeName: row.name };
   }
 
-  async acceptInvite(
-    tokenHash: string,
-    session: { readonly id: string; readonly tokenHash: string; readonly nowMs: number; readonly expiresAtMs: number },
-  ): Promise<ConsoleMember | null> {
-    const usable: Guard = { holdsSql: USABLE_INVITE, params: [tokenHash, session.nowMs], error: () => new InviteUnusableError() };
+  async acceptInvite(tokenHash: string, session: NewConsoleSession): Promise<ConsoleMember | null> {
+    const usable: Guard = { holdsSql: `SELECT 1 ${USABLE_INVITE}`, params: [tokenHash, session.nowMs], error: () => new InviteUnusableError() };
     try {
       // One batch: the session opens and the invite is used, or neither. Two taps can't both win.
       await guardedBatch(this.db, [usable], [

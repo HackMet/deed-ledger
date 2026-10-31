@@ -92,6 +92,30 @@ describe("console login", () => {
     expect(await rows(`SELECT id FROM console_sessions WHERE business_id = ?`, store.businessId)).toHaveLength(1);
   });
 
+  it("opens one session when two taps use the same invite at once", async () => {
+    const h = harness({ engine: recordingEngine().engine });
+    const store = await storeWithStaff();
+    const code = await invite(h, store.businessId, store.members[1]!.userId);
+    const taps = await Promise.all([1, 2, 3].map(() => send(h, "/console/entrar", { method: "POST", form: { codigo: code } })));
+    expect(taps.map((tap) => tap.status).sort()).toEqual([303, 400, 400]);
+    expect(await rows(`SELECT id FROM console_sessions WHERE business_id = ?`, store.businessId)).toHaveLength(1);
+  });
+
+  it("sends someone already logged in to the list when their used invite comes back", async () => {
+    const h = harness({ engine: recordingEngine().engine });
+    const store = await storeWithStaff();
+    const code = await invite(h, store.businessId, store.members[1]!.userId);
+    const first = await send(h, "/console/entrar", { method: "POST", form: { codigo: code } });
+    const cookie = first.headers.get("set-cookie")!.split(";")[0]!;
+    for (const again of [
+      await send(h, "/console/entrar", { method: "POST", form: { codigo: code }, cookie }),
+      await send(h, `/console/entrar?codigo=${code}`, { cookie }),
+    ]) {
+      expect(again.status).toBe(303);
+      expect(again.headers.get("location")).toBe("/console/preparacion");
+    }
+  });
+
   it("sets a long-lived, HttpOnly, Secure, SameSite cookie, and stores only hashes", async () => {
     const h = harness({ engine: recordingEngine().engine });
     const store = await storeWithStaff();
@@ -128,7 +152,10 @@ describe("console login", () => {
     const code = await invite(h, store.businessId, store.members[1]!.userId);
     const forged = await send(h, "/console/entrar", { method: "POST", form: { codigo: code }, origin: "https://evil.test" });
     expect(forged.status).toBe(403);
+    expect(await forged.text()).toContain("Volvé a la lista");
     expect(forged.headers.get("set-cookie")).toBeNull();
+    const oversized = await send(h, "/console/entrar", { method: "POST", form: { codigo: code, pad: "x".repeat(20_000) } });
+    expect(oversized.status).toBe(413);
     expect((await send(h, "/console/entrar", { method: "POST", form: { codigo: code } })).status).toBe(303);
   });
 

@@ -4,13 +4,21 @@
  * its own operation key and the session's CSRF value, so a double tap saves once.
  */
 import { type Context, Hono } from "hono";
-import { csrf } from "hono/csrf";
 import { html } from "hono/html";
 import type { MemberContext } from "../../application/engine";
 import type { ActionEnvelope, ConsoleAction, LineMark } from "../../domain/contract/actions";
 import { formatLempiras } from "../../domain/contract/numbers";
 import type { EngineOutcome, OrderLineView, OrderView, PreparationCard } from "../../domain/contract/outcomes";
-import { type ConsoleEnv, memberContext, registerEntryRoutes, requireCsrf, requireMember, requireOwner, simplePage } from "./console/auth";
+import {
+  type ConsoleEnv,
+  memberContext,
+  registerEntryRoutes,
+  requireCsrf,
+  requireMember,
+  requireOwner,
+  sameSiteForms,
+  simplePage,
+} from "./console/auth";
 
 const REFRESH_SECONDS = 15;
 
@@ -34,9 +42,7 @@ const MARK_LABELS: Record<LineMark, string> = { listo: "Listo", no_hay: "No hay"
 export function consoleRoutes() {
   const app = new Hono<ConsoleEnv>();
 
-  // Form posts from another site are refused, the login form included (its invite would otherwise
-  // let a stranger swap the victim's session for one in their store).
-  app.use("*", csrf());
+  app.use("*", sameSiteForms);
   registerEntryRoutes(app);
   app.use("*", requireMember);
   app.use("*", requireCsrf);

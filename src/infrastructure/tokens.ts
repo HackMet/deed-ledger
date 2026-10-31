@@ -24,8 +24,7 @@ export async function csrfToken(secret: string, sessionId: string): Promise<stri
 
 /** Compares two tokens in time that doesn't depend on where they differ. */
 export function sameToken(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
+  const left = encoder.encode(a);
+  const right = encoder.encode(b);
+  return left.byteLength === right.byteLength && crypto.subtle.timingSafeEqual(left, right);
 }
