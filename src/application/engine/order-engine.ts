@@ -175,9 +175,6 @@ export class OrderEngine implements Engine {
 
   async onCustomerAction(context: CustomerContext, envelope: ActionEnvelope<CustomerAction>): Promise<EngineResult> {
     const { store } = this.deps;
-    const first = await store.firstOutcome(context, envelope.operationKey);
-    if (first !== null) return result({ type: "duplicate", first });
-
     // The actor comes from the conversation; an envelope for anyone else is refused.
     if (envelope.actor.type !== "customer" || envelope.actor.customerId !== context.customerId) {
       return result({ type: "rejected", reason: "not_allowed", order: null });
@@ -190,6 +187,10 @@ export class OrderEngine implements Engine {
       const own = await store.openOrder(context, context.customerId);
       return result({ type: "rejected", reason: "not_found", order: own?.view ?? null });
     }
+    // Only now is the key this customer's own: a replay answers from the first outcome, before the version check.
+    const first = await store.firstOutcome(context, envelope.operationKey);
+    if (first !== null) return result({ type: "duplicate", first });
+
     const { view } = stored;
     if (action.version !== view.version) return result({ type: "rejected", reason: "stale_version", order: view });
 

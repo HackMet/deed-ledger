@@ -175,6 +175,30 @@ describe("order engine on local D1", () => {
     expect(spoofed).toEqual({ outcome: { type: "rejected", reason: "not_allowed", order: null }, notices: [], commits: [] });
   });
 
+  it("(c2) a used operation key never leaks Carla's order to another customer or a spoofed actor", async () => {
+    const s = await newStore();
+    const carlas = await placeFirstOrder(s);
+    await save(await engine.onCustomerAction(s.context(), tap(carlas.orderId, 1)));
+    await placeFirstOrder(s, "customer-other");
+    const before = await footprint(s.businessId);
+    const intruder = s.context({ customerId: "customer-other" });
+
+    const foreign = await engine.onCustomerAction(intruder, tap(carlas.orderId, 1, { actor: { type: "customer", customerId: "customer-other" } }));
+    expect(foreign.outcome.type).toBe("rejected");
+    expect(foreign.outcome).toMatchObject({ reason: "not_found" });
+    expect(JSON.stringify(foreign)).not.toContain(carlas.orderId);
+    expect(foreign.commits).toEqual([]);
+
+    const spoofed = await engine.onCustomerAction(intruder, tap(carlas.orderId, 1));
+    expect(spoofed.outcome).toEqual({ type: "rejected", reason: "not_allowed", order: null });
+    expect(spoofed.commits).toEqual([]);
+    expect(await footprint(s.businessId)).toEqual(before);
+
+    // Carla's own replay still answers duplicate.
+    const replay = await engine.onCustomerAction(s.context(), tap(carlas.orderId, 1));
+    expect(replay.outcome.type).toBe("duplicate");
+  });
+
   it("(d) a change after confirming makes v2 in por_confirmar; a tap on v1 saves nothing; v2 keeps its place", async () => {
     const s = await newStore();
     const v1 = await placeFirstOrder(s);
