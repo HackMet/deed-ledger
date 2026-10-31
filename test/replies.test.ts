@@ -270,7 +270,8 @@ describe("templates", () => {
     expect(ask("ambiguous_size", 0)).toBe("¿De qué tamaño querés Aceite Clover 1 L?");
     expect(ask("pickup_or_delivery")).toBe("¿Lo recogés en la tienda o te lo llevamos?");
     expect(ask("customer_name")).toBe("¿A nombre de quién lo anoto?");
-    expect(ask("same_place")).toBe("¿Te lo llevamos al mismo lugar de siempre?");
+    // Without a saved place in the context there's nothing to echo and no buttons: the typed choices only.
+    expect(ask("same_place")).toBe("¿Te lo llevamos al mismo lugar de siempre?\nRespondé Sí u Otro lugar.");
     expect(ask("embedded_instructions")).toBe("Te ayudo con tu pedido. ¿Qué te mando?");
     expect(ask("illegible", 9)).toBe("No alcancé a leer una parte de tu lista. ¿Me la escribís?");
     for (const q of ["illegible", "ambiguous_product", "quantity", "delivery_place"] as const) {

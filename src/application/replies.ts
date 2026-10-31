@@ -13,6 +13,7 @@ import {
   type ReplySource,
   safeReply,
 } from "../domain/replies";
+import type { SavedPlace } from "../domain/place";
 import type { Deps, ReplyDraft, Tenant } from "./ports";
 
 /** A customer reply is worth sending for this long; after that it expires unsent. */
@@ -24,6 +25,8 @@ export const CUSTOMER_NOTICE_TTL_MS = 3 * 60 * 60 * 1000;
 export interface ReplyContext extends Tenant {
   readonly customerId: string;
   readonly conversationId: string;
+  /** The saved place the engine was given, so "¿al mismo lugar de siempre?" can echo it (#29). */
+  readonly savedPlace?: SavedPlace | null;
 }
 
 /** The reply to a customer's own burst or tap, or none. It closes the burst. */

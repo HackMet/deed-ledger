@@ -4,7 +4,7 @@
  * last, contract gap a) and which catalog code matches against (gap b), Muse Spark reads, and code
  * matches lines. Nothing here decides or saves anything.
  */
-import type { PerceptionContext } from "../domain/contract/observation";
+import type { BurstReading, Observation, PerceptionContext } from "../domain/contract/observation";
 import { type BurstMessage, isSupportedImage } from "../domain/perception/burst";
 import { LEASE_TTL_MS, READING_MAX_MS, TRANSCRIBE_MAX_MS } from "../domain/processing";
 import type { CustomerContext, Engine } from "./engine";
@@ -101,6 +101,11 @@ export function createOrderReading(deps: OrderReadingDeps): BurstReader {
 async function readBurst(deps: OrderReadingDeps, { lease, messages, context }: BurstReaderInput): Promise<BurstRead> {
   const tenant: Tenant = { businessId: lease.businessId };
   const burst = await resolveBurst(deps, lease, tenant, messages);
+  if (burst.every((message) => message.type === "location")) {
+    // Only pins: nothing for the model to read. Code says what they are, at no cost.
+    const perception = await deps.source.perceptionContext(context);
+    return { reading: withSharedPin({ observations: [], calls: [] }, burst), matches: [], pendingQuestion: perception.pendingQuestion };
+  }
   const [perception, catalog] = await Promise.all([deps.source.perceptionContext(context), deps.source.catalog(tenant)]);
   await holdLeaseFor(deps, lease, READING_MAX_MS);
   const outcome = await deps.reader.read(tenant, { audience: "customer", messages: burst, context: perception, catalog });
@@ -109,7 +114,28 @@ async function readBurst(deps: OrderReadingDeps, { lease, messages, context }: B
     // The model's picks among labels code supplied aren't LineMatches until the contract says so.
     deps.log.info("perception.label_picks_unused", { businessId: tenant.businessId, count: outcome.labelMatches.length });
   }
-  return { reading: outcome.reading, matches: outcome.matches, pendingQuestion: perception.pendingQuestion };
+  return { reading: withSharedPin(outcome.reading, burst), matches: outcome.matches, pendingQuestion: perception.pendingQuestion };
+}
+
+/**
+ * A shared location is a fulfillment fact whatever the model made of the burst (#29): its
+ * coordinates come from the webhook, never from the model. When no fulfillment observation carries
+ * the burst's last pin, code adds one (mode unknown, no words); a lone `other` gives way to it.
+ */
+export function withSharedPin(reading: BurstReading, burst: readonly BurstMessage[]): BurstReading {
+  const pin = lastPin(burst);
+  if (pin === null || reading.observations.some((o) => o.kind === "fulfillment" && o.pin !== null)) return reading;
+  const fulfillment: Observation = { kind: "fulfillment", mode: null, pin, placeText: null, sameAsBefore: false, issues: [] };
+  const kept = reading.observations.filter((o) => !(o.kind === "other" && o.issues.length === 0));
+  return { ...reading, observations: [...kept, fulfillment] };
+}
+
+function lastPin(burst: readonly BurstMessage[]): { latitude: number; longitude: number } | null {
+  for (let i = burst.length - 1; i >= 0; i--) {
+    const message = burst[i]!;
+    if (message.type === "location") return { latitude: message.latitude, longitude: message.longitude };
+  }
+  return null;
 }
 
 /**
@@ -121,6 +147,10 @@ async function resolveBurst(deps: OrderReadingDeps, lease: Lease, tenant: Tenant
   const burst: BurstMessage[] = [];
   const failures: UnreadableMedia[] = [];
   for (const job of messages) {
+    if (job.location !== null) {
+      burst.push({ type: "location", latitude: job.location.latitude, longitude: job.location.longitude });
+      continue;
+    }
     if (job.kind !== "image" && job.kind !== "audio") {
       burst.push({ type: "text", text: job.textBody ?? "" });
       continue;

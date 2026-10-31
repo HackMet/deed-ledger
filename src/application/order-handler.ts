@@ -9,6 +9,9 @@
  *   newest job. Earlier jobs complete with no reply. The reading's job saves which messages it used
  *   in the same batch as the engine's commits: a crash before the save leaves them unread for the
  *   retry, and a saved reading can't use them again.
+ * - Delivery (#29): the customer's saved place goes to the engine in the context, the same-place
+ *   question's Sí / Otro lugar taps are their own step like readback answers, and a confirmed
+ *   delivery order's place is saved in the same batch as the confirmation.
  */
 import { BURST_LOOKBACK_MS, parseReadbackButton, type ReadbackAnswer, readbackOperationKey, typedReadbackWord } from "../domain/burst";
 import type { CustomerAction } from "../domain/contract/actions";
@@ -18,7 +21,8 @@ import { couldNotProcess, RECEIVED_PLACEHOLDER } from "../domain/copy";
 import { ANSWER_NEW_READBACK, WHAT_TO_CORRECT } from "../domain/order-copy";
 import { FAILURE_REPLY_TTL_MS, PLACEHOLDER_TTL_MS } from "../domain/outbox";
 import { attemptsExhausted } from "../domain/processing";
-import { safeReply } from "../domain/replies";
+import type { SavedPlace } from "../domain/place";
+import { actionFromButtonId, safeReply } from "../domain/replies";
 import { type CustomerGateDeps, gateCustomerJob } from "./customer-gate";
 import type { CustomerContext, Engine, EngineResult, LineMatch } from "./engine";
 import { BurstMediaUnreadableError } from "./errors";
@@ -27,6 +31,7 @@ import type {
   Clock,
   Commit,
   ConversationCustomer,
+  CustomerPlaceRepository,
   CustomerRepository,
   Job,
   JobHandler,
@@ -49,7 +54,16 @@ export const ORDER_REPLY_TTL_MS = CUSTOMER_REPLY_TTL_MS;
 export type CustomerContextWithName = CustomerContext & {
   readonly customerName: string | null;
   readonly customerNameAsked: boolean;
+  /**
+   * The customer's saved delivery place, from our records (#29, proposed as
+   * CustomerContext.savedPlace). The engine may offer it as "same_place"; it never applies it
+   * without the customer's yes.
+   */
+  readonly savedPlace: SavedPlace | null;
 };
+
+/** The same-place question's answers, tapped. */
+type PlaceAction = Extract<CustomerAction, { type: "accept_saved_place" | "decline_saved_place" }>;
 
 /** What perception is given: the burst's messages, oldest first (content untrusted), and who asks. */
 export interface BurstReaderInput {
@@ -86,6 +100,8 @@ export interface OrderHandlerDeps {
   readonly reader?: BurstReader | null;
   /** ALTO, SEGUIR, handoff, deletion and the first message (#30); none in tests that don't need it. */
   readonly gate?: CustomerGateDeps | null;
+  /** Saved delivery places (#29). Without it, no place is offered or saved. */
+  readonly places?: CustomerPlaceRepository | null;
 }
 
 const ACTION_TYPES = {
@@ -102,17 +118,54 @@ async function handleJob(deps: OrderHandlerDeps, { lease, job, isNewestOfBurst }
   const customer = await deps.customers.ofConversation(lease);
   // Every conversation has a customer (0004): missing means the lease is for another store's ID.
   if (customer === null) throw new Error("no customer for the leased conversation");
+  const savedPlace = (await deps.places?.latest(lease, customer.id)) ?? null;
 
+  const placeTap = placeAction(job);
+  if (placeTap !== null) return handlePlaceTap(deps, lease, job, customer, savedPlace, placeTap);
   const answer = readbackAnswer(job, customer);
   if (answer === "unseen_readback") return handleUnseenReadback(deps, lease, job);
-  if (answer !== null) return handleAnswer(deps, lease, job, customer, answer);
+  if (answer !== null) return handleAnswer(deps, lease, job, customer, savedPlace, answer);
 
   if (!isNewestOfBurst) {
     // Read now only when the next message is an answer, so the answer sees this reading saved.
     const next = await deps.jobs.nextOpenJob(lease, job.id);
-    if (next !== null && readbackAnswer(next, customer) === null) return { replies: [] };
+    if (next !== null && readbackAnswer(next, customer) === null && placeAction(next) === null) return { replies: [] };
   }
-  return handleBurst(deps, lease, job, customer, isNewestOfBurst);
+  return handleBurst(deps, lease, job, customer, savedPlace, isNewestOfBurst);
+}
+
+/** A tap on Sí or Otro lugar under "¿Te lo llevamos al mismo lugar de siempre?". Typed, it's read. */
+function placeAction(job: Job): PlaceAction | null {
+  if (job.kind !== "interactive" || job.replyId === null) return null;
+  const action = actionFromButtonId(job.replyId);
+  return action?.type === "accept_saved_place" || action?.type === "decline_saved_place" ? action : null;
+}
+
+/**
+ * The same-place answer goes to the engine at its own job, keyed by the button ID: a second tap is
+ * a duplicate. The saved place it names is resolved by the engine against the context's only.
+ */
+async function handlePlaceTap(
+  deps: OrderHandlerDeps,
+  lease: Lease,
+  job: Job,
+  customer: ConversationCustomer,
+  savedPlace: SavedPlace | null,
+  action: PlaceAction,
+): Promise<JobOutcome> {
+  const nowMs = deps.clock.now();
+  const result = await deps.engine.onCustomerAction(context(lease, job, customer, savedPlace, nowMs), {
+    operationKey: job.replyId!,
+    actor: { type: "customer", customerId: customer.id },
+    action,
+  });
+  deps.log.info("customer_action_handled", {
+    businessId: lease.businessId,
+    conversationId: lease.conversationId,
+    inboundId: job.id,
+    outcome: result.outcome.type,
+  });
+  return complete(deps, lease, job, customer, savedPlace, [job], result, null, false, nowMs);
 }
 
 /**
@@ -156,11 +209,12 @@ async function handleAnswer(
   lease: Lease,
   job: Job,
   customer: ConversationCustomer,
+  savedPlace: SavedPlace | null,
   answer: ReadbackAnswer,
 ): Promise<JobOutcome> {
   const nowMs = deps.clock.now();
   // The button and the typed word share the key, so whichever comes second is a duplicate.
-  const result = await deps.engine.onCustomerAction(context(lease, job, customer, nowMs), {
+  const result = await deps.engine.onCustomerAction(context(lease, job, customer, savedPlace, nowMs), {
     operationKey: readbackOperationKey(answer),
     actor: { type: "customer", customerId: customer.id },
     action: { type: ACTION_TYPES[answer.word], orderId: answer.orderId, version: answer.version },
@@ -172,7 +226,7 @@ async function handleAnswer(
     outcome: result.outcome.type,
   });
   // The answer's own reply goes out even if more messages follow: it is never a burst-closing one.
-  return complete(deps, lease, job, customer, [job], result, answer.word, false, nowMs);
+  return complete(deps, lease, job, customer, savedPlace, [job], result, answer.word, false, nowMs);
 }
 
 async function handleBurst(
@@ -180,6 +234,7 @@ async function handleBurst(
   lease: Lease,
   job: Job,
   customer: ConversationCustomer,
+  savedPlace: SavedPlace | null,
   closesBurst: boolean,
 ): Promise<JobOutcome> {
   const messages = await deps.jobs.unreadBurst(lease, job.id, job.receivedAtMs - BURST_LOOKBACK_MS);
@@ -194,7 +249,7 @@ async function handleBurst(
     };
   }
 
-  const customerContext = context(lease, job, customer, nowMs);
+  const customerContext = context(lease, job, customer, savedPlace, nowMs);
   let read: BurstRead;
   try {
     read = await deps.reader.read({ lease, messages, context: customerContext });
@@ -213,7 +268,7 @@ async function handleBurst(
   });
   const name = customer.name === null ? givenName(reading, pendingQuestion) : null;
   const nameCommits = name === null ? [] : [deps.customers.saveNameCommit(lease, customer.id, name, nowMs)];
-  return complete(deps, lease, job, customer, messages, result, null, closesBurst, nowMs, nameCommits);
+  return complete(deps, lease, job, customer, savedPlace, messages, result, null, closesBurst, nowMs, nameCommits);
 }
 
 /**
@@ -275,6 +330,7 @@ async function complete(
   lease: Lease,
   job: Job,
   customer: ConversationCustomer,
+  savedPlace: SavedPlace | null,
   read: readonly Job[],
   result: EngineResult,
   answered: ReadbackAnswer["word"] | null,
@@ -282,11 +338,12 @@ async function complete(
   nowMs: number,
   extra: readonly Commit[] = [],
 ): Promise<JobOutcome> {
-  const replies = await repliesFor(deps, lease, customer, result.outcome, answered, closesBurst);
+  const replies = await repliesFor(deps, lease, customer, savedPlace, result.outcome, answered, closesBurst);
   const commits: Commit[] = [
     deps.jobs.markReadCommit(lease, job.id, read.map((message) => message.id), nowMs),
     ...result.commits,
     ...extra,
+    ...placeCommits(deps, lease, customer, result.outcome, nowMs),
   ];
   // What the reply showed is remembered only if it went out as rendered, not as the safe reply.
   const shownAsRendered = replies.length > 0 && replies[0]!.body !== safeReply().body;
@@ -309,6 +366,7 @@ async function repliesFor(
   deps: OrderHandlerDeps,
   lease: Lease,
   customer: ConversationCustomer,
+  savedPlace: SavedPlace | null,
   outcome: EngineOutcome,
   answered: ReadbackAnswer["word"] | null,
   closesBurst: boolean,
@@ -316,8 +374,29 @@ async function repliesFor(
   if (outcome.type === "nothing" && answered === "correct") {
     return [{ body: WHAT_TO_CORRECT, ttlMs: ORDER_REPLY_TTL_MS }];
   }
-  const drafts = await replyForOutcome(deps, { ...lease, customerId: customer.id }, outcome);
+  const drafts = await replyForOutcome(deps, { ...lease, customerId: customer.id, savedPlace }, outcome);
   return drafts.map(({ closesBurst: _closes, ...draft }) => (closesBurst ? { ...draft, closesBurst } : draft));
+}
+
+/**
+ * A confirmed delivery order's place is saved for next time (#29): a new place as the customer gave
+ * it, or a saved place marked used again. Only on the confirmation itself (a duplicate saves
+ * nothing), and only for delivery: a pickup or a cancelled order keeps no place.
+ */
+function placeCommits(
+  deps: OrderHandlerDeps,
+  lease: Lease,
+  customer: ConversationCustomer,
+  outcome: EngineOutcome,
+  nowMs: number,
+): Commit[] {
+  if (deps.places == null || outcome.type !== "order_confirmed") return [];
+  const fulfillment = outcome.order.fulfillment;
+  if (fulfillment === null || fulfillment.mode !== "delivery") return [];
+  if (fulfillment.placeId !== null) return [deps.places.markUsedCommit(lease, customer.id, fulfillment.placeId, nowMs)];
+  const pin = fulfillment.pin ?? null;
+  if (fulfillment.placeText === null && pin === null) return [];
+  return [deps.places.saveForOrderCommit(lease, customer.id, outcome.order.orderId, { placeText: fulfillment.placeText, pin }, nowMs)];
 }
 
 /**
@@ -367,7 +446,13 @@ function channelCommits(
   return commits;
 }
 
-function context(lease: Lease, job: Job, customer: ConversationCustomer, nowMs: number): CustomerContextWithName {
+function context(
+  lease: Lease,
+  job: Job,
+  customer: ConversationCustomer,
+  savedPlace: SavedPlace | null,
+  nowMs: number,
+): CustomerContextWithName {
   return {
     businessId: lease.businessId,
     conversationId: lease.conversationId,
@@ -376,5 +461,6 @@ function context(lease: Lease, job: Job, customer: ConversationCustomer, nowMs: 
     nowMs,
     customerName: customer.name,
     customerNameAsked: customer.nameAskedAtMs !== null,
+    savedPlace,
   };
 }

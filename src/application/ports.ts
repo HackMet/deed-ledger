@@ -4,6 +4,7 @@
  */
 import type { Claim } from "../domain/contract/outcomes";
 import type { ProviderStatus } from "../domain/outbox";
+import type { Pin, SavedPlace } from "../domain/place";
 import type { MessageKind } from "../domain/processing";
 import type { ClaimCheck, ReplyButton } from "../domain/replies";
 
@@ -48,6 +49,8 @@ export interface InboundMessageEvent {
   readonly replyId: string | null;
   readonly contextMessageId: string | null;
   readonly media: InboundMedia | null;
+  /** A shared WhatsApp location (kind stays "other"): coordinates from the webhook. Absent means none. */
+  readonly location?: Pin | null;
 }
 
 export interface StatusEvent {
@@ -202,6 +205,8 @@ export interface Job {
   readonly replyId: string | null;
   readonly contextMessageId: string | null;
   readonly mediaAssetId: string | null;
+  /** A shared WhatsApp location's coordinates, from the webhook; null for any other message. */
+  readonly location: Pin | null;
   readonly orderTsS: number;
   readonly receivedAtMs: number;
   /** Attempts started before this one. */
@@ -736,6 +741,29 @@ export interface CustomerRepository {
     nowMs: number,
     closingJobId: string | null,
   ): Commit;
+}
+
+/**
+ * A customer's delivery places (#29), our records. A place is saved when a delivery order that used
+ * it is confirmed; the newest used one is offered back as a question. Writes are commits for the
+ * job's completion batch, each guarded on the customer being the store's.
+ */
+export interface CustomerPlaceRepository {
+  /** The place used last, or null. */
+  latest(tenant: Tenant, customerId: string): Promise<SavedPlace | null>;
+  /**
+   * Saves the place a confirmed delivery order used. One row per order: confirmed again after a
+   * change, the order's place is updated, not added.
+   */
+  saveForOrderCommit(
+    tenant: Tenant,
+    customerId: string,
+    orderId: string,
+    place: { readonly placeText: string | null; readonly pin: Pin | null },
+    nowMs: number,
+  ): Commit;
+  /** A saved place was used again: it stays the one offered next. */
+  markUsedCommit(tenant: Tenant, customerId: string, placeId: string, nowMs: number): Commit;
 }
 
 // ---------------------------------------------------------------------------------------------

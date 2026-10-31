@@ -20,6 +20,7 @@ import type {
   QuestionCode,
 } from "./contract/outcomes";
 import { countedLineAmount, countsTowardTotal, orderSubtotal } from "./money";
+import type { SavedPlace } from "./place";
 
 // ---------------------------------------------------------------------------------------------
 // Types
@@ -131,7 +132,13 @@ export const COPY = {
   pickupReady: "Ya podés pasar a traerlo.",
   substituteFallback: "Tocá un botón o escribime qué preferís.",
   removeTitle: "Quitar",
+  samePlace: "¿Te lo llevamos al mismo lugar de siempre?",
+  samePlaceFallback: "Respondé Sí u Otro lugar.",
+  samePlacePin: "La vez pasada nos mandaste tu ubicación.",
+  deliveryToPin: "Te lo llevamos a la ubicación que nos mandaste.",
 } as const;
+
+export const PLACE_BUTTON_TITLES = { same: "Sí", other: "Otro lugar" } as const;
 
 export const BUTTON_TITLES = { confirm: "Confirmar", correct: "Corregir", cancel: "Cancelar" } as const;
 
@@ -148,6 +155,8 @@ export type Decision = "confirm" | "correct" | "cancel";
 const KEY_ID = "[A-Za-z0-9][A-Za-z0-9_-]{0,119}";
 const DECISION_KEY = new RegExp(`^(confirm|correct|cancel):(${KEY_ID}):v([1-9]\\d{0,8})$`);
 const LINE_KEY = new RegExp(`^(substitute|remove):(${KEY_ID}):v([1-9]\\d{0,8}):(${KEY_ID})$`);
+const PLACE_KEY = new RegExp(`^place:(${KEY_ID}):v([1-9]\\d{0,8}):(${KEY_ID})$`);
+const OTHER_PLACE_KEY = new RegExp(`^otherplace:(${KEY_ID}):v([1-9]\\d{0,8})$`);
 const SAFE_ID = new RegExp(`^${KEY_ID}$`);
 
 /** `confirm:<order>:v<version>`: the button's ID and the typed word's operation key alike. */
@@ -164,6 +173,15 @@ export function lineChoiceKey(choice: "substitute" | "remove", ref: OrderRef, li
 }
 
 /**
+ * The same-place question's buttons (#29, proposed): `place:<order>:v<version>:<place>` for Sí,
+ * `otherplace:<order>:v<version>` for Otro lugar.
+ */
+export function placeChoiceKey(choice: "same" | "other", ref: OrderRef, placeId: string): string | null {
+  if (decisionKey("confirm", ref) === null || !SAFE_ID.test(placeId)) return null;
+  return choice === "same" ? `place:${ref.orderId}:v${ref.version}:${placeId}` : `otherplace:${ref.orderId}:v${ref.version}`;
+}
+
+/**
  * Reads a tapped button's ID back into the action it stands for. Untrusted: the engine resolves it
  * only inside the tapping customer's own orders and refuses a stale version. Null for anything else.
  */
@@ -177,6 +195,10 @@ export function actionFromButtonId(id: string): CustomerAction | null {
     ];
     return { type, ...ref };
   }
+  const place = PLACE_KEY.exec(id);
+  if (place !== null) return { type: "accept_saved_place", orderId: place[1]!, version: Number(place[2]), placeId: place[3]! };
+  const other = OTHER_PLACE_KEY.exec(id);
+  if (other !== null) return { type: "decline_saved_place", orderId: other[1]!, version: Number(other[2]) };
   const line = LINE_KEY.exec(id);
   if (line !== null) {
     const ref = { orderId: line[2]!, version: Number(line[3]) };
@@ -217,9 +239,13 @@ const OPEN_STATES: readonly OrderState[] = ["armando", "por_confirmar", "confirm
  * action, a duplicate, nothing to say). `customerId` is the conversation's customer, from our
  * records: the balance claim names it.
  */
-export function renderOutcome(outcome: EngineOutcome, context: { readonly customerId: string }): RenderedReply | null {
+export function renderOutcome(
+  outcome: EngineOutcome,
+  context: { readonly customerId: string; readonly savedPlace?: SavedPlace | null },
+): RenderedReply | null {
   switch (outcome.type) {
     case "ask":
+      if (outcome.question === "same_place") return samePlaceReply(outcome.order, context.savedPlace ?? null);
       // A question about an order holds only while that version is still open: once it's
       // cancelled or delivered, asking about it would be wrong.
       return reply(
@@ -349,6 +375,29 @@ function askText(question: QuestionCode, lineIndex: number | null, order: OrderV
   }
 }
 
+/**
+ * "¿Te lo llevamos al mismo lugar de siempre?" with the place echoed back and Sí / Otro lugar. The
+ * place is the one the engine was given in the customer's context (our records); the outcome
+ * names none yet (proposed in the contract). Without it, the question goes with the typed choices.
+ */
+function samePlaceReply(order: OrderView | null, place: SavedPlace | null): RenderedReply {
+  const claims = order === null ? [] : [stateIn(order, OPEN_STATES)];
+  const lines: string[] = [COPY.samePlace];
+  if (place?.placeText != null) lines.push(`La vez pasada te lo llevamos a: ${quote(place.placeText)}.`);
+  else if (place?.pin != null) lines.push(COPY.samePlacePin);
+  lines.push(COPY.samePlaceFallback);
+  const same = order === null || place === null ? null : placeChoiceKey("same", order, place.placeId);
+  const other = order === null || place === null ? null : placeChoiceKey("other", order, place.placeId);
+  const buttons =
+    same === null || other === null
+      ? []
+      : [
+          { id: same, title: PLACE_BUTTON_TITLES.same },
+          { id: other, title: PLACE_BUTTON_TITLES.other },
+        ];
+  return reply("ask", lines.join("\n"), claims, buttons);
+}
+
 // --- Readback
 
 function readbackReply(template: "readback" | "order_changed" | "rejected_tap", title: string, order: OrderView): RenderedReply {
@@ -383,9 +432,11 @@ function fulfillmentLines(order: OrderView): string[] {
   const place =
     fulfillment.placeText !== null
       ? `Te lo llevamos a: ${quote(fulfillment.placeText)}.`
-      : fulfillment.placeId !== null
-        ? "Te lo llevamos al lugar que nos diste."
-        : "Te lo llevamos. Falta la dirección.";
+      : fulfillment.pin != null
+        ? COPY.deliveryToPin
+        : fulfillment.placeId !== null
+          ? "Te lo llevamos al lugar que nos diste."
+          : "Te lo llevamos. Falta la dirección.";
   const fee = feeOf(order);
   return fee === null ? [place] : [place, `Envío: ${formatLempiras(fee)}, aparte del total.`];
 }

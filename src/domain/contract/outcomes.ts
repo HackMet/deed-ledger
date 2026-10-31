@@ -37,7 +37,20 @@ export interface OrderView {
   readonly lines: readonly OrderLineView[];
   readonly fulfillment:
     | { readonly mode: "pickup" }
-    | { readonly mode: "delivery"; readonly placeId: string | null; readonly placeText: string | null; readonly fee: Centavos | null }
+    | {
+        readonly mode: "delivery";
+        /** The saved place used, when the customer accepted one (accept_saved_place). */
+        readonly placeId: string | null;
+        /** As the customer wrote it. */
+        readonly placeText: string | null;
+        /** From store settings only (#40); null when the store set none. Not part of the total. */
+        readonly fee: Centavos | null;
+        /**
+         * Proposed (#29), not agreed yet: a shared WhatsApp location, coordinates from the webhook.
+         * Optional until agreed; absent means none.
+         */
+        readonly pin?: { readonly latitude: number; readonly longitude: number } | null;
+      }
     | null;
   /** Null when any line's price is unknown: no partial totals. */
   readonly total: Centavos | null;

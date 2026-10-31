@@ -11,8 +11,11 @@
  * Bursts are pretended just enough for a first order (PRD "A first order"): lines from the reading,
  * matched products priced from an optional catalog, one question at a time (an unclear line, the
  * name once, pickup or delivery), then the readback. It also answers "¿a qué hora está?", a cancel
- * and the reads perception needs (contract gaps a and b). Payments, prices, places and substitutes
- * aren't pretended: they get the handoff.
+ * and the reads perception needs (contract gaps a and b). Delivery (#29): a place in words or a
+ * pin is used for a delivery order only; a saved place from the customer's context is offered as
+ * "same_place" and used only after a yes (accept_saved_place, or a typed yes); no fee, since store
+ * settings (#40) don't exist yet. Payments, prices and substitutes aren't pretended: they get the
+ * handoff.
  */
 import type { CustomerContext, Engine, EngineResult, LineMatch, MemberContext } from "../../application/engine";
 import type { OrderReadingSource } from "../../application/order-reading";
@@ -20,7 +23,7 @@ import { type CatalogProduct, normalize } from "../../application/perception/mat
 import type { Tenant } from "../../application/ports";
 import { type ActionEnvelope, type ConsoleAction, type CustomerAction, OWNER_ACTIONS } from "../../domain/contract/actions";
 import type { Centavos } from "../../domain/contract/numbers";
-import type { BurstReading, ItemLine, Observation, PerceptionContext } from "../../domain/contract/observation";
+import type { BurstReading, Fulfillment, ItemLine, Observation, PerceptionContext } from "../../domain/contract/observation";
 import type {
   Claim,
   CustomerNotice,
@@ -31,6 +34,7 @@ import type {
   QuestionCode,
 } from "../../domain/contract/outcomes";
 import { orderSubtotal } from "../../domain/money";
+import { isYes, type SavedPlace, tidyPlaceText } from "../../domain/place";
 
 export interface StoredOrder {
   readonly customerId: string;
@@ -57,6 +61,8 @@ interface Draft {
   readonly names: Map<string, string>;
   /** The current version was read back: any change makes a new version, so old taps are refused. */
   shown: boolean;
+  /** The customer answered Otro lugar: the saved place isn't offered again for this order. */
+  declinedSavedPlace: boolean;
 }
 
 interface StoreState {
@@ -83,6 +89,8 @@ interface DraftSnapshot {
   readonly pending: readonly { readonly code: QuestionCode; readonly lineId: string | null }[];
   readonly names: readonly (readonly [string, string])[];
   readonly shown: boolean;
+  /** Absent in snapshots saved before #29. */
+  readonly declinedSavedPlace?: boolean;
 }
 
 const ON_THE_LIST: readonly OrderView["state"][] = ["confirmado", "preparando", "listo"];
@@ -158,11 +166,41 @@ export class MemoryEngine implements Engine, OrderReadingSource {
     if (action.version !== stored.order.version) {
       return result({ type: "rejected", reason: "stale_version", order: stored.order });
     }
+    if (action.type === "accept_saved_place" || action.type === "decline_saved_place") {
+      const outcome = this.placeAnswer(state, context, stored, action);
+      if (outcome.type !== "rejected") state.operations.set(operationKey, outcome);
+      if (outcome.type === "ask") state.lastQuestion.set(context.customerId, outcome.question);
+      return result(outcome);
+    }
     const answered = answer(stored, action, context.nowMs);
     if (answered === null) return result({ type: "rejected", reason: "invalid_state", order: stored.order });
     state.orders.set(action.orderId, answered.stored);
     state.operations.set(operationKey, answered.outcome);
     return result(answered.outcome);
+  }
+
+  /**
+   * The same-place question answered by a tap: Sí uses the saved place the customer's context
+   * names (only that one), Otro lugar asks where. Then the next question, or the readback.
+   */
+  private placeAnswer(
+    state: StoreState,
+    context: CustomerContext,
+    stored: StoredOrder,
+    action: Extract<CustomerAction, { type: "accept_saved_place" | "decline_saved_place" }>,
+  ): EngineOutcome {
+    if (stored.order.state !== "armando" || stored.order.fulfillment?.mode !== "delivery") {
+      return { type: "rejected", reason: "invalid_state", order: stored.order };
+    }
+    const burst = new BurstApplier(state, context, this.options.catalog ?? [], []);
+    if (action.type === "accept_saved_place") {
+      const saved = savedPlaceOf(context);
+      if (saved === null || saved.placeId !== action.placeId) return { type: "rejected", reason: "not_found", order: stored.order };
+      burst.useSavedPlace(saved);
+    } else {
+      burst.declineSavedPlace();
+    }
+    return burst.decide();
   }
 
   async onConsoleAction(context: MemberContext, envelope: ActionEnvelope<ConsoleAction>): Promise<EngineResult> {
@@ -214,7 +252,12 @@ export class MemoryEngine implements Engine, OrderReadingSource {
       operations: [...state.operations],
       drafts: [...state.drafts].map(([orderId, draft]) => [
         orderId,
-        { pending: draft.pending.map((p) => ({ ...p })), names: [...draft.names], shown: draft.shown },
+        {
+          pending: draft.pending.map((p) => ({ ...p })),
+          names: [...draft.names],
+          shown: draft.shown,
+          declinedSavedPlace: draft.declinedSavedPlace,
+        },
       ]),
       lastQuestion: [...state.lastQuestion],
     };
@@ -228,7 +271,12 @@ export class MemoryEngine implements Engine, OrderReadingSource {
       drafts: new Map(
         snapshot.drafts.map(([orderId, draft]) => [
           orderId,
-          { pending: draft.pending.map((p) => ({ ...p })), names: new Map(draft.names), shown: draft.shown },
+          {
+            pending: draft.pending.map((p) => ({ ...p })),
+            names: new Map(draft.names),
+            shown: draft.shown,
+            declinedSavedPlace: draft.declinedSavedPlace ?? false,
+          },
         ]),
       ),
       lastQuestion: new Map(snapshot.lastQuestion),
@@ -248,6 +296,11 @@ export class MemoryEngine implements Engine, OrderReadingSource {
     }
     return state;
   }
+}
+
+/** The saved place our side put in the customer's context (proposed CustomerContext.savedPlace). */
+function savedPlaceOf(context: CustomerContext): SavedPlace | null {
+  return (context as { savedPlace?: SavedPlace | null }).savedPlace ?? null;
 }
 
 function openOrderOf(state: StoreState, customerId: string): StoredOrder | null {
@@ -287,7 +340,12 @@ class BurstApplier {
   ) {
     this.stored = openOrderOf(state, context.customerId);
     this.before = this.stored?.order ?? null;
-    this.draft = (this.stored && state.drafts.get(this.stored.order.orderId)) ?? { pending: [], names: new Map(), shown: false };
+    this.draft = (this.stored && state.drafts.get(this.stored.order.orderId)) ?? {
+      pending: [],
+      names: new Map(),
+      shown: false,
+      declinedSavedPlace: false,
+    };
     this.named = (context as { customerName?: string | null }).customerName ?? this.stored?.customerName ?? null;
   }
 
@@ -315,16 +373,10 @@ class BurstApplier {
         this.cancelled = this.stored !== null;
         return;
       case "fulfillment":
-        if (this.stored === null || observation.mode === null) return;
-        this.setOrder({
-          ...this.stored.order,
-          fulfillment:
-            observation.mode === "pickup"
-              ? { mode: "pickup" }
-              : { mode: "delivery", placeId: null, placeText: observation.placeText, fee: null },
-        });
+        this.applyFulfillment(observation);
         return;
       case "clarification":
+        if (this.answerPlaceQuestion(observation.answer)) return;
         this.settleQuestion(observation.answer);
         return;
       case "customer_name":
@@ -383,14 +435,73 @@ class BurstApplier {
     }
     if (askName) return this.ask("customer_name", null, "armando");
     if (order.fulfillment === null) return this.ask("pickup_or_delivery", null, "armando");
-    if (order.fulfillment.mode === "delivery" && order.fulfillment.placeText === null && order.fulfillment.placeId === null) {
-      return this.ask("delivery_place", null, "armando");
+    if (order.fulfillment.mode === "delivery" && !hasPlace(order.fulfillment)) {
+      // A saved place is offered as a question, once per order; never applied without a yes.
+      const offer = savedPlaceOf(this.context) !== null && !this.draft.declinedSavedPlace;
+      return this.ask(offer ? "same_place" : "delivery_place", null, "armando");
     }
     const onList = this.before !== null && PACKING.includes(this.before.state);
     const next: OrderView = { ...order, state: "por_confirmar", queuePosition: null };
     this.draft.shown = true;
     this.save(next);
     return onList ? { type: "order_changed", order: next } : { type: "readback", order: next };
+  }
+
+  /** "Sí" to the same-place question: the saved place, as our records gave it. */
+  useSavedPlace(place: SavedPlace): void {
+    this.setFulfillment({ mode: "delivery", placeId: place.placeId, placeText: place.placeText, pin: place.pin, fee: null });
+  }
+
+  /** "Otro lugar": the saved place isn't offered again for this order; the place is asked. */
+  declineSavedPlace(): void {
+    this.draft.declinedSavedPlace = true;
+    this.setFulfillment({ mode: "delivery", placeId: null, placeText: null, pin: null, fee: null });
+  }
+
+  /**
+   * How the order is received. Pickup drops any place (a place is for delivery only). A pin or a
+   * place in words makes it a delivery to that place; "al mismo lugar de siempre" uses the saved
+   * place only when there is one, and asks otherwise. No fee: store settings (#40) don't exist yet.
+   */
+  private applyFulfillment(observation: Fulfillment): void {
+    if (this.stored === null) return;
+    if (observation.mode === "pickup") return this.setFulfillment({ mode: "pickup" });
+    const placeText = tidyPlaceText(observation.placeText);
+    const pin = observation.pin;
+    if (placeText !== null || pin !== null) {
+      return this.setFulfillment({ mode: "delivery", placeId: null, placeText, pin, fee: null });
+    }
+    const saved = savedPlaceOf(this.context);
+    if (observation.sameAsBefore && saved !== null) return this.useSavedPlace(saved);
+    if (observation.mode === "delivery" && this.stored.order.fulfillment?.mode !== "delivery") {
+      this.setFulfillment({ mode: "delivery", placeId: null, placeText: null, pin: null, fee: null });
+    }
+  }
+
+  /**
+   * An answer to a place question asked last: to "same_place", a clear yes uses the saved place and
+   * anything else asks where; to "delivery_place", the answer is the place, kept as written.
+   */
+  private answerPlaceQuestion(answer: string): boolean {
+    if (this.stored === null || this.stored.order.fulfillment?.mode !== "delivery") return false;
+    const asked = this.state.lastQuestion.get(this.context.customerId);
+    if (asked === "same_place") {
+      const saved = savedPlaceOf(this.context);
+      if (saved !== null && isYes(answer)) this.useSavedPlace(saved);
+      else this.declineSavedPlace();
+      return true;
+    }
+    if (asked === "delivery_place") {
+      const placeText = tidyPlaceText(answer);
+      if (placeText === null) return false;
+      this.setFulfillment({ mode: "delivery", placeId: null, placeText, pin: null, fee: null });
+      return true;
+    }
+    return false;
+  }
+
+  private setFulfillment(fulfillment: NonNullable<OrderView["fulfillment"]>): void {
+    this.setOrder({ ...this.stored!.order, fulfillment });
   }
 
   private ask(question: QuestionCode, line: number | null, orderState: "armando"): EngineOutcome {
@@ -501,6 +612,10 @@ function lineView(lineId: string, line: ItemLine, product: PretendProduct | null
   };
 }
 
+function hasPlace(fulfillment: Extract<OrderView["fulfillment"], { mode: "delivery" }>): boolean {
+  return fulfillment.placeText !== null || fulfillment.placeId !== null || (fulfillment.pin ?? null) !== null;
+}
+
 /** Customer keys are kept per customer, apart from the console's. */
 function customerOperationKey(customerId: string, operationKey: string): string {
   return `customer:${customerId}:${operationKey}`;
@@ -537,6 +652,7 @@ function answer(
       // The customer says what to change next; perception reads it.
       return order.state === "por_confirmar" ? { stored, outcome: { type: "nothing" } } : null;
     case "accept_saved_place":
+    case "decline_saved_place":
     case "accept_substitute":
     case "remove_line":
       return null;

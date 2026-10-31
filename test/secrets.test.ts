@@ -32,6 +32,7 @@ describe("test environment", () => {
       "0014_console_notices.sql",
       "0015_member_names.sql",
       "0016_pretend_engine_state.sql",
+      "0017_customer_places.sql",
     ]);
   });
 

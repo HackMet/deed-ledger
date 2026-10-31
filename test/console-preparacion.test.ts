@@ -142,6 +142,23 @@ describe("the dev console's preparation list", () => {
     expect(page).toContain("&lt;script&gt;");
   });
 
+  it("shows a shared location as a map link built from its numbers, and the place as written (#29)", async () => {
+    const base = demoOrders(0)[1]!;
+    const pinned: StoredOrder = {
+      ...base,
+      order: {
+        ...base.order,
+        fulfillment: { mode: "delivery", placeId: null, placeText: "<b>casa</b>", fee: null, pin: { latitude: 10.123456, longitude: -80.654321 } },
+      },
+    };
+    const h = harness({ env: devEnv(), engine: new MemoryEngine(() => [pinned]) });
+    const page = await (await h.get("/console/preparacion")).text();
+    expect(page).toContain("Para llevar: &lt;b&gt;casa&lt;/b&gt;");
+    expect(page).toContain('href="https://www.google.com/maps?q=10.123456,-80.654321"');
+    expect(page).toContain("Ver ubicación");
+    expect(page).not.toContain("Envío");
+  });
+
   it("saves a tap and goes back to the list; a tap on an old version says the order changed", async () => {
     const engine = engineWithDemo();
     const h = harness({ env: devEnv(), engine });

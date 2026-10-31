@@ -16,6 +16,7 @@ import type {
 } from "../../application/ports";
 import { BURST_MAX_MESSAGES } from "../../domain/burst";
 import { MAX_JOB_ATTEMPTS, type MessageKind } from "../../domain/processing";
+import { pinFromE6 } from "../../domain/place";
 import { slowNoticeDedupeKey } from "../../domain/slow-notice";
 import { DB_NOW_MS, fencedBatch, type Guard, jobGuard, leaseIsHeld } from "./fence";
 import { NEXT_OUTBOX_SEQ } from "./outbox-repository";
@@ -69,8 +70,8 @@ const WRITTEN_TO_SINCE = `SELECT 1 FROM outbound_messages o
  */
 const HAS_SLOW_NOTICE = `SELECT 1 FROM outbound_messages s WHERE s.dedupe_key = ? || i.id`;
 
-const JOB_COLUMNS = `id, kind, text_body, reply_id, context_message_id, media_asset_id, order_ts_s,
-  received_at_ms, attempts, retry_after_ms`;
+const JOB_COLUMNS = `id, kind, text_body, reply_id, context_message_id, media_asset_id, latitude_e6, longitude_e6,
+  order_ts_s, received_at_ms, attempts, retry_after_ms`;
 
 interface JobRow {
   id: string;
@@ -79,6 +80,8 @@ interface JobRow {
   reply_id: string | null;
   context_message_id: string | null;
   media_asset_id: string | null;
+  latitude_e6: number | null;
+  longitude_e6: number | null;
   order_ts_s: number;
   received_at_ms: number;
   attempts: number;
@@ -92,6 +95,7 @@ const toJob = (row: JobRow): Job => ({
   replyId: row.reply_id,
   contextMessageId: row.context_message_id,
   mediaAssetId: row.media_asset_id,
+  location: pinFromE6(row.latitude_e6, row.longitude_e6),
   orderTsS: row.order_ts_s,
   receivedAtMs: row.received_at_ms,
   attempts: row.attempts,

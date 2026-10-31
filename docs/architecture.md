@@ -329,6 +329,28 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
   interactive reply-button shape, or plain text when the buttons don't fit; the body always carries
   "Respondé Confirmar, Corregir o Cancelar". Typed words map to the same keys (`typedDecision`).
 
+### Delivery to a saved place (#29)
+
+- **Pins come from the webhook.** `payload.ts` reads a `type: "location"` message's latitude and longitude
+  (`parsePin`: numbers, or numeric strings, in range; anything else is dropped). The message stays kind `other`
+  (the CHECK rule on `inbound_messages.kind` can't change without a rebuild) and carries the pin in
+  `latitude_e6`/`longitude_e6`, INTEGER millionths of a degree (migration 0017; no floats in D1). The map's name and
+  address for the pin aren't stored.
+- **Reading.** A location job becomes a `location` burst message; the model is told "ubicacion compartida" and never
+  sees coordinates. Validation attaches the burst's last pin to a `fulfillment` observation; when the model gave none,
+  `withSharedPin` adds one (mode unknown). A burst of pins only skips the model.
+- **Saved places are ours** (`customer_places`, `D1CustomerPlaceRepository`). The handler reads the customer's newest
+  used place and passes it to the engine in the context (proposed `savedPlace`). The engine asks `same_place` with it,
+  never applies it: the reply echoes the place ("La vez pasada te lo llevamos a: …" or "nos mandaste tu ubicación")
+  with Sí / Otro lugar buttons (`place:…`, `otherplace:…`) and "Respondé Sí u Otro lugar.". A tap is its own step,
+  like a readback answer; a typed answer is read by perception.
+- **Saved on Confirmar only.** On `order_confirmed` for a delivery, the place is saved in the job's batch (one row
+  per order ID; an accepted saved place is marked used). Pickup and cancelled orders keep no place. Customer deletion
+  deletes the places and clears the pins on their messages.
+- **Fee:** shown only when the order's `fee` is above zero ("Envío: L X, aparte del total."). Store settings (#40)
+  don't exist yet, so it's always `null` today. The preparation card shows the place, a map link built from the
+  pin's numbers, and the fee when set.
+
 ### Customer controls: first message, ALTO, handoff, deletion (#30)
 
 - `src/application/customer-gate.ts` runs ahead of the order handler (`OrderHandlerDeps.gate`, one call in

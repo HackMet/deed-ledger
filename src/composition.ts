@@ -25,6 +25,7 @@ import { SEND_TIMEOUT_MS } from "./domain/outbox";
 import { type Config, readConfig } from "./infrastructure/config";
 import { D1ConsoleAuthRepository } from "./infrastructure/d1/console-auth-repository";
 import { D1CustomerControlRepository } from "./infrastructure/d1/customer-control-repository";
+import { D1CustomerPlaceRepository } from "./infrastructure/d1/customer-place-repository";
 import { D1CustomerRepository } from "./infrastructure/d1/customer-repository";
 import { D1IntakeRepository } from "./infrastructure/d1/intake-repository";
 import { D1JobRepository } from "./infrastructure/d1/job-repository";
@@ -108,7 +109,17 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
     engine === null
       ? null
       : buildOrderReading(env, engine, { clock, log }, { db, jobs, mediaStore, audioDecoder, transcriber, ...readingOverrides(overrides) });
-  const orderHandler = engine === null ? null : createOrderHandler({ engine, jobs, customers, clock, log, pendientes, reader, gate });
+  const orderHandler = engine === null ? null : createOrderHandler({
+          engine,
+          jobs,
+          customers,
+          clock,
+          log,
+          pendientes,
+          reader,
+          gate,
+          places: new D1CustomerPlaceRepository(db),
+        });
   return {
     config,
     engine,

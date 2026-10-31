@@ -201,11 +201,11 @@ export class D1CustomerControlRepository implements CustomerControlRepository {
              AND ${due}`,
         )
         .bind(b, b, b, customerId, b, customerId),
-      // Message text and provider IDs (they embed the phone). Unstarted jobs end without a reply.
+      // Message text, shared locations and provider IDs (they embed the phone). Unstarted jobs end without a reply.
       this.db
         .prepare(
           `UPDATE inbound_messages
-           SET text_body = NULL, reply_id = NULL, context_message_id = NULL,
+           SET text_body = NULL, reply_id = NULL, context_message_id = NULL, latitude_e6 = NULL, longitude_e6 = NULL,
                provider_message_id = 'deleted:' || id,
                last_error = CASE WHEN job_state = 'pending' THEN 'customer_deleted' ELSE last_error END,
                job_finished_at_ms = CASE WHEN job_state = 'pending' THEN ? ELSE job_finished_at_ms END,
@@ -225,6 +225,10 @@ export class D1CustomerControlRepository implements CustomerControlRepository {
            WHERE business_id = ? AND conversation_id IN (${theirConversations}) AND ${due}`,
         )
         .bind(ERASED_BODY, nowMs, b, b, customerId, b, customerId),
+      // Their saved delivery places (#29): what they wrote and where they are.
+      this.db
+        .prepare(`DELETE FROM customer_places WHERE business_id = ? AND customer_id = ? AND ${due}`)
+        .bind(b, customerId, b, customerId),
       this.db
         .prepare(
           `UPDATE conversations SET last_readback_order_id = NULL, last_readback_version = NULL, last_readback_at_ms = NULL

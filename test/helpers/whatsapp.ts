@@ -102,3 +102,24 @@ let counter = 0;
 export function wamid(label = "IN"): string {
   return `wamid.TEST-${label}-${Date.now().toString(36)}-${++counter}`;
 }
+
+/**
+ * A shared WhatsApp location, as the Cloud API webhook sends it (`type: "location"`). Synthetic:
+ * the shape follows a third-party schema of Meta's webhook; #25 replaces it with a captured payload.
+ */
+export function locationMessage(
+  spec: MessageSpec & { readonly latitude: unknown; readonly longitude: unknown; readonly name?: string; readonly address?: string },
+) {
+  return {
+    from: spec.from,
+    id: spec.id,
+    timestamp: String(spec.timestampS),
+    type: "location",
+    location: {
+      latitude: spec.latitude,
+      longitude: spec.longitude,
+      ...(spec.name === undefined ? {} : { name: spec.name }),
+      ...(spec.address === undefined ? {} : { address: spec.address }),
+    },
+  };
+}

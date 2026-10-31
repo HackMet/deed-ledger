@@ -11,6 +11,7 @@ import type { MemberContext } from "../../../application/engine";
 import { describeError } from "../../../application/errors";
 import type { ActionEnvelope, ConsoleAction, LineMark } from "../../../domain/contract/actions";
 import { formatLempiras } from "../../../domain/contract/numbers";
+import { mapLink } from "../../../domain/place";
 import type { EngineOutcome, OrderLineView, OrderView, PreparationCard } from "../../../domain/contract/outcomes";
 import { type ConsoleEnv, memberContext } from "./auth";
 import { csrfField, shell } from "./layout";
@@ -181,10 +182,16 @@ function hidden(order: OrderView, type: string, csrf: string) {
   return html`<input type="hidden" name="type" value="${type}"><input type="hidden" name="orderId" value="${order.orderId}"><input type="hidden" name="version" value="${order.version}"><input type="hidden" name="operationKey" value="${crypto.randomUUID()}">${csrfField(csrf)}`;
 }
 
-function fulfillmentText(order: OrderView): string {
-  if (order.fulfillment === null) return "Sin definir";
-  if (order.fulfillment.mode === "pickup") return "Para recoger";
-  return `Para llevar: ${order.fulfillment.placeText ?? "lugar guardado"}`;
+function fulfillmentText(order: OrderView) {
+  const f = order.fulfillment;
+  if (f === null) return "Sin definir";
+  if (f.mode === "pickup") return "Para recoger";
+  const pin = f.pin ?? null;
+  // The link is built from the pin's numbers only; the customer's words are escaped by `html`.
+  const map = pin === null ? "" : html` · <a href="${mapLink(pin)}" target="_blank" rel="noopener noreferrer">Ver ubicación</a>`;
+  const where = f.placeText ?? (pin !== null ? "ubicación compartida" : f.placeId !== null ? "lugar guardado" : "falta la dirección");
+  const fee = f.fee !== null && f.fee > 0 ? ` · Envío ${formatLempiras(f.fee)}` : "";
+  return html`Para llevar: ${where}${map}${fee}`;
 }
 
 /** The order cards; the header, tabs, notice and buttons come from the shared layout. */

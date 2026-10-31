@@ -64,3 +64,39 @@ against the types and the fixtures; `npm run typecheck` fails when a fixture sto
 ## Open for the meeting
 
 1. **Kerly's spec:** not read yet. Anything here that conflicts with it wins a discussion, not a default.
+
+## Proposed (#29): delivery to a saved place
+
+Angel's side, built against the pretend engine; not agreed yet. Our side owns the places (`customer_places`,
+migration 0017) and the pin's coordinates; the engine owns the order's fulfillment. Optional fields keep both sides
+compiling until this is agreed.
+
+1. **`OrderView.fulfillment` delivery gains `pin`.** `pin?: { latitude: number; longitude: number } | null`, a shared
+   WhatsApp location from the webhook (never the model). Today it's optional in `outcomes.ts`; agreed, it becomes
+   required (`null` for none). The readback says "Te lo llevamos a la ubicación que nos mandaste." and the
+   preparation card links to a map. Everything else in the variant is as is: `placeText` as the customer wrote it,
+   `placeId` when a saved place was accepted, `fee` from store settings.
+2. **`CustomerContext.savedPlace: SavedPlace | null`**, with `SavedPlace = { placeId: string; placeText: string |
+   null; pin: Pin | null }` (`src/domain/place.ts`). Our side reads the customer's newest used place and passes it in
+   (local today as `CustomerContextWithName.savedPlace`). The engine may offer it, never apply it: when an order is
+   delivery with no place, it asks `same_place` if a saved place exists and the customer hasn't declined it for
+   this order, otherwise `delivery_place`.
+3. **`decline_saved_place` (& `OrderRef`)** joins `CustomerAction`: "Otro lugar". The engine asks `delivery_place`
+   and doesn't offer the saved place again for that order. `accept_saved_place` stays as is; the engine must refuse
+   a `placeId` that isn't the context's `savedPlace.placeId` (`not_found`), and an order not in `armando` with
+   delivery (`invalid_state`).
+4. **Button keys:** `place:<order>:v<version>:<placeId>` (Sí, `accept_saved_place`) and
+   `otherplace:<order>:v<version>` (Otro lugar). The button ID is the operation key, as with `confirm:`. Typed
+   answers ("sí", "otro lugar", an address) go through perception as `clarification` or `fulfillment` with the
+   pending question `same_place` or `delivery_place`.
+5. **Engine rules for `fulfillment` observations:** `mode: "pickup"` drops any place (a place is used for delivery
+   only); a `pin` or `placeText` makes the order a delivery to that place; `sameAsBefore` uses the saved place only
+   when one exists; `mode: null` with no place changes nothing. A `clarification` answering `same_place` is a yes
+   only when it clearly says so (`isYes` in `src/domain/place.ts`); anything else is Otro lugar. A `clarification`
+   answering `delivery_place` is the place in words.
+6. **Fee:** `fee` comes from store settings (#40) only, `null` when none is set, and is never part of `total`. Until
+   #40 exists the pretend engine always gives `null`. The readback shows "Envío: L X, aparte del total." only for a
+   fee above zero.
+7. **Saving a place is ours:** on `order_confirmed` for a delivery order, the order handler saves the place in the
+   job's batch (new place: one row per order ID, updated if the order is confirmed again; accepted saved place:
+   marked used). No engine call is needed. Open question: does the engine also want the place in its own records?

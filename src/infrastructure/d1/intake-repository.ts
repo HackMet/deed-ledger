@@ -9,6 +9,7 @@ import type {
 } from "../../application/ports";
 import { mediaObjectKey } from "../../domain/media";
 import { providerStatusRank, UNKNOWN_SENDER_NOTICE_INTERVAL_MS } from "../../domain/outbox";
+import { toE6 } from "../../domain/place";
 import { NEXT_OUTBOX_SEQ } from "./outbox-repository";
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -102,9 +103,9 @@ export class D1IntakeRepository implements IntakeRepository {
         .prepare(
           `INSERT INTO inbound_messages
              (id, business_id, conversation_id, provider, provider_message_id, provider_timestamp_s,
-              order_ts_s, received_at_ms, kind, text_body, reply_id, context_message_id, media_asset_id,
-              job_state, attempts)
-           SELECT ?, c.business_id, c.id, 'whatsapp', ?, ?, ?, ?, ?, ?, ?, ?,
+              order_ts_s, received_at_ms, kind, text_body, reply_id, context_message_id, latitude_e6, longitude_e6,
+              media_asset_id, job_state, attempts)
+           SELECT ?, c.business_id, c.id, 'whatsapp', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                   (SELECT m.id FROM media_assets m
                    WHERE m.business_id = c.business_id AND m.provider = 'whatsapp' AND m.provider_media_id = ?),
                   'pending', 0
@@ -121,6 +122,8 @@ export class D1IntakeRepository implements IntakeRepository {
           event.textBody,
           event.replyId,
           event.contextMessageId,
+          event.location == null ? null : toE6(event.location.latitude),
+          event.location == null ? null : toE6(event.location.longitude),
           event.media?.providerMediaId ?? null,
           ...admittedParams,
         ),
