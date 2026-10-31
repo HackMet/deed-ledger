@@ -43,7 +43,11 @@ export function nextVersion(
   change: OrderChangeEdit,
 ): NextVersion | null {
   const version = current.version + 1;
-  if (change.op === "add") return { version, lines: [...current.lines, change.line] };
+  if (change.op === "add") {
+    // A known quantity must be a non-negative decimal; null stays unknown.
+    if (change.line.quantity !== null && !isDecimalString(change.line.quantity)) return null;
+    return { version, lines: [...current.lines, change.line] };
+  }
 
   const index = indexOfLabel(current.lines.length, change.label);
   if (index === null) return null;

@@ -57,6 +57,36 @@ describe("totalOf", () => {
   });
 });
 
+describe("totalOf with an unknown or invalid input", () => {
+  it("a null delivery fee makes the total null, and delivery is null too", () => {
+    const result = totalOf(readbackOrder.lines, null);
+    expect(result.total).toBeNull();
+    expect(result.delivery).toBeNull();
+  });
+
+  it("a fee that is not a whole number of centavos makes the total null", () => {
+    const result = totalOf(readbackOrder.lines, 12.5);
+    expect(result.total).toBeNull();
+    expect(result.delivery).toBeNull();
+  });
+
+  it("a fractional price is unknown and does not throw", () => {
+    const line = priced({ unitPrice: 10.5 });
+    expect(() => totalOf([line], 0)).not.toThrow();
+    expect(totalOf([line], 0).total).toBeNull();
+  });
+
+  it("an order whose every line is excluded totals null, not the fee alone", () => {
+    const gone = priced({ availability: "se_acabo" });
+    const restricted = priced({ restricted: true });
+    expect(totalOf([gone, restricted], 5000)).toEqual({ total: null, delivery: 5000, excluded: [0, 1] });
+  });
+
+  it("a known whole fee still adds to the total and is reported separately", () => {
+    expect(totalOf(readbackOrder.lines, 5000)).toEqual({ total: 36500, delivery: 5000, excluded: [] });
+  });
+});
+
 describe("order versions and labels", () => {
   it("labels are 1-based by position", () => {
     expect([0, 1, 3].map(labelOf)).toEqual(["L1", "L2", "L4"]);
@@ -87,6 +117,12 @@ describe("order versions and labels", () => {
     const next = nextVersion(readbackOrder, { op: "add", line: priced({ lineId: "line-5" }) });
     expect(next?.lines).toHaveLength(5);
     expect(lineByLabel(next!, "L5")?.lineId).toBe("line-5");
+  });
+
+  it("add rejects a negative or malformed quantity, and keeps an unknown one", () => {
+    expect(nextVersion(readbackOrder, { op: "add", line: priced({ lineId: "line-5", quantity: "-3" }) })).toBeNull();
+    expect(nextVersion(readbackOrder, { op: "add", line: priced({ lineId: "line-5", quantity: "1e3" }) })).toBeNull();
+    expect(nextVersion(readbackOrder, { op: "add", line: priced({ lineId: "line-5", quantity: null }) })?.lines).toHaveLength(5);
   });
 
   it("a label that doesn't resolve returns null and never guesses a neighbour", () => {
