@@ -5,6 +5,16 @@ class InviteUnusableError extends Error {
   override readonly name = "InviteUnusableError";
 }
 
+class NotStaffError extends Error {
+  override readonly name = "NotStaffError";
+}
+
+/**
+ * The name this store shows for a member: the one it gave them. Only an owner falls back to the
+ * person's own record, which only the operator's admin scripts write. Never another store's name.
+ */
+const MEMBER_NAME = `CASE WHEN m.role = 'owner' THEN COALESCE(m.display_name, u.display_name) ELSE m.display_name END`;
+
 interface SessionRow {
   id: string;
   business_id: string;
@@ -67,22 +77,25 @@ export class D1ConsoleAuthRepository implements ConsoleAuthRepository {
   }
 
   async revokeSessions(tenant: Tenant, userId: string, nowMs: number): Promise<number> {
-    const result = await this.db
+    const result = await this.revokeStatement(tenant, userId, nowMs).run();
+    return result.meta.changes;
+  }
+
+  private revokeStatement(tenant: Tenant, userId: string, nowMs: number): D1PreparedStatement {
+    return this.db
       .prepare(
         `UPDATE console_sessions SET revoked_at_ms = ?
          WHERE business_id = ? AND user_id = ? AND revoked_at_ms IS NULL`,
       )
-      .bind(nowMs, tenant.businessId, userId)
-      .run();
-    return result.meta.changes;
+      .bind(nowMs, tenant.businessId, userId);
   }
 
   async listMembers(tenant: Tenant): Promise<MemberSummary[]> {
     const { results } = await this.db
       .prepare(
-        `SELECT m.user_id, u.display_name, m.role, m.active, m.can_approve_fiado FROM memberships m
+        `SELECT m.user_id, ${MEMBER_NAME} AS display_name, m.role, m.active, m.can_approve_fiado FROM memberships m
          JOIN users u ON u.id = m.user_id
-         WHERE m.business_id = ? ORDER BY m.role, u.display_name`,
+         WHERE m.business_id = ? ORDER BY m.role, display_name`,
       )
       .bind(tenant.businessId)
       .all<{ user_id: string; display_name: string | null; role: MemberSummary["role"]; active: number; can_approve_fiado: number }>();
@@ -100,20 +113,21 @@ export class D1ConsoleAuthRepository implements ConsoleAuthRepository {
     person: { readonly phone: string; readonly displayName: string | null; readonly nowMs: number },
   ): Promise<{ readonly userId: string; readonly role: "owner" | "staff" }> {
     await this.db.batch([
-      // A person can belong to several stores: an existing name is kept, a blank one is filled.
+      // A person can belong to several stores, so the shared record is never touched from here: the
+      // name the owner typed is this store's own, on the membership.
+      this.db
+        .prepare(`INSERT INTO users (id, phone, created_at_ms) VALUES (?, ?, ?) ON CONFLICT (phone) DO NOTHING`)
+        .bind(crypto.randomUUID(), person.phone, person.nowMs),
+      // An existing staff member's blank name is filled; an owner's membership is left as it is.
       this.db
         .prepare(
-          `INSERT INTO users (id, phone, display_name, created_at_ms) VALUES (?, ?, ?, ?)
-           ON CONFLICT (phone) DO UPDATE SET display_name = COALESCE(users.display_name, excluded.display_name)`,
+          `INSERT INTO memberships (business_id, user_id, location_id, role, created_at_ms, display_name)
+           SELECT ?, id, NULL, 'staff', ?, ? FROM users WHERE phone = ?
+           ON CONFLICT (business_id, user_id) DO UPDATE
+             SET display_name = COALESCE(memberships.display_name, excluded.display_name)
+             WHERE memberships.role = 'staff'`,
         )
-        .bind(crypto.randomUUID(), person.phone, person.displayName, person.nowMs),
-      this.db
-        .prepare(
-          `INSERT INTO memberships (business_id, user_id, location_id, role, created_at_ms)
-           SELECT ?, id, NULL, 'staff', ? FROM users WHERE phone = ?
-           ON CONFLICT (business_id, user_id) DO NOTHING`,
-        )
-        .bind(tenant.businessId, person.nowMs, person.phone),
+        .bind(tenant.businessId, person.nowMs, person.displayName, person.phone),
     ]);
     const row = await this.db
       .prepare(
@@ -150,7 +164,9 @@ export class D1ConsoleAuthRepository implements ConsoleAuthRepository {
     ]);
     const row = await this.db
       .prepare(
-        `SELECT u.phone, u.display_name FROM console_invites i JOIN users u ON u.id = i.user_id
+        `SELECT u.phone, ${MEMBER_NAME} AS display_name FROM console_invites i
+         JOIN memberships m ON m.business_id = i.business_id AND m.user_id = i.user_id
+         JOIN users u ON u.id = i.user_id
          WHERE i.token_hash = ? AND i.business_id = ?`,
       )
       .bind(invite.tokenHash, tenant.businessId)
@@ -158,21 +174,32 @@ export class D1ConsoleAuthRepository implements ConsoleAuthRepository {
     return row === null ? null : { phone: row.phone, displayName: row.display_name };
   }
 
-  async removeStaff(tenant: Tenant, userId: string, nowMs: number): Promise<boolean> {
-    const [removed] = await this.db.batch([
-      this.db
-        .prepare(`UPDATE memberships SET active = 0 WHERE business_id = ? AND user_id = ? AND role = 'staff'`)
-        .bind(tenant.businessId, userId),
-      // An unused invite would open a session again if the person were re-added within 15 minutes.
-      this.db
-        .prepare(
-          `UPDATE console_invites SET expires_at_ms = ?
-           WHERE business_id = ? AND user_id = ? AND used_at_ms IS NULL AND expires_at_ms > ?
-             AND EXISTS (SELECT 1 FROM memberships WHERE business_id = ? AND user_id = ? AND role = 'staff')`,
-        )
-        .bind(nowMs, tenant.businessId, userId, nowMs, tenant.businessId, userId),
-    ]);
-    return (removed?.meta.changes ?? 0) > 0;
+  async removeStaff(tenant: Tenant, userId: string, nowMs: number): Promise<{ readonly sessionsEnded: number } | null> {
+    const isStaff: Guard = {
+      holdsSql: `SELECT 1 FROM memberships WHERE business_id = ? AND user_id = ? AND role = 'staff'`,
+      params: [tenant.businessId, userId],
+      error: () => new NotStaffError(),
+    };
+    try {
+      // One batch: deactivated, unused invites expired and every session ended, or none of it. A
+      // session left open would come back to life if the person were invited again.
+      const [, , revoked] = await guardedBatch(this.db, [isStaff], [
+        this.db
+          .prepare(`UPDATE memberships SET active = 0 WHERE business_id = ? AND user_id = ? AND role = 'staff'`)
+          .bind(tenant.businessId, userId),
+        this.db
+          .prepare(
+            `UPDATE console_invites SET expires_at_ms = ?
+             WHERE business_id = ? AND user_id = ? AND used_at_ms IS NULL AND expires_at_ms > ?`,
+          )
+          .bind(nowMs, tenant.businessId, userId, nowMs),
+        this.revokeStatement(tenant, userId, nowMs),
+      ]);
+      return { sessionsEnded: revoked?.meta.changes ?? 0 };
+    } catch (error) {
+      if (error instanceof NotStaffError) return null;
+      throw error;
+    }
   }
 
   async setFiadoPermission(tenant: Tenant, userId: string, allowed: boolean): Promise<boolean> {

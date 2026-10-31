@@ -362,7 +362,11 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
   preview can't use it up); the "Entrar" POST uses it and opens a session in one guarded batch, so two taps can't
   both win. The session cookie (`consola`, Path `/console`, HttpOnly, Secure, SameSite=Lax, 30 days) holds another
   random token, also stored hashed. Every request re-reads the session and requires an active membership;
-  `revokeSessions` sets `revoked_at_ms` (no route calls it yet: "Quitar" is #23). Every POST carries a CSRF
+  "Quitar" (`removeStaff`) deactivates the membership, expires unused invites and sets `revoked_at_ms` on every
+  session in one guarded batch (fails loudly when the person isn't staff of the store), so re-inviting can never
+  revive an old cookie. The name an owner types for a person lives on that store's membership (migration 0015);
+  the console never writes or shows the shared `users.display_name`, except an owner's own, which only the admin
+  scripts set. Every POST carries a CSRF
   value, an HMAC of the session ID with `LINK_SIGNING_SECRET`; without that secret the console answers 503. The
   store and the actor always come from the session. Cross-site and oversized (> 16 KiB) form posts are refused.
 - **First login:** `npm run admin:invite -- --phone-number-id … --phone … --role owner|staff [--remote]` adds the
