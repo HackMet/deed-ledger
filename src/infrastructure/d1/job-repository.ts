@@ -1,4 +1,4 @@
-import { JobConflictError, PermanentWriteError, StaleSnapshotError } from "../../application/errors";
+import { BurstAlreadyReadError, BurstTooLargeError, JobConflictError, PermanentWriteError, StaleSnapshotError } from "../../application/errors";
 import type {
   Commit,
   ConversationRef,
@@ -12,6 +12,7 @@ import type {
   StoredMedia,
   Tenant,
 } from "../../application/ports";
+import { BURST_MAX_MESSAGES } from "../../domain/burst";
 import { MAX_JOB_ATTEMPTS, type MessageKind } from "../../domain/processing";
 import { DB_NOW_MS, fencedBatch, type Guard, jobGuard, leaseIsHeld } from "./fence";
 import { NEXT_OUTBOX_SEQ } from "./outbox-repository";
@@ -302,6 +303,76 @@ export class D1JobRepository implements JobRepository {
       .bind(cutoffMs, nowMs, limit)
       .all<{ business_id: string; conversation_id: string }>();
     return results.map((row) => ({ businessId: row.business_id, conversationId: row.conversation_id }));
+  }
+
+  async unreadBurst(lease: Lease, throughJobId: string, sinceMs: number): Promise<Job[]> {
+    const { results } = await this.db
+      .prepare(
+        `SELECT ${JOB_COLUMNS} FROM inbound_messages i
+         WHERE i.business_id = ? AND i.conversation_id = ? AND i.received_at_ms >= ?
+           AND (i.job_state = 'done' OR (i.id = ? AND i.job_state = 'processing' AND i.job_lease_id = ?))
+           AND NOT EXISTS (SELECT 1 FROM burst_reads r WHERE r.business_id = i.business_id AND r.inbound_message_id = i.id)
+           AND (i.order_ts_s, i.received_at_ms, i.id) <= (SELECT t.order_ts_s, t.received_at_ms, t.id
+                                                          FROM inbound_messages t
+                                                          WHERE t.business_id = i.business_id
+                                                            AND t.conversation_id = i.conversation_id AND t.id = ?)
+         ORDER BY i.order_ts_s, i.received_at_ms, i.id
+         LIMIT ?`,
+      )
+      .bind(lease.businessId, lease.conversationId, sinceMs, throughJobId, lease.leaseId, throughJobId, BURST_MAX_MESSAGES + 1)
+      .all<JobRow>();
+    // Never a partial burst: the rest would stay unread with no job left to read it.
+    if (results.length > BURST_MAX_MESSAGES) throw new BurstTooLargeError();
+    return results.map(toJob);
+  }
+
+  async nextOpenJob(lease: Lease, afterJobId: string): Promise<Job | null> {
+    const row = await this.db
+      .prepare(
+        `SELECT ${JOB_COLUMNS} FROM inbound_messages n
+         WHERE n.business_id = ? AND n.conversation_id = ? AND n.job_state IN ('pending', 'processing') AND n.id <> ?
+           AND (n.order_ts_s, n.received_at_ms, n.id) > (SELECT t.order_ts_s, t.received_at_ms, t.id
+                                                         FROM inbound_messages t
+                                                         WHERE t.business_id = n.business_id
+                                                           AND t.conversation_id = n.conversation_id AND t.id = ?)
+         ORDER BY n.order_ts_s, n.received_at_ms, n.id
+         LIMIT 1`,
+      )
+      .bind(lease.businessId, lease.conversationId, afterJobId, afterJobId)
+      .first<JobRow>();
+    return row === null ? null : toJob(row);
+  }
+
+  markReadCommit(lease: Lease, readerJobId: string, messageIds: readonly string[], nowMs: number): Commit {
+    if (messageIds.length === 0) return { guards: [], statements: [] };
+    // One JSON parameter, so a long burst stays under D1's limit on bound parameters.
+    const ids = JSON.stringify(messageIds);
+    const inBurst = `id IN (SELECT value FROM json_each(?))`;
+    return {
+      guards: [
+        {
+          holdsSql: `SELECT 1 WHERE (SELECT COUNT(*) FROM inbound_messages
+                                     WHERE business_id = ? AND conversation_id = ? AND ${inBurst}) = ?`,
+          params: [lease.businessId, lease.conversationId, ids, new Set(messageIds).size],
+          error: () => new Error("burst message outside the leased conversation"),
+        },
+        {
+          holdsSql: `SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM burst_reads
+                                                WHERE business_id = ? AND inbound_message_id IN (SELECT value FROM json_each(?)))`,
+          params: [lease.businessId, ids],
+          error: () => new BurstAlreadyReadError(),
+        },
+      ],
+      statements: [
+        this.db
+          .prepare(
+            `INSERT INTO burst_reads (business_id, inbound_message_id, conversation_id, read_by_job_id, read_at_ms)
+             SELECT business_id, id, conversation_id, ?, ? FROM inbound_messages
+             WHERE business_id = ? AND conversation_id = ? AND ${inBurst}`,
+          )
+          .bind(readerJobId, nowMs, lease.businessId, lease.conversationId, ids),
+      ],
+    };
   }
 
   private runningGuard(lease: Lease, jobId: string): Guard {

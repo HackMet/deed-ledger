@@ -39,8 +39,28 @@ export class MemoryEngine implements Engine {
     return result({ type: "nothing" });
   }
 
-  async onCustomerAction(_context: CustomerContext, _action: ActionEnvelope<CustomerAction>): Promise<EngineResult> {
-    return result({ type: "nothing" });
+  /**
+   * The readback's answers. An order is found only among the customer's own: another customer's
+   * order answers not_found, as if it didn't exist. Saved places and substitutes aren't pretended.
+   */
+  async onCustomerAction(context: CustomerContext, envelope: ActionEnvelope<CustomerAction>): Promise<EngineResult> {
+    const state = this.state(context);
+    const first = state.operations.get(envelope.operationKey);
+    if (first !== undefined) return result({ type: "duplicate", first });
+
+    const { action } = envelope;
+    const stored = state.orders.get(action.orderId);
+    if (stored === undefined || stored.customerId !== context.customerId) {
+      return result({ type: "rejected", reason: "not_found", order: null });
+    }
+    if (action.version !== stored.order.version) {
+      return result({ type: "rejected", reason: "stale_version", order: stored.order });
+    }
+    const answered = answer(stored, action, context.nowMs);
+    if (answered === null) return result({ type: "rejected", reason: "invalid_state", order: stored.order });
+    state.orders.set(action.orderId, answered.stored);
+    state.operations.set(envelope.operationKey, answered.outcome);
+    return result(answered.outcome);
   }
 
   async onConsoleAction(context: MemberContext, envelope: ActionEnvelope<ConsoleAction>): Promise<EngineResult> {
@@ -101,6 +121,34 @@ function result(outcome: EngineOutcome): EngineResult {
 function allowed(context: MemberContext, action: ConsoleAction): boolean {
   if (action.type === "approve_fiado") return context.role === "owner" || context.canApproveFiado;
   return context.role === "owner" || !(OWNER_ACTIONS as readonly string[]).includes(action.type);
+}
+
+/** The order after a customer's answer, and what to tell them; null when it doesn't fit its state. */
+function answer(
+  stored: StoredOrder,
+  action: CustomerAction,
+  nowMs: number,
+): { stored: StoredOrder; outcome: EngineOutcome } | null {
+  const { order } = stored;
+  switch (action.type) {
+    case "confirm_order": {
+      if (order.state !== "por_confirmar") return null;
+      const next: OrderView = { ...order, state: "confirmado" };
+      return { stored: { ...stored, order: next, confirmedAtMs: nowMs }, outcome: { type: "order_confirmed", order: next } };
+    }
+    case "cancel_order": {
+      if (order.state === "entregado" || order.state === "cancelado") return null;
+      const next: OrderView = { ...order, state: "cancelado", queuePosition: null };
+      return { stored: { ...stored, order: next }, outcome: { type: "order_cancelled", order: next } };
+    }
+    case "correct_order":
+      // The customer says what to change next; perception reads it.
+      return order.state === "por_confirmar" ? { stored, outcome: { type: "nothing" } } : null;
+    case "accept_saved_place":
+    case "accept_substitute":
+    case "remove_line":
+      return null;
+  }
 }
 
 type OrderAction = Extract<ConsoleAction, { orderId: string }>;

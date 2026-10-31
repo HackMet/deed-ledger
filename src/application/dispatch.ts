@@ -102,7 +102,7 @@ async function sendOne(
   const lastInboundAtMs = await deps.outbox.lastInboundAtMs(message);
   const toPhone =
     inlinePhone ??
-    (message.conversationId === null ? null : await deps.outbox.memberPhone(tenant, message.conversationId));
+    (message.conversationId === null ? null : await deps.outbox.customerPhone(tenant, message.conversationId));
   const channel = await deps.tenancy.findChannelAccountOf(tenant, message.channelAccountId);
 
   // Then confirm the claim is still ours and extend it past the send's timeout, by the database's

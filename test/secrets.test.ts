@@ -18,7 +18,16 @@ describe("test environment", () => {
 
   it("applies every migration to the local D1", async () => {
     const { results } = await env.DB.prepare(`SELECT name FROM d1_migrations ORDER BY id`).all<{ name: string }>();
-    expect(results.map((row) => row.name)).toEqual(["0001_tenancy.sql", "0002_messaging.sql", "0003_console_auth.sql", "0008_console_staff.sql"]);
+    expect(results.map((row) => row.name)).toEqual([
+      "0001_tenancy.sql",
+      "0002_messaging.sql",
+      "0003_console_auth.sql",
+      "0004_customers.sql",
+      "0005_burst_reads.sql",
+      "0006_reply_claims.sql",
+      "0007_model_spend.sql",
+      "0008_console_staff.sql",
+    ]);
   });
 
   it("creates the final schema directly: every outbound row has an expiry and a send order", async () => {

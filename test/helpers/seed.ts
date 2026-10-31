@@ -69,3 +69,12 @@ export async function seedStore(options: {
   }
   return { businessId, locationId, channelAccountId, phoneNumberId, members };
 }
+
+/** A customer of the store, as intake would create one. Returns the customer's ID. */
+export async function seedCustomer(store: Pick<SeededStore, "businessId">, phone: string | null): Promise<string> {
+  const id = crypto.randomUUID();
+  await env.DB.prepare(`INSERT INTO customers (id, business_id, phone, created_at_ms) VALUES (?1, ?2, ?3, ?4)`)
+    .bind(id, store.businessId, phone, Date.UTC(2026, 9, 1))
+    .run();
+  return id;
+}

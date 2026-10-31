@@ -1,3 +1,4 @@
+import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { couldNotProcess, RECEIVED_PLACEHOLDER } from "../src/domain/copy";
 import { MAX_JOB_ATTEMPTS, STRANDED_AFTER_MS } from "../src/domain/processing";
@@ -9,6 +10,7 @@ import { audioMessage, textMessage, wamid, webhook } from "./helpers/whatsapp";
 // scoped to the store under test.
 
 const nowS = (h: Harness) => Math.floor(h.clock.now() / 1000);
+const HOUR = 60 * 60 * 1000;
 
 async function storeWithOwner() {
   const phone = newPhone();
@@ -114,12 +116,19 @@ describe("cron sweep", () => {
     expect(h.ringsFor(store.businessId)).toEqual([]);
   });
 
-  it("gives up on an unknown-sender notice left pending by a request that died", async () => {
+  it("gives up on an old unknown-sender notice left pending by a request that died", async () => {
     const h = harness();
     const { store } = await storeWithOwner();
     const stranger = newPhone();
-    h.channel.configured = false; // the request records the notice but can't send it
-    await h.post(webhook(store.phoneNumberId, { messages: [textMessage({ from: stranger, id: wamid(), timestampS: nowS(h), body: "Hola" })] }));
+    // Notices are no longer created (#14), but rows from before can still be left pending.
+    await env.DB.prepare(
+      `INSERT INTO outbound_messages (id, business_id, channel_account_id, recipient_hash, seq, kind, body_text,
+         dedupe_key, status, expires_at_ms, created_at_ms, updated_at_ms)
+       VALUES (?, ?, ?, 'hash-synthetic', (SELECT COALESCE(MAX(seq), 0) + 1 FROM outbound_messages),
+         'unknown_sender_notice', 'Aviso', ?, 'pending', ?, ?, ?)`,
+    )
+      .bind(crypto.randomUUID(), store.businessId, store.channelAccountId, `notice:${crypto.randomUUID()}`, h.clock.now() + HOUR, h.clock.now(), h.clock.now())
+      .run();
     expect(await rows(`SELECT status FROM outbound_messages WHERE business_id = ?`, store.businessId)).toEqual([{ status: "pending" }]);
 
     h.channel.configured = true;

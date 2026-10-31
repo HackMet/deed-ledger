@@ -26,6 +26,8 @@ export default defineConfig(async () => {
         miniflare: {
           // Test-only binding so the setup file can apply every migration to the local D1.
           bindings: { ...BLANK_SECRETS, TEST_MIGRATIONS: migrations },
+          // An empty database for the migration test, which applies migrations step by step.
+          d1Databases: { MIGRATION_TEST_DB: "migration-test" },
         },
       }),
     ],
