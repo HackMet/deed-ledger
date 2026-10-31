@@ -40,8 +40,8 @@
     membership; later logins go straight to the list. `DEV_CONSOLE` is unchanged (simulator only; dev member is
     staff, so Empleados is refused there).
 - Tests run:
-  - `env -C /home/angel-rodas/angel/hackathon-claude-console npm run typecheck` → both `tsc` runs exit 0, no output.
-  - `env -C /home/angel-rodas/angel/hackathon-claude-console npm test` → `Test Files  20 passed (20)`,
+  - `npm run typecheck` → both `tsc` runs exit 0, no output.
+  - `npm test` → `Test Files  20 passed (20)`,
     `Tests  169 passed (169)` (was 158 before; 11 new in `console-empleados.test.ts`).
 - Not done, risks, open questions:
   - No QR on the invite page (no dependency added); the owner sends the link by WhatsApp or reads it out.

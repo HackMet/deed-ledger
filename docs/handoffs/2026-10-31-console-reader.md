@@ -53,8 +53,8 @@
 
 ### Tests run
 
-- `env -C /home/angel-rodas/angel/hackathon-claude-conreader npm run typecheck` → both `tsc` runs exit 0, no output.
-- `env -C /home/angel-rodas/angel/hackathon-claude-conreader npm test` → `Test Files  29 passed (29)`,
+- `npm run typecheck` → both `tsc` runs exit 0, no output.
+- `npm test` → `Test Files  29 passed (29)`,
   `Tests  331 passed (331)`.
 - `test/console-reader.test.ts` (17, exported function, no HTTP, the composition's `buildBurstReader` with a
   recorded fetch, real D1 and R2): a sale by text (console prompt and schema, evidence span, logs without text), a
@@ -100,6 +100,6 @@
 ### Next steps
 
 1. Angel: review and commit.
-2. Decide the gap (i) questions with Kerly; then the engine stores and confirms console readings.
+2. Decide the gap (i) questions with kercmari; then the engine stores and confirms console readings.
 3. #27: transcripts flow in as `{ type: "transcript" }`; build the in-page WAV recorder then.
 4. Wire a catalog repository into `deps.catalog` when one exists.

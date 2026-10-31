@@ -55,10 +55,10 @@
 ### Tests run
 
 ```text
-$ env -C /home/angel-rodas/angel/hackathon-claude-firstmsg npm run typecheck
+$ npm run typecheck
 > tsc --noEmit -p tsconfig.json && tsc --noEmit -p test/tsconfig.json      (no errors)
 
-$ env -C /home/angel-rodas/angel/hackathon-claude-firstmsg npm test
+$ npm test
  Test Files  28 passed (28)
       Tests  318 passed (318)
 ```

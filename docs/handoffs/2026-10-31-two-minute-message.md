@@ -50,10 +50,10 @@ No migration: the existing UNIQUE `outbound_messages.dedupe_key` is the once-per
 ### Tests run
 
 ```text
-$ env -C /home/angel-rodas/angel/hackathon-claude-slowmsg npm run typecheck
+$ npm run typecheck
 > tsc --noEmit -p tsconfig.json && tsc --noEmit -p test/tsconfig.json      (exit 0, no errors)
 
-$ env -C /home/angel-rodas/angel/hackathon-claude-slowmsg npm test
+$ npm test
  Test Files  28 passed (28)
       Tests  313 passed (313)
 ```
