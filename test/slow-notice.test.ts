@@ -90,6 +90,12 @@ async function notices(businessId: string) {
   );
 }
 
+async function slowBursts(h: Harness, businessId: string) {
+  const now = h.clock.now();
+  const found = await h.deps.jobs.findSlowBursts(now - SLOW_NOTICE_AFTER_MS, now - HOUR, 1_000);
+  return found.filter((burst) => burst.businessId === businessId);
+}
+
 async function oldestMessageId(businessId: string): Promise<string> {
   const [row] = await rows<{ id: string }>(
     `SELECT id FROM inbound_messages WHERE business_id = ? ORDER BY received_at_ms, id LIMIT 1`,
@@ -233,14 +239,12 @@ describe("the two-minute message", () => {
     const setup = await stalledBurst(1);
     const { h, businessId, t0 } = setup;
     h.clock.ms = t0 + 3 * MINUTE;
+    const [burst] = await slowBursts(h, businessId);
+    expect(burst).toBeDefined();
     await h.runCron();
     const [first] = await notices(businessId);
     // Make the first notice look older than the burst, so only the UNIQUE dedupe key stands.
     await env.DB.prepare(`UPDATE outbound_messages SET created_at_ms = ? WHERE id = ?`).bind(t0 - 1, first!.id).run();
-    const [burst] = (await h.deps.jobs.findSlowBursts(h.clock.now() - SLOW_NOTICE_AFTER_MS, h.clock.now() - HOUR, 1_000)).filter(
-      (b) => b.businessId === businessId,
-    );
-    expect(burst).toBeDefined();
     const written = await h.deps.jobs.queueSlowNotice(
       burst!,
       { id: crypto.randomUUID(), kind: "slow_notice", body: NOTICE, dedupeKey: `slow_notice:${burst!.inboundId}`, expiresAtMs: h.clock.now() + HOUR, claims: [] },
@@ -258,8 +262,108 @@ describe("the two-minute message", () => {
     h.clock.ms = t0 + 3 * MINUTE;
     await h.runCron();
     expect(await notices(businessId)).toMatchObject([{ status: "failed" }]);
+    // Once per burst, even now that the failed notice no longer counts as written: later sweeps
+    // neither pick the burst up again nor raise a second item.
+    for (const at of [4 * MINUTE, 5 * MINUTE]) {
+      h.clock.ms = t0 + at;
+      await h.runCron();
+    }
+    expect(await slowBursts(h, businessId)).toEqual([]);
+    expect(await notices(businessId)).toHaveLength(1);
+    expect(setup.pendientes.of(businessId)).toHaveLength(1);
     await finish(setup);
     expect(h.sentTo(phone)).toEqual([ANSWER]);
+  });
+
+  it.each(["failed to send", "reported failed by WhatsApp"] as const)(
+    "is queued, and raised, when the only reply since the burst began %s",
+    async (how) => {
+      // The first message's job writes a reply; the second stalls. That reply never reaches the
+      // customer, so the stalled second message is left with silence.
+      const pendientes = new RecordingPendientes();
+      const stall = stallingHandler();
+      let calls = 0;
+      const handler: JobHandler = {
+        async handle(input) {
+          calls++;
+          if (calls === 1) return { replies: [{ body: "Parte uno.", ttlMs: HOUR }] };
+          return stall.handler.handle(input);
+        },
+      };
+      const h = harness({ jobHandler: handler, pendientes });
+      const phone = newPhone();
+      const store = await seedStore({ members: [{ phone, role: "owner" }] });
+      const businessId = store.businessId;
+      const t0 = h.clock.now();
+      for (let n = 0; n < 2; n++) {
+        if (n > 0) h.clock.advance(1_000);
+        const body = webhook(store.phoneNumberId, {
+          messages: [textMessage({ from: phone, id: wamid(), timestampS: Math.floor(h.clock.now() / 1000), body: `Mensaje ${n + 1}` })],
+        });
+        expect((await h.post(body)).status).toBe(200);
+      }
+      if (how === "failed to send") {
+        h.channel.nextResults.push({ ok: false, disposition: "permanent", errorCode: "test_permanent" });
+      }
+      h.clock.advance(4_000);
+      const running = h.deliver(h.takeRingsFor(businessId));
+      await stall.started;
+
+      // Whenever the first reply's send settles, by 4 minutes the burst has its notice.
+      for (const at of [3 * MINUTE, 4 * MINUTE]) {
+        h.clock.ms = t0 + at;
+        if (how === "reported failed by WhatsApp") {
+          await env.DB.prepare(
+            `UPDATE outbound_messages SET provider_status = 'failed', provider_status_rank = 5
+             WHERE business_id = ? AND kind <> 'slow_notice' AND status = 'sent'`,
+          )
+            .bind(businessId)
+            .run();
+        }
+        await h.runCron();
+      }
+
+      const replies = await rows<{ kind: string; status: string; provider_status: string | null }>(
+        `SELECT kind, status, provider_status FROM outbound_messages WHERE business_id = ? ORDER BY seq`,
+        businessId,
+      );
+      expect(replies[0]).toMatchObject(
+        how === "failed to send" ? { status: "failed" } : { status: "sent", provider_status: "failed" },
+      );
+      const [notice, ...more] = await notices(businessId);
+      expect(more).toEqual([]);
+      expect(notice).toBeDefined();
+      expect(h.sentTo(phone)).toContain(NOTICE);
+      expect(pendientes.of(businessId)).toMatchObject([{ kind: "slow_reply", urgency: "urgent", outboxId: notice!.id }]);
+
+      stall.release();
+      await running;
+    },
+  );
+
+  it("isn't queued while the reply since the burst began is still on its way", async () => {
+    const setup = await stalledBurst(1);
+    const { h, businessId, t0, pendientes } = setup;
+    // A row written to the conversation after the burst began; only its status matters here, so it
+    // goes in through queueSlowNotice under a key that isn't a slow notice's.
+    h.clock.ms = t0 + 3 * MINUTE;
+    const [burst] = await slowBursts(h, businessId);
+    await h.deps.jobs.queueSlowNotice(
+      burst!,
+      { id: crypto.randomUUID(), kind: "slow_notice", body: NOTICE, dedupeKey: "test:on-its-way", expiresAtMs: h.clock.now() + HOUR, claims: [] },
+      h.clock.now(),
+    );
+    for (const status of ["pending", "sending", "waiting_window", "sent", "unknown_delivery"] as const) {
+      await env.DB.prepare(`UPDATE outbound_messages SET status = ? WHERE dedupe_key = 'test:on-its-way'`).bind(status).run();
+      expect(await slowBursts(h, businessId), status).toEqual([]);
+    }
+    for (const status of ["failed", "expired"] as const) {
+      await env.DB.prepare(`UPDATE outbound_messages SET status = ? WHERE dedupe_key = 'test:on-its-way'`).bind(status).run();
+      expect(await slowBursts(h, businessId), status).toHaveLength(1);
+    }
+    expect(pendientes.of(businessId)).toEqual([]);
+    await env.DB.prepare(`DELETE FROM outbound_messages WHERE dedupe_key = 'test:on-its-way'`).run();
+    await finish(setup);
   });
 
   it("leaves bursts older than the lookback alone", async () => {

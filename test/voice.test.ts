@@ -8,9 +8,11 @@ import {
   AudioTooLargeError,
   AudioTooLongError,
   MAX_VOICE_NOTE_BYTES,
+  MAX_VOICE_NOTE_MS,
   OggOpusError,
   OpusAudioDecoder,
 } from "../src/integrations/audio";
+import { maxOpusPackets, readOggOpus } from "../src/integrations/audio/ogg";
 import { MuseVoiceTranscriber, TRANSCRIBE_URL, TranscriptionError } from "../src/integrations/meta/transcribe";
 import { oggOpus, toneOgg } from "./fixtures/audio";
 import { FakeMediaSource } from "./helpers/fakes";
@@ -71,6 +73,47 @@ describe("voice note decoding", () => {
     await expect(decoder.toTranscriberWav(ogg(full.subarray(0, Math.floor(full.length / 2))))).rejects.toBeInstanceOf(OggOpusError);
   });
 
+  it("refuses a note cut right after a complete page, before its end-of-stream page", async () => {
+    const full = toneOgg();
+    const ends = pageEnds(full);
+    expect(ends.at(-1)).toBe(full.length);
+    // The second-to-last page ends a packet and isn't the last: alone, it looks like a whole file.
+    const cut = full.subarray(0, ends.at(-2)!);
+    expect(lastLacing(cut)).toBeLessThan(255);
+    await expect(decoder.toTranscriberWav(ogg(cut))).rejects.toThrow(
+      expect.objectContaining({ name: "OggOpusError", message: "the file ends before the end of the stream" }),
+    );
+    // The same packets, written without the end-of-stream flag, are refused too.
+    const packet = new Uint8Array([16 << 3]); // one 2.5 ms CELT frame
+    expect(() => readOggOpus(oggOpus([packet, packet], { endOfStream: false }), 10)).toThrow(OggOpusError);
+    expect(readOggOpus(oggOpus([packet, packet]), 10).packets).toHaveLength(2);
+  });
+
+  it("refuses more audio packets than a 10-minute note can hold, while reading them", async () => {
+    // 2.5 ms is the shortest Opus packet: 10 minutes is at most 240,000 of them.
+    const cap = maxOpusPackets(MAX_VOICE_NOTE_MS);
+    expect(cap).toBe(240_000);
+    const packet = new Uint8Array([16 << 3]); // one 2.5 ms CELT frame, 1 byte: about 0.5 MB in all
+    expect(readOggOpus(oggOpus(Array.from({ length: cap }, () => packet)), cap).packets).toHaveLength(cap);
+    const over = oggOpus(Array.from({ length: cap + 1 }, () => packet));
+    // Refused by the reader (OggOpusError), not later by the duration check (AudioTooLongError).
+    await expect(decoder.toTranscriberWav(ogg(over))).rejects.toThrow(
+      expect.objectContaining({ name: "OggOpusError", message: "more audio packets than allowed" }),
+    );
+  });
+
+  it.each([
+    ["empty", new Uint8Array(0)],
+    ["a code 3 packet without its frame count", new Uint8Array([(16 << 3) | 3])],
+    ["a code 3 packet with zero frames", new Uint8Array([(16 << 3) | 3, 0])],
+    ["a packet longer than 120 ms", new Uint8Array([(3 << 3) | 3, 3])], // three 60 ms frames
+  ])("refuses an invalid audio packet: %s", async (_name, bad) => {
+    const good = new Uint8Array([16 << 3]);
+    await expect(decoder.toTranscriberWav(ogg(oggOpus([good, bad, good])))).rejects.toThrow(
+      expect.objectContaining({ name: "OggOpusError", message: "an invalid Opus packet" }),
+    );
+  });
+
   it("refuses bytes that aren't Ogg Opus", async () => {
     await expect(decoder.toTranscriberWav(ogg(new TextEncoder().encode("\xff\xd8 not audio at all")))).rejects.toBeInstanceOf(
       OggOpusError,
@@ -92,6 +135,26 @@ describe("voice note decoding", () => {
     await expect(decoder.toTranscriberWav(huge)).rejects.toBeInstanceOf(AudioTooLargeError);
   });
 });
+
+/** Where each Ogg page ends, walking the page headers. */
+function pageEnds(bytes: Uint8Array): number[] {
+  const ends: number[] = [];
+  for (let at = 0; at < bytes.length; ) {
+    const segments = bytes[at + 26]!;
+    let body = 0;
+    for (let i = 0; i < segments; i++) body += bytes[at + 27 + i]!;
+    at += 27 + segments + body;
+    ends.push(at);
+  }
+  return ends;
+}
+
+/** The last lacing value of the last page: under 255 means the page ends a packet. */
+function lastLacing(bytes: Uint8Array): number {
+  const ends = pageEnds(bytes);
+  const start = ends.length > 1 ? ends.at(-2)! : 0;
+  return bytes[start + 27 + bytes[start + 26]! - 1]!;
+}
 
 interface Call {
   readonly url: string;

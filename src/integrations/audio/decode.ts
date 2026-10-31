@@ -10,7 +10,7 @@
 import { OpusDecoder } from "opus-decoder";
 import { UnreadableMediaError } from "../../application/errors";
 
-import { opusPacketSamples48k, readOggOpus } from "./ogg";
+import { maxOpusPackets, opusPacketSamples48k, readOggOpus } from "./ogg";
 import { allocateWav, finishWav } from "./wav";
 
 export type OutputSampleRate = 8000 | 12000 | 16000 | 24000 | 48000;
@@ -48,7 +48,7 @@ export async function decodeOggOpusToWav(
   opusModule: WebAssembly.Module,
   options: DecodeOptions,
 ): Promise<DecodedWav> {
-  const { head, packets, finalGranule } = readOggOpus(ogg);
+  const { head, packets, finalGranule } = readOggOpus(ogg, maxOpusPackets(options.maxDurationMs));
   const rate = options.sampleRate;
 
   // Size the output from the packets' own frame counts; the final granule trims encoder padding.

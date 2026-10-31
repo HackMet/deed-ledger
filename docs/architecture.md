@@ -192,7 +192,9 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
   "No pude descargar…". `MediaStore.read` reads a stored object back, inside the store's prefix only.
 - **Voice notes.** `transcribeVoiceNote` (`src/application/voice-note.ts`) reads a job's stored voice note, decodes
   OGG/Opus to 16 kHz mono WAV in the consumer (A1: libopus Wasm from `opus-decoder`, extracted at build time, since
-  Workers can't compile Wasm at runtime; over 10 minutes or a cut-off file is refused), and calls Muse Voice
+  Workers can't compile Wasm at runtime; refused: over 10 minutes, a cut-off file (including one cut right after a
+  whole page: the end-of-stream page is required), an invalid Opus packet, or more than 240,000 audio packets, the
+  most 10 minutes of 2.5 ms packets can hold, checked while reading), and calls Muse Voice
   Transcribe (90 s timeout, Spanish bias, one attempt). It throws on any failure, so a handler that calls it gets the
   job's retries and then "no pude escuchar tu nota de voz". The order reading calls it (below). The decoder's
   errors extend `UnreadableMediaError`: the same bytes fail the same way, so they aren't retried.
@@ -284,8 +286,10 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
   settles claims that ran out, stops groups, marks closed windows, ends notices pending for over 15 minutes, deletes
   old unknown-sender records and early statuses, then sends up to 50 rows.
 - **The two-minute message.** In the same sweep, before the sends: a conversation whose oldest open message is more
-  than 2 minutes old (and under an hour), leased or not, with no outbox row written since that message arrived, gets
-  "Recibimos tu mensaje, te respondemos en un momento." and an urgent Pendientes item. One `INSERT … SELECT`
+  than 2 minutes old (and under an hour), leased or not, with no outbox row written since that message arrived that
+  was sent or is still on its way (a failed or expired row, or one WhatsApp reported failed, doesn't count;
+  `unknown_delivery` does), gets "Recibimos tu mensaje, te respondemos en un momento." and an urgent Pendientes
+  item. A message that already has its notice, sent or not, isn't picked up again. One `INSERT … SELECT`
   re-checks "still open, nothing written since" as it writes, and the dedupe key `slow_notice:<message>` is UNIQUE,
   so overlapping sweeps or a sweep racing the answer queue it at most once, and never after the answer. The row has
   no job group (its fate never stops the answer) and no claims (the claim check passes it as written). It expires

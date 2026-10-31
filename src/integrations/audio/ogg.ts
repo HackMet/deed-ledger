@@ -1,7 +1,8 @@
 // Minimal reader for a single-stream Ogg Opus file: Ogg pages (RFC 3533) carrying Opus packets
 // (RFC 7845). A voice note is one mono or stereo stream; anything else is rejected, not guessed at.
 // Moved from spikes/audio-decode (A1). Unlike the spike, a cut-off file is rejected: transcribing
-// part of a voice note could drop the words that matter.
+// part of a voice note could drop the words that matter ("... mejor cancelalo"). That includes a
+// file cut right after a complete page: the stream must end with its end-of-stream page.
 
 import { UnreadableMediaError } from "../../application/errors";
 
@@ -32,7 +33,27 @@ const FLAG_CONTINUED = 0x01;
 const FLAG_BEGIN = 0x02;
 const FLAG_END = 0x04;
 
-export function readOggOpus(bytes: Uint8Array): OggOpusStream {
+/** The shortest Opus packet: one 2.5 ms CELT frame, in 48 kHz samples (RFC 6716 section 3.1). */
+const MIN_PACKET_SAMPLES_48K = 120;
+/** The longest: a packet holds at most 120 ms of audio (RFC 6716 section 3.2.5). */
+const MAX_PACKET_SAMPLES_48K = 5760;
+
+/**
+ * The most audio packets a stream of `maxDurationMs` can hold: every packet is at least 2.5 ms, so
+ * 10 minutes is at most 600,000 / 2.5 = 240,000 packets (WhatsApp's 20 ms packets: 30,000). The
+ * reader stops past it instead of keeping one view per packet: a 16 MiB file of 1-byte packets
+ * would otherwise hold about 8 million of them before the duration check ever ran. At the cap the
+ * views cost on the order of 25 MB, against the 128 MB a Worker has.
+ */
+export function maxOpusPackets(maxDurationMs: number): number {
+  return Math.ceil((maxDurationMs * 48) / MIN_PACKET_SAMPLES_48K);
+}
+
+/**
+ * Reads the stream, refusing it once it has more than `maxAudioPackets` audio packets, any audio
+ * packet that isn't a valid Opus packet, or bytes that end before the end-of-stream page.
+ */
+export function readOggOpus(bytes: Uint8Array, maxAudioPackets: number): OggOpusStream {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const packets: Uint8Array[] = [];
   let pending: Uint8Array[] = [];
@@ -78,7 +99,14 @@ export function readOggOpus(bytes: Uint8Array): OggOpusStream {
       position += lacing;
       if (lacing < 255) {
         const piece = bytes.subarray(pieceStart, position);
-        packets.push(pending.length ? concat([...pending, piece]) : piece);
+        const packet = pending.length ? concat([...pending, piece]) : piece;
+        if (packets.length >= 2) {
+          // Audio packets; the first two are the OpusHead and OpusTags headers.
+          if (packets.length - 2 >= maxAudioPackets) throw new OggOpusError("more audio packets than allowed");
+          const samples = opusPacketSamples48k(packet);
+          if (samples === 0 || samples > MAX_PACKET_SAMPLES_48K) throw new OggOpusError("an invalid Opus packet");
+        }
+        packets.push(packet);
         pending = [];
         pieceStart = position;
         endedPacket = true;
@@ -98,6 +126,7 @@ export function readOggOpus(bytes: Uint8Array): OggOpusStream {
 
   if (offset < bytes.length && !endOfStream) throw new OggOpusError("the file ends inside an Ogg page");
   if (pending.length > 0) throw new OggOpusError("the last packet is cut off");
+  if (!endOfStream) throw new OggOpusError("the file ends before the end of the stream");
   if (packets.length < 2) throw new OggOpusError("missing Opus header packets");
   const head = parseOpusHead(packets[0]!);
   if (ascii(packets[1]!, 0, 8) !== "OpusTags") throw new OggOpusError("missing OpusTags packet");
@@ -125,7 +154,10 @@ function parseOpusHead(packet: Uint8Array): OpusHead {
   };
 }
 
-/** Samples at 48 kHz that one Opus packet decodes to, from its TOC byte (RFC 6716 section 3.1). */
+/**
+ * Samples at 48 kHz that one Opus packet decodes to, from its TOC byte (RFC 6716 section 3.1).
+ * 0 for a packet that can't be valid: empty, or a code 3 packet without its frame count.
+ */
 export function opusPacketSamples48k(packet: Uint8Array): number {
   if (packet.length === 0) return 0;
   const toc = packet[0]!;
@@ -136,7 +168,8 @@ export function opusPacketSamples48k(packet: Uint8Array): number {
   else frameSize = [120, 240, 480, 960][config & 3]!; // CELT: 2.5, 5, 10, 20 ms
 
   const code = toc & 3;
-  const frames = code === 0 ? 1 : code === 3 ? (packet[1] ?? 0) & 0x3f : 2;
+  if (code === 3 && packet.length < 2) return 0;
+  const frames = code === 0 ? 1 : code === 3 ? packet[1]! & 0x3f : 2;
   return frames * frameSize;
 }
 
