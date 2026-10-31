@@ -9,6 +9,7 @@ describe("test environment", () => {
     expect(env.WHATSAPP_TOKEN).toBe("");
     expect(env.SENDER_HASH_SALT).toBe("");
     expect(env.LINK_SIGNING_SECRET).toBe("");
+    expect(env.MODEL_API_KEY).toBe("");
   });
 
   it("builds a WhatsApp channel that can't send", () => {
