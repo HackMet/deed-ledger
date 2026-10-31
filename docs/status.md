@@ -3,44 +3,35 @@
 Shared state for every agent: what's true now, what's next, what's open, what bit us. Keep it short. Anything a
 command can tell you (git log, test results, CI) doesn't belong here. Decisions go in [decisions.md](decisions.md).
 
-Last updated: Fri Oct 30, 2026, morning Honduras time, by Claude Code (engine commits, contract draft, console).
+Last updated: Sat Oct 31, 2026, morning Honduras time, by Claude Code (Angel's side built against the pretend engine).
 
 ## Now
 
-- The product is now an order assistant: customers order on WhatsApp, Johan and staff work from a phone console,
-  and both end in the same engine. The team's PRD v1.2 and Tech Spec v3 describe it; they were shared with the
-  teammate on Oct 30 and aren't in this repo yet (`PRD.md` and `architecture.md` still describe the earlier
-  inventory flow).
-- Two-person team (D-37). Angel owns conversations, perception, replies, the console and deploys. His teammate owns
-  the engine (orders, payments, sales, fiado, stock, prices, fact memory) on D1 fenced batches.
-- Foundation part 1 is built: WhatsApp intake, in-order processing, the outbox, store isolation
-  ([architecture.md](architecture.md#part-1-as-built)). On the team repo it sits on `claude/base-layer`; the stacked
-  PRs merged into each other, so `main` has only the planning docs until a PR from `claude/base-layer` lands.
-- Built Oct 30 on `claude/job-outcome-commits`, uncommitted
-  ([handoff](handoffs/2026-10-30-commits-contract-console.md)):
-  - `JobOutcome.commits`: the engine's writes save in the batch that completes the job. This unblocks the engine.
-  - Contract v1 draft ([contract.md](contract.md)): types and fixtures between perception, the engine and the
-    console. For the spec meeting; not agreed.
-  - The console's preparation list, on an in-memory pretend engine. Console login (#22) is in PR #61
-    (`claude/console-login`).
-- Spikes are done (handoffs in [handoffs/](handoffs/)): Muse Spark reads invoices and orders with structured output;
-  voice transcription 6/6; voice notes decode to WAV inside the Worker.
-- Two independent reviews of Tech Spec v3 (Oct 30) both said "build with changes". The contract draft takes in their
-  fixes for line references, multi-part messages, staff-only kinds, confirmed prices and the claim check.
+- The product is an order assistant: customers order on WhatsApp, Johan and staff work from a phone console, and
+  both end in the same engine. Two-person team (D-37): Angel owns conversations, perception, replies, the console
+  and deploys; kercmari owns the engine (orders, payments, sales, fiado, stock, prices, fact memory).
+- Built on Angel's side, against the in-memory pretend engine (handoffs `handoffs/2026-10-31-*.md`):
+  - customers (#14–#16), the full order trip (#17), console taps that message the customer (#18);
+  - Spanish replies, the claim check and reply buttons (#19, #20); reading orders with Muse Spark (#21);
+  - console login (#22, PR #61) and shell with Empleados (#23); the Anotar reader (#26);
+  - media download, voice notes decoded and transcribed, both read in orders (#27);
+  - first message, ALTO, handoff and deletion, a privacy page (#30); the two-minute message (#31).
+- kercmari's engine is PR #62. A local trial ran this branch's full path on it: orders save once under our customer
+  IDs, but no order reply goes out until `verifyClaims` exists (#12); the list and staff taps need #12 too.
+- Contract gaps (a)–(p) and 16 questions from the build have proposed answers in [contract.md](contract.md); not
+  agreed yet. Gap (p) is settled: one model call per burst.
 
 ## Next
 
 | # | Task | Owner | Notes |
 |---|---|---|---|
-| 1 | Spec meeting: agree contract v1 and its open questions | Both | [contract.md](contract.md#open-for-the-meeting) |
-| 2 | PR `claude/base-layer` into `main` on the team repo | Angel | Merge commit, not squash |
-| 3 | Engine on the contract, saving through `JobOutcome.commits` | Teammate | Replaces the pretend engine |
-| 4 | Console login (invite QR, sessions, roles), then a deploy | Angel (Claude Code) | PR #61; the deploy needs `LINK_SIGNING_SECRET` set first |
-| 5 | Replies and the claim check; perception for customer orders | Angel (Claude Code) | Against the contract fixtures |
-| 6 | The two-minute "te respondemos en un momento" fallback | Angel (Claude Code) | Specified, not built |
+| 1 | Agree the contract answers; settle migration numbers before any remote apply | Both | Call Sat Oct 31, 4 PM Honduras |
+| 2 | `verifyClaims`, `preparationList`, `onConsoleAction` on the real engine (#12) | kercmari | Unblocks every customer reply on her engine |
+| 3 | Swap the pretend engine for the real one (#13) | Angel (Claude Code) | Bridge built in the local trial |
+| 4 | First deploy (#24) | Angel | `docs/deploy.md`; set `LINK_SIGNING_SECRET`, `MODEL_API_KEY`, `PUBLIC_BASE_URL` |
+| 5 | Capture real WhatsApp payloads (#25) | Angel | Needs the deploy |
 
-Gate: Saturday Oct 31, 8:00 PM Honduras time. A customer order runs end to end on fixtures through the engine, and
-staff use the preparation list on their own phones. If the console can't pass, it is cut and the scope replanned.
+Gate: Saturday Oct 31, 8:00 PM Honduras time.
 
 ## Open: waiting on someone
 
@@ -55,6 +46,10 @@ staff use the preparation list on their own phones. If the console can't pass, i
 | Product and team name: "Johan AI" is a working title | Team | Oct 27 |
 
 ## Traps
+
+- Migration numbers: Angel's side uses 0003–0019, kercmari's 0020–0039 (proposed in #6). PR #62 still uses 0003–0005;
+  renaming a migration after it ran remotely makes wrangler run it again. Settle before any remote apply.
+- `test/secrets.test.ts` lists every migration by name: every branch that adds one conflicts there.
 
 - Claude Code skips `AGENTS.md` in this folder unless `CLAUDE.md` imports it (`~/angel/CLAUDE.md` is above the
   repo). Keep the import.
