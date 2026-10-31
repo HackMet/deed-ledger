@@ -280,6 +280,18 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
   no job group (its fate never stops the answer) and no claims (the claim check passes it as written). It expires
   after 10 minutes and follows the 24-hour window like any row. With a minutely cron it is queued between 2 and 3
   minutes in; the real answer follows when ready.
+- **Console notices (#18).** A staff tap goes through `runConsoleAction` (`src/application/console-actions.ts`):
+  the engine's `{ outcome, notices, commits }` is saved by `OutboxRepository.saveConsoleAction` as one guarded
+  batch: the commits' guards, a guard per notice conversation (it is the store's), the commits' statements, then
+  one row per notice part. A guard that doesn't hold rolls back all of it (the route says "No se pudo guardar").
+  Each notice is rendered from the replies templates with its claims (first pass before the save, second at
+  send) and goes to the customer's conversation in the session's store (the one they wrote in last); a customer
+  with none, or of another store, gets no row. The rows have no job: their group is the operation key within the
+  conversation (`operation_key`, migration 0014), so a row that ends unsent stops the action's later rows in that
+  conversation and nothing else. The dedupe key is `console_notice:<store>:<operation key>:<notice>:<part>`, so a
+  double tap queues one message. A row whose 24-hour window is closed is written as `waiting_window` and raises a
+  `notice_waiting_window` Pendientes item; it goes out if the customer writes before it expires (3 hours). The
+  route dispatches the conversation after the response; the sweep retries.
 
 ### Replies and the claim check
 
@@ -332,7 +344,8 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
   contract's version, operation-key and role rules but saves to memory and forgets on restart.
 - `/console/preparacion` renders the preparation list server-side for a 360 px screen and refreshes every 15 s.
   Each button posts one action to `/console/acciones` with the version on screen and its own operation key; the
-  result redirects back with a notice when the tap was refused. Without a real engine the list answers 503.
+  result redirects back with a notice when the tap was refused or not saved. The customer messages a tap causes
+  are saved with it (see "Console notices" under the outbox). Without a real engine the list answers 503.
 - **Login** (`src/interfaces/http/console/auth.ts`, migration 0003). An invite is a 32-byte random code, stored as
   its SHA-256 hash, valid 15 minutes, one use, for one member. `GET /console/entrar?codigo=…` only shows it (a link
   preview can't use it up); the "Entrar" POST uses it and opens a session in one guarded batch, so two taps can't

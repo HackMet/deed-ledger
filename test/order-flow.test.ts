@@ -617,11 +617,14 @@ describe("the first order, from reading to reply", () => {
     await t.staffTap("start_preparing", "k-start");
     await t.staffTap("mark_ready", "k-ready");
     expect((await t.engine.preparationList(t.tenant))[0]!.order.state).toBe("listo");
-    // The engine's notice renders as the PRD says; queuing it with the tap is #18 (console taps save
-    // with their customer messages), so it doesn't reach the phone yet.
-    expect(t.notices.map((notice) => renderNotice(notice.notice).body)).toEqual([
-      "Tu pedido ya está listo. Total L 315. Ya podés pasar a traerlo.",
-    ]);
+    // The engine's notice, rendered as the PRD says, was saved with the tap and reached the phone.
+    const READY = "Tu pedido ya está listo. Total L 315. Ya podés pasar a traerlo.";
+    expect(t.notices.map((notice) => renderNotice(notice.notice).body)).toEqual([READY]);
+    expect(t.h.sentTo(t.phone).at(-1)).toBe(READY);
+    // A second tap of the same button (same operation key) queues nothing more.
+    await t.staffTap("mark_ready", "k-ready");
+    await t.h.runCron();
+    expect(t.h.sentTo(t.phone).filter((body) => body === READY)).toHaveLength(1);
     await t.burst(t.text("¿ya está?"));
 
     const sent = t.h.sentTo(t.phone);
@@ -634,6 +637,7 @@ describe("the first order, from reading to reply", () => {
       EXPECTED_READBACK,
       COPY.confirmed,
       "Vas primero en la lista. Te aviso apenas esté listo.",
+      READY,
       COPY.statusReady,
     ]);
 

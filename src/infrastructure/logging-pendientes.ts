@@ -1,6 +1,7 @@
 import type {
   HandoffPendienteItem,
   Logger,
+  NoticeWaitingPendiente,
   PendienteItem,
   Pendientes,
   SlowReplyPendiente,
@@ -14,7 +15,17 @@ import type {
 export class LoggingPendientes implements Pendientes {
   constructor(private readonly log: Logger) {}
 
-  async raise(tenant: Tenant, item: PendienteItem | SlowReplyPendiente | HandoffPendienteItem): Promise<void> {
+  async raise(tenant: Tenant, item: PendienteItem | SlowReplyPendiente | HandoffPendienteItem | NoticeWaitingPendiente): Promise<void> {
+    if (item.kind === "notice_waiting_window") {
+      this.log.warn("pendiente_raised", {
+        businessId: tenant.businessId,
+        conversationId: item.conversationId,
+        outboxId: item.outboxId,
+        reason: item.kind,
+        outcome: item.notice,
+      });
+      return;
+    }
     if (item.kind === "slow_reply") {
       this.log.warn("pendiente_raised", {
         businessId: tenant.businessId,

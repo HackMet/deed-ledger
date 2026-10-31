@@ -29,6 +29,7 @@ describe("test environment", () => {
       "0007_model_spend.sql",
       "0008_console_staff.sql",
       "0010_customer_controls.sql",
+      "0014_console_notices.sql",
     ]);
   });
 

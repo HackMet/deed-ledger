@@ -388,6 +388,23 @@ export interface OutboxDraft {
   readonly buttons?: readonly ReplyButton[];
 }
 
+/**
+ * A customer notice from a console action, as an outbox row: in the customer's conversation, with
+ * no job. Its group is the action's operation key within that conversation (outbound_messages.operation_key).
+ */
+export interface ConsoleNoticeDraft extends OutboxDraft {
+  readonly conversationId: string;
+}
+
+/** A notice row the save wrote (a repeated dedupe key writes none), and whether it waits for the window. */
+export interface QueuedConsoleNotice {
+  readonly outboxId: string;
+  readonly conversationId: string;
+  readonly replyIndex: number;
+  readonly partIndex: number;
+  readonly status: "pending" | "waiting_window";
+}
+
 /** A burst still waiting for its answer, named by its oldest open message. */
 export interface SlowBurst extends ConversationRef {
   readonly inboundId: string;
@@ -566,6 +583,24 @@ export interface OutboxRepository {
   markClaimsBlocked(tenant: Tenant, outboxId: string, claimId: string, nowMs: number): Promise<boolean>;
   /** Sweep housekeeping: expiries, stale sends, stopped groups, closed windows, old notices, retention. */
   maintain(nowMs: number): Promise<OutboxMaintenance>;
+  /**
+   * The conversation a store's customer is written to: the one they wrote in last. Null when the
+   * customer isn't this store's or has never written (known only by name).
+   */
+  conversationOfCustomer(tenant: Tenant, customerId: string): Promise<string | null>;
+  /**
+   * Saves a console action: its commits' guards and statements and its customer notices, as one
+   * guarded batch, all or nothing. A notice whose conversation's 24-hour window has closed is written
+   * as waiting_window. A repeated dedupe key writes nothing for that row. A commit guard that
+   * doesn't hold throws its own error; a constraint violation, PermanentWriteError.
+   */
+  saveConsoleAction(
+    tenant: Tenant,
+    operationKey: string,
+    commits: readonly Commit[],
+    notices: readonly ConsoleNoticeDraft[],
+    nowMs: number,
+  ): Promise<QueuedConsoleNotice[]>;
 }
 
 /** A logged-in console member, from a session. The store comes from here, never from the request. */
@@ -722,11 +757,23 @@ export interface SlowReplyPendiente {
 }
 
 /**
+ * A customer notice from a console action that can't go out yet: WhatsApp's 24-hour window is
+ * closed, so it waits until the customer writes (no paid templates). Someone may call them instead.
+ */
+export interface NoticeWaitingPendiente {
+  readonly kind: "notice_waiting_window";
+  readonly conversationId: string;
+  readonly outboxId: string;
+  /** The notice's type, as the engine named it ("order_ready"). */
+  readonly notice: string;
+}
+
+/**
  * Raises one Pendientes item. Contract gap (c) isn't agreed: this narrow port stands in until it is
  * (the proposal there returns a Commit for the caller's own batch instead). Never throws.
  */
 export interface Pendientes {
-  raise(tenant: Tenant, item: PendienteItem | SlowReplyPendiente | HandoffPendienteItem): Promise<void>;
+  raise(tenant: Tenant, item: PendienteItem | SlowReplyPendiente | HandoffPendienteItem | NoticeWaitingPendiente): Promise<void>;
 }
 
 /** A customer asked to talk to a person ("quiero hablar con Johan"). IDs only, never the text. */
