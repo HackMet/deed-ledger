@@ -21,8 +21,13 @@
   // Values come from `wrangler secret put` when deployed, and from .dev.vars locally.
   // Tests blank all of them (vitest.config.ts).
   "secrets": {
-    "required": ["WHATSAPP_APP_SECRET", "WHATSAPP_VERIFY_TOKEN", "WHATSAPP_TOKEN", "SENDER_HASH_SALT", "LINK_SIGNING_SECRET"]
+    "required": ["WHATSAPP_APP_SECRET", "WHATSAPP_VERIFY_TOKEN", "WHATSAPP_TOKEN", "SENDER_HASH_SALT", "LINK_SIGNING_SECRET", "MODEL_API_KEY"]
   },
+
+  // Voice notes: opus-decoder's libopus Wasm is extracted before bundling, because Workers can't
+  // compile Wasm at runtime; its unused Web Worker variant is stubbed out (src/integrations/audio).
+  "build": { "command": "node scripts/extract-opus-wasm.mjs" },
+  "alias": { "@eshaz/web-worker": "./src/integrations/audio/no-web-worker.ts" },
 
   "d1_databases": [
     {

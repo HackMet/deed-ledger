@@ -19,7 +19,9 @@ import { QueueDoorbell } from "./infrastructure/queue-doorbell";
 import { R2MediaStore } from "./infrastructure/r2-media-store";
 import { consoleLogger, randomIds, realSleep, systemClock } from "./infrastructure/runtime";
 import { WhatsAppCloudChannel } from "./integrations/whatsapp/client";
-import { unavailableMediaSource } from "./integrations/whatsapp/media";
+import { WhatsAppMediaSource } from "./integrations/whatsapp/media";
+import { OpusAudioDecoder } from "./integrations/audio";
+import { MuseVoiceTranscriber } from "./integrations/meta/transcribe";
 import { SEND_TIMEOUT_MS } from "./domain/outbox";
 
 export interface Runtime {
@@ -37,7 +39,7 @@ export type RuntimeOverrides = Partial<
     Deps,
     "clock" | "ids" | "log" | "sleep" | "hasher" | "doorbell" | "channel" | "mediaSource" | "mediaStore" | "jobHandler"
   >
-> & { readonly db?: D1Database; readonly engine?: Engine };
+> & { readonly db?: D1Database; readonly engine?: Engine } & Partial<Pick<Deps, "audioDecoder" | "transcriber">>;
 
 export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtime {
   const config = readConfig(env);
@@ -65,9 +67,18 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
           timeoutMs: SEND_TIMEOUT_MS,
           fetch: (input, init) => fetch(input, init),
         }),
-      mediaSource: overrides.mediaSource ?? unavailableMediaSource,
+      mediaSource:
+        overrides.mediaSource ??
+        new WhatsAppMediaSource({
+          token: config.whatsappToken,
+          apiVersion: config.graphApiVersion,
+          fetch: (input, init) => fetch(input, init),
+        }),
       mediaStore: overrides.mediaStore ?? new R2MediaStore(env.MEDIA),
       jobHandler: overrides.jobHandler ?? placeholderHandler,
+      audioDecoder: overrides.audioDecoder ?? new OpusAudioDecoder(),
+      transcriber:
+        overrides.transcriber ?? new MuseVoiceTranscriber({ apiKey: config.modelApiKey, fetch: (input, init) => fetch(input, init) }),
     },
   };
 }
