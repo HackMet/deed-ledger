@@ -46,7 +46,8 @@ function intentOf(body: string): Intent | null {
   if (text === "cancelar" || text === "cancela") return "cancel";
   // Any other mention of cancelling, or a negation, is not read: a wrong save from a stray word is worse than a placeholder.
   if (/\bcancel|\b(no|nada|ninguno|nunca)\b/u.test(text)) return null;
-  if (/\b(mejor|que sean)\b/u.test(text)) return "change";
+  // The change intent is a whole message too ("mejor que sean 3 libras de azucar"), never a stray "mejor".
+  if (/^(mejor\s+)?(que\s+sean\s+)\d+\s+(libras?|lb)?\s*(de\s+)?azucar$/u.test(text)) return "change";
   // The order intent is the whole message, as confirm and cancel are, never a word found inside a longer text.
   if (/^(hola\s+)?((quiero|necesito)\s+)?(hacer\s+)?(un\s+|mi\s+)?pedido$/u.test(text)) return "order";
   return null;
