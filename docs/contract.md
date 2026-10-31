@@ -36,7 +36,8 @@ against the types and the fixtures; `npm run typecheck` fails when a fixture sto
   one is open adds to it.
 - **Every action has an operation key and an actor** from the session or conversation; order actions carry the
   version on screen. A reused key returns `duplicate` with the first outcome; a stale version returns `rejected`.
-  Typed "confirmar" and the button share one key: `confirm:<order>:v<version>`.
+  Typed "confirmar" and the button share one key: `confirm:<order>:v<version>`. The engine derives the key from the
+  action and rejects any other as `not_allowed`: `cancel:<order>:v<version>`, `remove:<order>:v<version>:<lineId>`.
 - **The engine saves nothing itself.** It returns `{ outcome, notices, commits }`. For a customer message the commits
   run in the job's completion batch (`JobOutcome.commits`); for a console action, in one guarded batch.
 - **The claim check runs twice.** Before the save, against the outcome (the records it names aren't saved yet).

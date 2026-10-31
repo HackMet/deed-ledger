@@ -199,6 +199,48 @@ describe("order engine on local D1", () => {
     expect(replay.outcome.type).toBe("duplicate");
   });
 
+  it("(e) binds the operation key to the action and the order: no foreign duplicate, no reused key", async () => {
+    const s = await newStore();
+    const carla = await placeFirstOrder(s);
+    await save(await engine.onCustomerAction(s.context(), tap(carla.orderId, 1)));
+    const bob = await placeFirstOrder(s, "customer-bob");
+    const bobs = s.context({ customerId: "customer-bob" });
+    const before = await footprint(s.businessId);
+
+    // Bob's own order with Carla's used key: refused, never her first outcome.
+    const probe = await engine.onCustomerAction(bobs, {
+      operationKey: `confirm:${carla.orderId}:v1`,
+      actor: { type: "customer", customerId: "customer-bob" },
+      action: { type: "confirm_order", orderId: bob.orderId, version: 1 },
+    });
+    expect(probe).toEqual({ outcome: { type: "rejected", reason: "not_allowed", order: null }, notices: [], commits: [] });
+    expect(JSON.stringify(probe)).not.toContain(carla.orderId);
+
+    // An arbitrary key, and a key of another action, on Bob's own order: refused, nothing saved.
+    for (const operationKey of ["arbitrary", `cancel:${bob.orderId}:v1`, `confirm:${bob.orderId}:v2`]) {
+      const refused = await engine.onCustomerAction(bobs, tap(bob.orderId, 1, { operationKey, actor: { type: "customer", customerId: "customer-bob" } }));
+      expect(refused.outcome).toEqual({ type: "rejected", reason: "not_allowed", order: null });
+      expect(refused.commits).toEqual([]);
+    }
+    // A confirm key never answers a cancel of the same order.
+    const mixed = await engine.onCustomerAction(s.context(), tap(carla.orderId, 1, {
+      action: { type: "cancel_order", orderId: carla.orderId, version: 1 },
+    }));
+    expect(mixed.outcome.type).toBe("rejected");
+    expect(mixed.commits).toEqual([]);
+    expect(await footprint(s.businessId)).toEqual(before);
+
+    // The derived keys are the ones that work: remove and cancel each save once.
+    const removeKey = `remove:${bob.orderId}:v1:L1`;
+    const removed = await engine.onCustomerAction(bobs, {
+      operationKey: removeKey,
+      actor: { type: "customer", customerId: "customer-bob" },
+      action: { type: "remove_line", orderId: bob.orderId, version: 1, lineId: "L1" },
+    });
+    expect(removed.outcome.type).toBe("readback");
+    expect(removed.commits).toHaveLength(1);
+  });
+
   it("(d) a change after confirming makes v2 in por_confirmar; a tap on v1 saves nothing; v2 keeps its place", async () => {
     const s = await newStore();
     const v1 = await placeFirstOrder(s);
@@ -220,8 +262,11 @@ describe("order engine on local D1", () => {
     expect((await store.openOrder(s.context(), ids.customer))?.view).toEqual(v2);
     const before = await footprint(s.businessId);
 
-    // A tap on v1 with a fresh key: refused as stale, nothing saved.
-    const stale = await engine.onCustomerAction(s.context(), tap(v1.orderId, 1, { operationKey: "confirm-again-v1" }));
+    // A cancel tap on v1 (its key is unused): refused as stale, nothing saved.
+    const stale = await engine.onCustomerAction(s.context(), tap(v1.orderId, 1, {
+      operationKey: `cancel:${v1.orderId}:v1`,
+      action: { type: "cancel_order", orderId: v1.orderId, version: 1 },
+    }));
     expect(stale).toEqual({ outcome: { type: "rejected", reason: "stale_version", order: v2 }, notices: [], commits: [] });
     // The old button again: its key was used, so it answers with the first save and saves nothing.
     const replay = await engine.onCustomerAction(s.context(), tap(v1.orderId, 1));
@@ -287,7 +332,7 @@ describe("order engine on local D1", () => {
     const v1 = await placeFirstOrder(s);
     // Two confirmations decided on the same read; only the first lands.
     const a = await engine.onCustomerAction(s.context(), tap(v1.orderId, 1));
-    const b = await engine.onCustomerAction(s.context(), tap(v1.orderId, 1, { operationKey: "typed-confirm" }));
+    const b = await engine.onCustomerAction(s.context(), tap(v1.orderId, 1));
     await save(a);
     await expect(save(b)).rejects.toThrow(/order_moved/);
     expect(await count(`operations WHERE business_id = ?`, s.businessId)).toBe(2);
