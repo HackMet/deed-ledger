@@ -7,8 +7,11 @@ import type { Engine } from "./application/engine";
 import { createOrderHandler } from "./application/order-handler";
 import { placeholderHandler } from "./application/placeholder-handler";
 import type { Deps, Pendientes } from "./application/ports";
+import type { MediaEraser } from "./application/ports";
+import { PRIVACY_PATH } from "./domain/customer-controls";
 import { type Config, readConfig } from "./infrastructure/config";
 import { D1ConsoleAuthRepository } from "./infrastructure/d1/console-auth-repository";
+import { D1CustomerControlRepository } from "./infrastructure/d1/customer-control-repository";
 import { D1CustomerRepository } from "./infrastructure/d1/customer-repository";
 import { D1IntakeRepository } from "./infrastructure/d1/intake-repository";
 import { D1JobRepository } from "./infrastructure/d1/job-repository";
@@ -19,6 +22,7 @@ import { LoggingPendientes } from "./infrastructure/logging-pendientes";
 import { demoOrders } from "./infrastructure/memory/demo-orders";
 import { MemoryEngine } from "./infrastructure/memory/memory-engine";
 import { QueueDoorbell } from "./infrastructure/queue-doorbell";
+import { R2MediaEraser } from "./infrastructure/r2-media-eraser";
 import { R2MediaStore } from "./infrastructure/r2-media-store";
 import { consoleLogger, randomIds, realSleep, systemClock } from "./infrastructure/runtime";
 import { WhatsAppCloudChannel } from "./integrations/whatsapp/client";
@@ -44,7 +48,9 @@ export type RuntimeOverrides = Partial<
     Deps,
     "clock" | "ids" | "log" | "sleep" | "hasher" | "doorbell" | "channel" | "mediaSource" | "mediaStore" | "jobHandler"
   >
-> & { readonly db?: D1Database; readonly engine?: Engine; readonly pendientes?: Pendientes };
+> & { readonly db?: D1Database; readonly engine?: Engine; readonly pendientes?: Pendientes } & {
+    readonly mediaEraser?: MediaEraser;
+  };
 
 export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtime {
   const config = readConfig(env);
@@ -54,8 +60,19 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
   const log = overrides.log ?? consoleLogger;
   const jobs = new D1JobRepository(db);
   const customers = new D1CustomerRepository(db);
+  const customerControls = new D1CustomerControlRepository(db);
+  const pendientes = overrides.pendientes ?? new LoggingPendientes(log);
+  // ALTO, SEGUIR, handoff, deletion and the first message, ahead of the order handler (#30).
+  const gate = {
+    controls: customerControls,
+    jobs,
+    pendientes,
+    clock,
+    log,
+    privacyUrl: config.publicBaseUrl === "" ? null : `${config.publicBaseUrl}${PRIVACY_PATH}`,
+  };
   // Customers' messages go to the order handler once an engine is wired in (#13 plugs the real one in here).
-  const orderHandler = engine === null ? null : createOrderHandler({ engine, jobs, customers, clock, log });
+  const orderHandler = engine === null ? null : createOrderHandler({ engine, jobs, customers, clock, log, gate });
   return {
     config,
     engine,
@@ -85,7 +102,9 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
       jobHandler: overrides.jobHandler ?? orderHandler ?? placeholderHandler,
       // The second claim check reads the records through the engine; none wired, no claim holds.
       claimVerifier: engine,
-      pendientes: overrides.pendientes ?? new LoggingPendientes(overrides.log ?? consoleLogger),
+      pendientes,
+      customerControls,
+      mediaEraser: overrides.mediaEraser ?? new R2MediaEraser(env.MEDIA),
     },
   };
 }

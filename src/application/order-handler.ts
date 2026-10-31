@@ -17,6 +17,7 @@ import type { EngineOutcome } from "../domain/contract/outcomes";
 import { RECEIVED_PLACEHOLDER } from "../domain/copy";
 import { ANSWER_NEW_READBACK, readbackShown, renderOrderOutcome } from "../domain/order-copy";
 import { PLACEHOLDER_TTL_MS } from "../domain/outbox";
+import { type CustomerGateDeps, gateCustomerJob } from "./customer-gate";
 import type { CustomerContext, Engine, EngineResult } from "./engine";
 import type {
   Clock,
@@ -63,6 +64,8 @@ export interface OrderHandlerDeps {
   readonly clock: Clock;
   readonly log: Logger;
   readonly reader?: BurstReader | null;
+  /** ALTO, SEGUIR, handoff, deletion and the first message (#30); none in tests that don't need it. */
+  readonly gate?: CustomerGateDeps | null;
 }
 
 const ACTION_TYPES = {
@@ -72,7 +75,7 @@ const ACTION_TYPES = {
 } as const satisfies Record<ReadbackAnswer["word"], CustomerAction["type"]>;
 
 export function createOrderHandler(deps: OrderHandlerDeps): JobHandler {
-  return { handle: (input) => handleJob(deps, input) };
+  return { handle: (input) => gateCustomerJob(deps.gate, input, () => handleJob(deps, input)) };
 }
 
 async function handleJob(deps: OrderHandlerDeps, { lease, job, isNewestOfBurst }: JobInput): Promise<JobOutcome> {

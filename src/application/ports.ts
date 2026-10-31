@@ -214,6 +214,11 @@ export interface ReplyDraft {
   readonly claims?: readonly ClaimCheck[];
   /** Reply buttons; only the reply's last part carries them. */
   readonly buttons?: readonly ReplyButton[];
+  /**
+   * The outbox row's kind; "reply" when absent. A direct answer to a customer's control word
+   * (CONTROL_REPLY_KIND) is the only kind dispatch still sends to a customer who typed ALTO.
+   */
+  readonly kind?: string;
 }
 
 /** A precondition checked inside a batch: `holdsSql` is 1 when it holds, NULL otherwise. */
@@ -649,7 +654,84 @@ export interface PendienteItem {
  * (the proposal there returns a Commit for the caller's own batch instead). Never throws.
  */
 export interface Pendientes {
-  raise(tenant: Tenant, item: PendienteItem): Promise<void>;
+  raise(tenant: Tenant, item: PendienteItem | HandoffPendienteItem): Promise<void>;
+}
+
+/** A customer asked to talk to a person ("quiero hablar con Johan"). IDs only, never the text. */
+export interface HandoffPendienteItem {
+  readonly kind: "customer_handoff";
+  readonly conversationId: string;
+  readonly customerId: string;
+  /** The message that asked. */
+  readonly inboundId: string;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Customer controls (#30): the first message, ALTO and SEGUIR, deletion on request
+
+/** What the customer gate needs to know about a conversation's customer, and how the store speaks. */
+export interface CustomerControlState {
+  readonly customerId: string;
+  readonly storeName: string;
+  /** The first name of the store's first active owner, if the console has one. */
+  readonly ownerName: string | null;
+  readonly introducedAtMs: number | null;
+  readonly stoppedAtMs: number | null;
+  readonly stopRemindedAtMs: number | null;
+  readonly deletionRequestedAtMs: number | null;
+}
+
+/** A customer whose deletion was requested and is due to be purged. */
+export interface DeletionDue extends Tenant {
+  readonly customerId: string;
+}
+
+/** What a purge must remove outside D1: the R2 prefixes of the customer's media assets. */
+export interface DeletionMedia {
+  readonly phone: string | null;
+  readonly mediaPrefixes: readonly string[];
+}
+
+/**
+ * Customer control records. Reads take the store from the lease or the message; the gate's writes
+ * are commits for the job's completion batch, like CustomerRepository's.
+ */
+export interface CustomerControlRepository {
+  stateOf(conversation: ConversationRef): Promise<CustomerControlState | null>;
+  /** Dispatch: whether the conversation's customer typed ALTO (or asked for deletion) and hasn't resumed. */
+  isStopped(tenant: Tenant, conversationId: string): Promise<boolean>;
+  /**
+   * The first reply was written. With `closingJobId`, only if the burst-closing reply carrying it
+   * is written (no other job of the conversation is open), like rememberReadbackCommit.
+   */
+  markIntroducedCommit(tenant: Tenant, customerId: string, nowMs: number, closingJobId: string | null): Commit;
+  /** ALTO: the stop time, kept if already stopped; a new stop gets a new reminder. */
+  stopCommit(tenant: Tenant, customerId: string, nowMs: number): Commit;
+  /** SEGUIR: clears the stop, unless a deletion was requested. */
+  resumeCommit(tenant: Tenant, customerId: string): Commit;
+  markStopRemindedCommit(tenant: Tenant, customerId: string, nowMs: number): Commit;
+  /** An explicit deletion request: stops the customer and marks them for the purge. */
+  requestDeletionCommit(tenant: Tenant, customerId: string, nowMs: number): Commit;
+  /** Intake: a message from this sender, sent at that time, belongs to a customer deleted after it. */
+  isTombstoned(tenant: Tenant, senderHash: string, sentAtMs: number): Promise<boolean>;
+  /**
+   * Customers due for the purge, across stores (the sweep, like findStrandedConversations): asked
+   * at or before `readyBeforeMs`, or whose conversations have nothing left to send.
+   */
+  deletionsDue(readyBeforeMs: number, limit: number): Promise<DeletionDue[]>;
+  deletionMedia(tenant: Tenant, customerId: string): Promise<DeletionMedia>;
+  /**
+   * One batch: removes the customer's personal data from D1 (phone, name, message text, provider
+   * IDs, media references, sent bodies), fails anything still unsent, and writes the tombstone.
+   * Only for a customer whose deletion was requested and not finished. False when there was none.
+   */
+  purge(tenant: Tenant, customerId: string, senderHash: string | null, nowMs: number): Promise<boolean>;
+}
+
+/** Deletes stored objects. Used only by the deletion purge. */
+export interface MediaEraser {
+  /** Deletes every object under `prefix/`, which must be inside the tenant's prefix. Idempotent. */
+  erasePrefix(tenant: Tenant, prefix: string): Promise<number>;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -732,4 +814,6 @@ export interface Deps {
   /** Null until an engine is wired in: a reply with claims then sends the safe reply instead. */
   readonly claimVerifier: ClaimVerifier | null;
   readonly pendientes: Pendientes;
+  readonly customerControls: CustomerControlRepository;
+  readonly mediaEraser: MediaEraser;
 }

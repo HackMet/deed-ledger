@@ -12,6 +12,8 @@ export interface Config {
   readonly linkSigningSecret: string;
   /** The console without login, on the in-memory pretend engine. Local simulator only. */
   readonly devConsole: boolean;
+  /** The Worker's public origin (https://…), for links customers get. Blank: links are left out. */
+  readonly publicBaseUrl: string;
 }
 
 export function readConfig(env: Env): Config {
@@ -23,5 +25,6 @@ export function readConfig(env: Env): Config {
     graphApiVersion: env.WHATSAPP_GRAPH_API_VERSION ?? "v26.0",
     linkSigningSecret: env.LINK_SIGNING_SECRET ?? "",
     devConsole: String(env.DEV_CONSOLE ?? "") === "1",
+    publicBaseUrl: String(env.PUBLIC_BASE_URL ?? "").replace(/\/+$/u, ""),
   };
 }
