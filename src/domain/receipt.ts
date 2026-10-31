@@ -72,5 +72,10 @@ export const NOTHING_PENDING = "No tengo ninguna factura por confirmar. Mandame 
  */
 export const DRAFT_CHANGED = "Esa factura cambió después de que la mandé. Te paso la versión nueva para que la revises.";
 
+/** A repeated cancellation, e.g. a redelivered message: say so, change nothing. */
+export const ALREADY_CANCELLED = "Esa factura ya estaba cancelada. No hice ningún cambio.";
+/** The invoice to cancel isn't one of this store's. */
+export const NOTHING_TO_CANCEL = "No encuentro esa factura para cancelarla. Mandame la foto de nuevo y la reviso.";
+
 /** Something the fact depends on was cancelled: one concrete question, not a failure. */
 export const DEPENDENCY_CANCELLED = "No puedo registrarla porque algo que necesita quedó cancelado. ¿La volvemos a armar?";

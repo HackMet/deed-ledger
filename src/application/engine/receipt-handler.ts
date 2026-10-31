@@ -1,6 +1,7 @@
 import { type FactPrecheckReads, precheckFact } from "../../domain/fact-precheck";
 import type { EvidenceRef, FactCommit } from "../../domain/facts";
 import {
+  ALREADY_CANCELLED,
   ALREADY_SAVED,
   DEPENDENCY_CANCELLED,
   DRAFT_CHANGED,
@@ -8,6 +9,7 @@ import {
   FIXTURE_CLAIM,
   isConfirmation,
   NOTHING_PENDING,
+  NOTHING_TO_CANCEL,
   type ReceiptClaim,
   savedReply,
 } from "../../domain/receipt";
@@ -131,6 +133,8 @@ export function receiptHandler(deps: {
         const stopped = precheckFact(commit, await precheck.read(lease, commit), now);
         if (stopped !== null) {
           if (stopped.outcome.type === "duplicate") return reply(ALREADY_SAVED);
+          if (stopped.closes === "closed") return reply(ALREADY_CANCELLED);
+          if (stopped.closes === "missing") return reply(NOTHING_TO_CANCEL);
           if (stopped.deadDependencies !== undefined) return reply(DEPENDENCY_CANCELLED);
           if (stopped.outcome.type === "rejected" && stopped.outcome.reason === "stale_version") return reply(DRAFT_CHANGED);
           return reply(NOTHING_PENDING);

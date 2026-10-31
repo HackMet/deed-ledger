@@ -3,7 +3,7 @@ import type { EngineOutcome } from "../src/domain/contract/outcomes";
 import { type FactPrecheckReads, precheckFact } from "../src/domain/fact-precheck";
 
 const NOW = 1_793_196_000_000;
-const CLEAR: FactPrecheckReads = { firstOutcome: null, draft: null, deadDependencies: [] };
+const CLEAR: FactPrecheckReads = { firstOutcome: null, draft: null, deadDependencies: [], closesState: null };
 const pending = (revision: number) => ({ revision, state: "pending", expiresAtMs: NOW + 3_600_000 });
 const subject = { draft: { id: "draft-1", revision: 2 }, dependsOn: [] as readonly string[] };
 
@@ -25,7 +25,7 @@ describe("precheckFact: the read that answers instead of failing the batch", () 
 
   it("a used key wins over a stale revision: the work is already done", () => {
     const first: EngineOutcome = { type: "nothing" };
-    const stopped = precheckFact(subject, { firstOutcome: first, draft: pending(99), deadDependencies: ["x"] }, NOW);
+    const stopped = precheckFact(subject, { firstOutcome: first, draft: pending(99), deadDependencies: ["x"], closesState: null }, NOW);
     expect(stopped?.outcome.type).toBe("duplicate");
   });
 

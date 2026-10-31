@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { FactRefusedError, PermanentWriteError } from "../src/application/errors";
 import type { Commit, Lease, OutboxDraft } from "../src/application/ports";
 import { D1FactLedger, D1FactPrecheck } from "../src/infrastructure/d1/fact-ledger";
+import { ALREADY_CANCELLED } from "../src/domain/receipt";
 import { precheckFact } from "../src/domain/fact-precheck";
 import type { EvidenceRef, FactCommit } from "../src/domain/facts";
 import { conversationOf, type Harness, harness, OUTLIVES_TEST_MS, rows } from "./helpers/harness";
@@ -251,7 +252,7 @@ describe("a cancellation closes a fact and blocks everything that depends on it 
     return admit(h, s, (tap) => linkOf(h, s, tap, { kind: "cancellation", closes: { factId: target, reason: "cancelled" } }));
   }
 
-  it("a second cancellation of the same fact fails on its primary key, and the first restores its stock", async () => {
+  it("a second cancellation of the same fact is answered by the read, and the first restores its stock", async () => {
     const h = harness();
     const s = await storeWithDraft(h);
     const tap = await s.nextJob();
@@ -273,13 +274,66 @@ describe("a cancellation closes a fact and blocks everything that depends on it 
 
     const before = await ledgerOf(s.store.businessId);
     const again = await s.nextJob();
-    await expect(
-      h.deps.jobs.completeJob(s.lease, again, h.clock.now(), [], false, [
-        toCommit(h, s.lease, linkOf(h, s, again, { kind: "cancellation", closes: { factId: receipt.factId, reason: "cancelled" } })),
-      ]),
-    ).rejects.toThrow(/UNIQUE constraint failed: fact_closures/);
+    const repeat = linkOf(h, s, again, { kind: "cancellation", closes: { factId: receipt.factId, reason: "cancelled" } });
+    const reads = await new D1FactPrecheck(env.DB).read(s.lease, repeat);
+    expect(reads.closesState).toBe("closed");
+    const stopped = precheckFact(repeat, reads, h.clock.now());
+    expect(stopped?.closes).toBe("closed");
+    // The guard is the race backstop: if the read is skipped, the batch is refused as a closes violation.
+    await expect(h.deps.jobs.completeJob(s.lease, again, h.clock.now(), [], false, [toCommit(h, s.lease, repeat)])).rejects.toEqual(
+      new FactRefusedError("closes_not_live"),
+    );
     expect(await ledgerOf(s.store.businessId)).toEqual(before);
     expect(await jobState(again)).toBe("processing");
+  });
+
+  it("a closes id from another store is refused and nothing is written", async () => {
+    const h = harness();
+    const ours = await storeWithDraft(h);
+    const theirs = await storeWithDraft(h);
+    const tapT = await theirs.nextJob();
+    const foreign = theirs.confirmation(tapT);
+    await h.deps.jobs.completeJob(theirs.lease, tapT, h.clock.now(), [reply()], false, [toCommit(h, theirs.lease, foreign)]);
+    const theirsBefore = await ledgerOf(theirs.store.businessId);
+    const oursBefore = await ledgerOf(ours.store.businessId);
+
+    const tap = await ours.nextJob();
+    const attempt = linkOf(h, ours, tap, { kind: "cancellation", closes: { factId: foreign.factId, reason: "cancelled" } });
+    expect((await new D1FactPrecheck(env.DB).read(ours.lease, attempt)).closesState).toBe("missing");
+    await expect(h.deps.jobs.completeJob(ours.lease, tap, h.clock.now(), [], false, [toCommit(h, ours.lease, attempt)])).rejects.toEqual(
+      new FactRefusedError("closes_not_live"),
+    );
+    expect(await ledgerOf(ours.store.businessId)).toEqual(oursBefore);
+    expect(await ledgerOf(theirs.store.businessId)).toEqual(theirsBefore);
+    expect(await rows(`SELECT 1 FROM fact_closures WHERE fact_id = ?`, foreign.factId)).toEqual([]);
+    expect(await jobState(tap)).toBe("processing");
+  });
+
+  it("a closes id that does not exist is refused and nothing is written", async () => {
+    const h = harness();
+    const s = await storeWithDraft(h);
+    const before = await ledgerOf(s.store.businessId);
+    const tap = await s.nextJob();
+    const attempt = linkOf(h, s, tap, { kind: "cancellation", closes: { factId: "no-such-fact", reason: "cancelled" } });
+    const reads = await new D1FactPrecheck(env.DB).read(s.lease, attempt);
+    expect(precheckFact(attempt, reads, h.clock.now())?.closes).toBe("missing");
+    await expect(h.deps.jobs.completeJob(s.lease, tap, h.clock.now(), [], false, [toCommit(h, s.lease, attempt)])).rejects.toEqual(
+      new FactRefusedError("closes_not_live"),
+    );
+    expect(await ledgerOf(s.store.businessId)).toEqual(before);
+    expect(await jobState(tap)).toBe("processing");
+  });
+
+  it("a live fact reads as live, and the owner gets the specific copy for a closed one", async () => {
+    const h = harness();
+    const s = await storeWithDraft(h);
+    const target = await admit(h, s, (tap) => linkOf(h, s, tap));
+    const tap = await s.nextJob();
+    const attempt = linkOf(h, s, tap, { kind: "cancellation", closes: { factId: target.factId, reason: "cancelled" } });
+    const live = await new D1FactPrecheck(env.DB).read(s.lease, attempt);
+    expect(live.closesState).toBe("live");
+    expect(precheckFact(attempt, live, h.clock.now())).toBeNull();
+    expect(ALREADY_CANCELLED).toMatch(/cancelada/);
   });
 
   it("a dependent of a cancelled ancestor, at depth 1, is refused", async () => {

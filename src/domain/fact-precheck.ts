@@ -20,6 +20,11 @@ export interface FactPrecheckReads {
   readonly draft: { readonly revision: number; readonly state: string; readonly expiresAtMs: number } | null;
   /** Dependency ids of this fact that are closed, or belong to another store, or don't exist. */
   readonly deadDependencies: readonly string[];
+  /**
+   * The fact this one closes: null when it closes nothing, "live" when it is this store's and open,
+   * "closed" when already cancelled, "missing" when it doesn't exist or belongs to another store.
+   */
+  readonly closesState: "live" | "closed" | "missing" | null;
 }
 
 /** What the engine proposes to save, as far as the precheck cares. */
@@ -34,7 +39,12 @@ export interface FactPrecheckSubject {
  * done; a stale revision wins over the gate, because the customer is looking at the wrong screen.
  */
 export type FactPrecheckResult =
-  | { readonly outcome: EngineOutcome; readonly deadDependencies?: readonly string[] }
+  | {
+      readonly outcome: EngineOutcome;
+      readonly deadDependencies?: readonly string[];
+      /** Set when the fact to close can't be closed: already closed, or not this store's. */
+      readonly closes?: "closed" | "missing";
+    }
   | null;
 
 export function precheckFact(subject: FactPrecheckSubject, reads: FactPrecheckReads, nowMs: number): FactPrecheckResult {
@@ -57,6 +67,10 @@ export function precheckFact(subject: FactPrecheckSubject, reads: FactPrecheckRe
     // cancelled", so this is a rejection the caller turns into one concrete question; adding a
     // code belongs to the contract (#5), not here.
     return { outcome: { type: "rejected", reason: "invalid_state", order: null }, deadDependencies: reads.deadDependencies };
+  }
+
+  if (reads.closesState === "closed" || reads.closesState === "missing") {
+    return { outcome: { type: "rejected", reason: "invalid_state", order: null }, closes: reads.closesState };
   }
 
   return null;

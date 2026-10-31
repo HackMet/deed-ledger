@@ -6,7 +6,7 @@ import type { Guard } from "./fence";
 
 /**
  * Turns one domain `FactCommit` into the `Commit` the job repository runs in the batch that
- * completes the job: `guards` are the draft (G3) and the dependency gate (G4), `statements` are
+ * completes the job: `guards` are the draft (G3), the dependency gate (G4) and the closed fact (G5), `statements` are
  * S1–S6 in order, and `post` is the evidence check (P1).
  */
 export interface FactLedger {
@@ -71,6 +71,16 @@ export class D1FactLedger implements FactLedger {
       error: () => new FactRefusedError("dependency_not_live"),
     });
 
+    // G5: what a cancellation closes is a fact of this store and still open. fact_closures has no
+    // foreign key to facts, so without this a foreign or unknown id would be recorded as closed.
+    if (commit.closes !== null) {
+      guards.push({
+        holdsSql: `SELECT CASE WHEN EXISTS (SELECT 1 FROM facts WHERE business_id = ? AND id = ?)
+                     AND NOT EXISTS (SELECT 1 FROM fact_closures WHERE business_id = ? AND fact_id = ?) THEN 1 END`,
+        params: [businessId, commit.closes.factId, businessId, commit.closes.factId],
+        error: () => new FactRefusedError("closes_not_live"),
+      });
+    }
     // S1: one approval per draft, ever (UNIQUE business_id, draft_id).
     if (commit.draft !== null && confirmation !== undefined && confirmingInbound !== undefined) {
       statements.push(
@@ -243,8 +253,20 @@ export class D1FactPrecheck {
       deadDependencies = results.map((row) => row.id);
     }
 
+    let closesState: FactPrecheckReads["closesState"] = null;
+    if (commit.closes !== null) {
+      const target = await this.db
+        .prepare(
+          `SELECT EXISTS (SELECT 1 FROM fact_closures c WHERE c.business_id = f.business_id AND c.fact_id = f.id) AS closed
+           FROM facts f WHERE f.business_id = ? AND f.id = ?`,
+        )
+        .bind(businessId, commit.closes.factId)
+        .first<{ closed: number }>();
+      closesState = target === null ? "missing" : target.closed === 1 ? "closed" : "live";
+    }
+
     // The first outcome isn't stored yet: `operations` is the engine's table (#11). Until it
     // exists, a used key is reported as a duplicate whose first outcome is unknown.
-    return { firstOutcome: used === null ? null : { type: "nothing" }, draft, deadDependencies };
+    return { firstOutcome: used === null ? null : { type: "nothing" }, draft, deadDependencies, closesState };
   }
 }
