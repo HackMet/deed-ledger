@@ -17,7 +17,8 @@
     "admin:invite": "node scripts/admin-invite.mjs"
   },
   "dependencies": {
-    "hono": "^4.13.14"
+    "hono": "^4.13.14",
+    "opus-decoder": "0.7.12"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "^1.4.9",

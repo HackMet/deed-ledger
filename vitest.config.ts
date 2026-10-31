@@ -1,6 +1,7 @@
 import path from "node:path";
 import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-plugin";
 import { defineConfig } from "vitest/config";
+import { extractOpusWasm } from "./scripts/extract-opus-wasm.mjs";
 
 /**
  * Wrangler loads .dev.vars (or process.env for the declared secrets) into the test Worker. These
@@ -19,6 +20,9 @@ const BLANK_SECRETS = {
 
 export default defineConfig(async () => {
   const migrations = await readD1Migrations(path.join(import.meta.dirname, "migrations"));
+  // The voice-note decoder imports the libopus Wasm that this extracts (wrangler's build command
+  // does the same for dev and deploy).
+  await extractOpusWasm();
   return {
     plugins: [
       cloudflareTest({
@@ -31,6 +35,10 @@ export default defineConfig(async () => {
         },
       }),
     ],
+    // Same stub as wrangler.jsonc's "alias", which the test pool doesn't apply.
+    resolve: {
+      alias: { "@eshaz/web-worker": path.join(import.meta.dirname, "src/integrations/audio/no-web-worker.ts") },
+    },
     test: {
       include: ["test/**/*.test.ts"],
       setupFiles: ["./test/setup.ts"],

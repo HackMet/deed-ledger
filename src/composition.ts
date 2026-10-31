@@ -23,7 +23,9 @@ import { QueueDoorbell } from "./infrastructure/queue-doorbell";
 import { R2MediaStore } from "./infrastructure/r2-media-store";
 import { consoleLogger, randomIds, realSleep, systemClock } from "./infrastructure/runtime";
 import { WhatsAppCloudChannel } from "./integrations/whatsapp/client";
-import { unavailableMediaSource } from "./integrations/whatsapp/media";
+import { WhatsAppMediaSource } from "./integrations/whatsapp/media";
+import { OpusAudioDecoder } from "./integrations/audio";
+import { MuseVoiceTranscriber } from "./integrations/meta/transcribe";
 import { SEND_TIMEOUT_MS } from "./domain/outbox";
 import { BurstReader } from "./application/perception/reader";
 import type { Clock, Logger, ModelProvider } from "./application/ports";
@@ -57,7 +59,7 @@ export type RuntimeOverrides = Partial<
   readonly burstMedia?: BurstMediaResolver;
   // Tests pass a reader whose provider answers with recorded responses.
   readonly burstReader?: BurstReader;
-};
+} & Partial<Pick<Deps, "audioDecoder" | "transcriber">>;
 
 export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtime {
   const config = readConfig(env);
@@ -98,12 +100,21 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
           timeoutMs: SEND_TIMEOUT_MS,
           fetch: (input, init) => fetch(input, init),
         }),
-      mediaSource: overrides.mediaSource ?? unavailableMediaSource,
+      mediaSource:
+        overrides.mediaSource ??
+        new WhatsAppMediaSource({
+          token: config.whatsappToken,
+          apiVersion: config.graphApiVersion,
+          fetch: (input, init) => fetch(input, init),
+        }),
       mediaStore: overrides.mediaStore ?? new R2MediaStore(env.MEDIA),
       jobHandler: overrides.jobHandler ?? orderHandler ?? placeholderHandler,
       // The second claim check reads the records through the engine; none wired, no claim holds.
       claimVerifier: engine,
       pendientes,
+      audioDecoder: overrides.audioDecoder ?? new OpusAudioDecoder(),
+      transcriber:
+        overrides.transcriber ?? new MuseVoiceTranscriber({ apiKey: config.modelApiKey, fetch: (input, init) => fetch(input, init) }),
     },
   };
 }

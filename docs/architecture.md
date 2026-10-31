@@ -99,7 +99,10 @@ Sources are Meta's and Cloudflare's docs. Re-check anything that blocks a decisi
 
 To confirm in T1 with real payloads (not checked against docs today):
 
-- How media is downloaded: media ID → URL → authorized GET, and how long the URL stays valid.
+- How media is downloaded. Checked against [Meta's media docs](https://developers.facebook.com/documentation/business-messaging/whatsapp/business-phone-numbers/media)
+  on Oct 30 (built in `src/integrations/whatsapp/media.ts`), not yet against a real webhook: `GET /<version>/<MEDIA_ID>?phone_number_id=<id>`
+  with the token returns `url`, `mime_type`, `sha256`, `file_size`; an authorized GET on `url` returns the bytes. The
+  URL lasts 5 minutes; webhook media IDs last 7 days; a failed download answers 404.
 - The temporary access token on the app dashboard expires after about a day; a system-user token doesn't.
 - How many recipient numbers a WhatsApp test number can message.
 
@@ -178,8 +181,14 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
   an honest reply in Spanish, as does a job whose last attempt died with its consumer. A photo or voice note without
   a usable media ID ends at once with its own reply.
 - **Media.** The consumer downloads a message's media and stores it in R2 at `stores/<store>/media/<asset>/<sha256>`,
-  an immutable key. D1 records the key only through a fenced write. The download is still a stub, so every photo and
-  voice note ends with "No pude descargar…" after its retries.
+  an immutable key. D1 records the key only through a fenced write. The download asks Graph for a fresh URL on every
+  attempt, then fetches the bytes (15 s per request, 16 MiB at most); a failure takes the job's retries and ends with
+  "No pude descargar…". `MediaStore.read` reads a stored object back, inside the store's prefix only.
+- **Voice notes.** `transcribeVoiceNote` (`src/application/voice-note.ts`) reads a job's stored voice note, decodes
+  OGG/Opus to 16 kHz mono WAV in the consumer (A1: libopus Wasm from `opus-decoder`, extracted at build time, since
+  Workers can't compile Wasm at runtime; over 10 minutes or a cut-off file is refused), and calls Muse Voice
+  Transcribe (90 s timeout, Spanish bias, one attempt). It throws on any failure, so a handler that calls it gets the
+  job's retries and then "no pude escuchar tu nota de voz". Not wired into a handler yet (#17).
 - **Handler.** `JobHandler` (`src/application/ports.ts`) is where the engine plugs in: it gets the job and
   `isNewestOfBurst`, and returns replies already rendered plus optional `commits`. With an engine wired in, the order
   handler (`src/application/order-handler.ts`) runs; without one, `placeholderHandler` acknowledges a burst with one
@@ -337,7 +346,11 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
 - A dispatcher that dies mid-send holds back its conversation's later replies until the first sweep after its claim
   ends (about 90 s), and stops the rest of that group.
 - The shared "Tienda" account isn't designed yet: every login is one member with a phone number.
-- The media download is a stub. A stale writer can leave an unpublished R2 object behind, and nothing cleans those up.
+- The media download hasn't met a real webhook yet. A stale writer can leave an unpublished R2 object behind, and
+  nothing cleans those up.
+- A transcription can take up to 90 s, longer than the 60 s conversation lease. The handler that calls it (#17) must
+  extend the lease around the call, or the lease must grow; until then a slow transcription ends in a refused
+  (stale) write and a retry.
 - Messages over a conversation's hourly cap are dropped and logged, not queued. A conversation that keeps receiving
   messages less than 3 s apart keeps waiting to settle.
 - The send order relies on D1 running one batch at a time. Subqueries inside updates, `UPDATE … FROM`, `RETURNING`,

@@ -165,6 +165,31 @@ export interface MediaStore {
    * the tenant's prefix. Writing the same bytes twice writes the same object.
    */
   putImmutable(tenant: Tenant, prefix: string, media: MediaBytes): Promise<StoredMedia>;
+  /** Reads a stored object back. The key must be inside the tenant's prefix. Null when it's gone. */
+  read(tenant: Tenant, key: string): Promise<MediaBytes | null>;
+}
+
+/** A voice note as the transcriber takes it: mono 16-bit PCM WAV at 16 kHz. */
+export interface TranscriberAudio {
+  readonly wav: Uint8Array;
+  readonly durationMs: number;
+}
+
+/** Turns a stored voice note (OGG/Opus from WhatsApp) into TranscriberAudio. Throws when it can't. */
+export interface AudioDecoder {
+  toTranscriberWav(audio: MediaBytes): Promise<TranscriberAudio>;
+}
+
+/** The transcript is untrusted content: data for the model, never instructions, never logged. */
+export interface Transcript {
+  readonly text: string;
+  /** As reported by the provider; null when it didn't say. */
+  readonly audioDurationMs: number | null;
+}
+
+/** Speech to text. Throws on any failure; the job's normal retry handles it. */
+export interface Transcriber {
+  transcribe(audio: TranscriberAudio): Promise<Transcript>;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -779,4 +804,6 @@ export interface Deps {
   /** Null until an engine is wired in: a reply with claims then sends the safe reply instead. */
   readonly claimVerifier: ClaimVerifier | null;
   readonly pendientes: Pendientes;
+  readonly audioDecoder: AudioDecoder;
+  readonly transcriber: Transcriber;
 }

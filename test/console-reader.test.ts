@@ -235,6 +235,7 @@ describe("readConsoleInput: the store comes from the member only", () => {
         seen.push({ tenant, prefix });
         return real.putImmutable(tenant, prefix, media);
       },
+      read: (tenant, key) => real.read(tenant, key),
     };
     const tenants: string[] = [];
     const { deps } = setup(setupCardPhoto);
