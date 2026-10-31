@@ -646,7 +646,9 @@ export interface ConsoleAuthRepository {
   listMembers(tenant: Tenant): Promise<MemberSummary[]>;
   /**
    * Makes the person with this phone a staff member of the store, if they aren't a member yet.
-   * Returns their membership as it is now; an existing member keeps their role.
+   * Returns their membership as it is now; an existing member keeps their role. The name is this
+   * store's own (a blank one on an existing staff membership is filled); the person's shared record
+   * and other stores' names are never written or returned.
    */
   addStaff(
     tenant: Tenant,
@@ -662,10 +664,11 @@ export interface ConsoleAuthRepository {
     invite: { readonly id: string; readonly tokenHash: string; readonly nowMs: number; readonly expiresAtMs: number },
   ): Promise<{ readonly phone: string; readonly displayName: string | null } | null>;
   /**
-   * Deactivates a staff member of this store and ends their unused invites. Sessions end through
-   * `revokeSessions`. False when the person isn't staff of this store. Owners are never removed here.
+   * One batch: deactivates a staff member of this store, ends their unused invites and every open
+   * session, or does none of it. Null when the person isn't staff of this store, and then nothing
+   * was written. Owners are never removed here.
    */
-  removeStaff(tenant: Tenant, userId: string, nowMs: number): Promise<boolean>;
+  removeStaff(tenant: Tenant, userId: string, nowMs: number): Promise<{ readonly sessionsEnded: number } | null>;
   /** Turns the fiado permission of an active staff member on or off. False when there is no such member. */
   setFiadoPermission(tenant: Tenant, userId: string, allowed: boolean): Promise<boolean>;
   /** Whether the member already acknowledged that voice notes are kept as records. */

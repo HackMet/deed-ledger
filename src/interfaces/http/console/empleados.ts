@@ -89,11 +89,11 @@ export function empleadosScreen(app: Hono<ConsoleEnv>) {
     if (userId === null) return c.text("Bad request", 400);
     const member = c.get("member");
     const nowMs = deps.clock.now();
-    // Deactivating already logs the person out (every request re-checks the membership); revoking
-    // the sessions makes it stick even if they are invited back later.
-    if (!(await deps.consoleAuth.removeStaff(member, userId, nowMs))) return back(c, "falta");
-    const ended = await deps.consoleAuth.revokeSessions(member, userId, nowMs);
-    deps.log.info("console_member_removed", { businessId: member.businessId, count: ended });
+    // Deactivation and ending every session are one write, so an old session can't survive to come
+    // back if the person is invited again.
+    const removed = await deps.consoleAuth.removeStaff(member, userId, nowMs);
+    if (removed === null) return back(c, "falta");
+    deps.log.info("console_member_removed", { businessId: member.businessId, count: removed.sessionsEnded });
     return back(c, "quitado");
   });
 

@@ -20,6 +20,15 @@ async function membership(businessId: string, userId: string) {
   return row;
 }
 
+async function nameIn(businessId: string, userId: string) {
+  const [row] = await rows<{ display_name: string | null }>(
+    `SELECT display_name FROM memberships WHERE business_id = ? AND user_id = ?`,
+    businessId,
+    userId,
+  );
+  return row?.display_name;
+}
+
 /** A store with its owner logged in, and the owner's CSRF value. */
 async function ownerSession(h: Harness) {
   const store = await storeWithStaff();
@@ -119,9 +128,11 @@ describe("Empleados", () => {
     const code = codeIn(page);
     expect(code).toBeDefined();
 
-    const [user] = await rows<{ id: string; display_name: string }>(`SELECT id, display_name FROM users WHERE phone = ?`, `504${local}`);
-    expect(user).toMatchObject({ display_name: "Carla Núñez" });
+    const [user] = await rows<{ id: string; display_name: string | null }>(`SELECT id, display_name FROM users WHERE phone = ?`, `504${local}`);
+    // The name is this store's: it sits on the membership, never on the person's shared record.
+    expect(user).toMatchObject({ display_name: null });
     expect(await membership(store.businessId, user!.id)).toMatchObject({ role: "staff", active: 1, can_approve_fiado: 0 });
+    expect(await nameIn(store.businessId, user!.id)).toBe("Carla Núñez");
 
     const entered = await send(h, "/console/entrar", { method: "POST", form: { codigo: code! } });
     expect(entered.status).toBe(303);
@@ -203,6 +214,84 @@ describe("Empleados", () => {
     expect((await send(h, "/console/preparacion", { cookie: otherCookie })).status).toBe(200);
     expect(await membership(store.businessId, owner.userId)).toMatchObject({ role: "owner", active: 1 });
     expect((await send(h, "/console/empleados", { cookie: ownerCookie })).status).toBe(200);
+  });
+
+  it("keeps each store's name for a person to itself, both ways", async () => {
+    const h = consoleHarness();
+    const a = await ownerSession(h);
+    const b = await ownerSession(h);
+    // B names one member and leaves another unnamed; both phones also get invited by A.
+    const named = localPhone();
+    const blank = localPhone();
+    await b.post("/console/empleados/invitar", { nombre: "Nombre que puso B", telefono: named });
+    await b.post("/console/empleados/invitar", { telefono: blank });
+    const bListBefore = await (await send(h, "/console/empleados", { cookie: b.cookie })).text();
+
+    const shownToA = await (await a.post("/console/empleados/invitar", { telefono: named })).text();
+    expect(shownToA).not.toContain("Nombre que puso B");
+    expect(shownToA).toContain("Código para entrar");
+    const filledByA = await (await a.post("/console/empleados/invitar", { nombre: "Nombre que puso A", telefono: blank })).text();
+    expect(filledByA).toContain("Código para Nombre que puso A");
+    // A typing B's owner's phone is refused and writes no name B's customers would see.
+    await a.post("/console/empleados/invitar", { nombre: "Nombre que puso A", telefono: `+${b.owner.phone}` });
+
+    const aList = await (await send(h, "/console/empleados", { cookie: a.cookie })).text();
+    expect(aList).not.toContain("Nombre que puso B");
+    expect(aList).toContain("Nombre que puso A");
+    const bListAfter = await (await send(h, "/console/empleados", { cookie: b.cookie })).text();
+    expect(bListAfter).not.toContain("Nombre que puso A");
+    expect(bListAfter.replace(/value="[0-9a-f]{64}"/g, "")).toBe(bListBefore.replace(/value="[0-9a-f]{64}"/g, ""));
+
+    const people = await rows<{ display_name: string | null }>(
+      `SELECT display_name FROM users WHERE phone IN (?, ?, ?)`,
+      `504${named}`,
+      `504${blank}`,
+      b.owner.phone,
+    );
+    expect(people).toEqual([{ display_name: null }, { display_name: null }, { display_name: null }]);
+  });
+
+  it("removes a person all at once: if ending the sessions fails, nothing changed", async () => {
+    const h = consoleHarness();
+    const { store, staff, post } = await ownerSession(h);
+    const oldCookie = await login(h, store.businessId, staff.userId);
+    const unused = await invite(h, store.businessId, staff.userId);
+    // Make the session revocation step fail for this person only.
+    const trigger = `fail_revoke_${crypto.randomUUID().replaceAll("-", "")}`;
+    await rows(
+      `CREATE TRIGGER ${trigger} BEFORE UPDATE OF revoked_at_ms ON console_sessions
+       WHEN OLD.user_id = '${staff.userId}' BEGIN SELECT RAISE(ABORT, 'test: revocation fails'); END`,
+    );
+    try {
+      await expect(h.deps.consoleAuth.removeStaff(store, staff.userId, h.clock.now())).rejects.toThrow();
+    } finally {
+      await rows(`DROP TRIGGER ${trigger}`);
+    }
+    expect(await membership(store.businessId, staff.userId)).toMatchObject({ active: 1 });
+    expect(await rows(`SELECT id FROM console_sessions WHERE user_id = ? AND revoked_at_ms IS NULL`, staff.userId)).toHaveLength(1);
+    expect(await h.deps.consoleAuth.previewInvite(await hashToken(unused), h.clock.now())).not.toBeNull();
+
+    // Done again it all lands, and re-inviting never brings the old session back.
+    expect((await post("/console/empleados/quitar", { persona: staff.userId })).headers.get("location")).toBe(
+      "/console/empleados?aviso=quitado",
+    );
+    expect(await membership(store.businessId, staff.userId)).toMatchObject({ active: 0 });
+    expect(await rows(`SELECT id FROM console_sessions WHERE user_id = ? AND revoked_at_ms IS NULL`, staff.userId)).toHaveLength(0);
+    const again = await post("/console/empleados/codigo", { persona: staff.userId });
+    expect(again.status).toBe(200);
+    expect(await membership(store.businessId, staff.userId)).toMatchObject({ active: 1 });
+    expect((await send(h, "/console/preparacion", { cookie: oldCookie })).status).toBe(401);
+    expect((await send(h, "/console/entrar", { method: "POST", form: { codigo: unused } })).status).toBe(400);
+  });
+
+  it("won't remove an owner, and then writes nothing", async () => {
+    const h = consoleHarness();
+    const { store, owner, cookie } = await ownerSession(h);
+    const code = await invite(h, store.businessId, owner.userId);
+    expect(await h.deps.consoleAuth.removeStaff(store, owner.userId, h.clock.now())).toBeNull();
+    expect(await membership(store.businessId, owner.userId)).toMatchObject({ role: "owner", active: 1 });
+    expect(await h.deps.consoleAuth.previewInvite(await hashToken(code), h.clock.now())).not.toBeNull();
+    expect((await send(h, "/console/empleados", { cookie })).status).toBe(200);
   });
 
   it("turns the fiado permission on and off, and the session sees it on the next request", async () => {
