@@ -5,8 +5,11 @@
  * the session. Dev mode (the local simulator only) skips all of this with a fixed demo member.
  */
 import type { Context, Hono, MiddlewareHandler } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { getCookie, setCookie } from "hono/cookie";
+import { csrf } from "hono/csrf";
 import { html } from "hono/html";
+import { HTTPException } from "hono/http-exception";
 import type { MemberContext } from "../../../application/engine";
 import type { ConsoleMember } from "../../../application/ports";
 import type { Runtime } from "../../../composition";
@@ -59,12 +62,12 @@ export function registerEntryRoutes(app: Hono<ConsoleEnv>) {
     if (config.linkSigningSecret === "") return notReady(c);
     const code = c.req.query("codigo");
     const preview = isWellFormedToken(code) ? await deps.consoleAuth.previewInvite(await hashToken(code), deps.clock.now()) : null;
-    if (preview === null) return c.html(simplePage(COPY.enterTitle, html`<p>${COPY.inviteUnusable}</p>`), 400);
+    if (preview === null) return inviteRefused(c);
     return c.html(
       simplePage(
         COPY.enterTitle,
         html`<p>${COPY.enterBody(preview.storeName)}</p>
-<form method="post" action="/console/entrar"><input type="hidden" name="codigo" value="${code}"><button>${COPY.enterButton}</button></form>`,
+<form method="post" action="/console/entrar" onsubmit="this.querySelector('button').disabled = true"><input type="hidden" name="codigo" value="${code}"><button>${COPY.enterButton}</button></form>`,
       ),
     );
   });
@@ -75,7 +78,7 @@ export function registerEntryRoutes(app: Hono<ConsoleEnv>) {
     if (config.linkSigningSecret === "") return notReady(c);
     const form = await c.req.parseBody();
     const code = form["codigo"];
-    if (!isWellFormedToken(code)) return c.html(simplePage(COPY.enterTitle, html`<p>${COPY.inviteUnusable}</p>`), 400);
+    if (!isWellFormedToken(code)) return inviteRefused(c);
     const token = newToken();
     const nowMs = deps.clock.now();
     const member = await deps.consoleAuth.acceptInvite(await hashToken(code), {
@@ -86,7 +89,7 @@ export function registerEntryRoutes(app: Hono<ConsoleEnv>) {
     });
     if (member === null) {
       deps.log.info("console_invite_refused");
-      return c.html(simplePage(COPY.enterTitle, html`<p>${COPY.inviteUnusable}</p>`), 400);
+      return inviteRefused(c);
     }
     setCookie(c, SESSION_COOKIE, token, {
       httpOnly: true,
@@ -102,22 +105,54 @@ export function registerEntryRoutes(app: Hono<ConsoleEnv>) {
   });
 }
 
+/** The QR opened again, or a second tap that already carries the cookie: go to the list. */
+async function inviteRefused(c: Context<ConsoleEnv>) {
+  if ((await sessionMember(c)) !== null) return c.redirect("/console/preparacion", 303);
+  return c.html(simplePage(COPY.enterTitle, html`<p>${COPY.inviteUnusable}</p>`), 400);
+}
+
+async function sessionMember(c: Context<ConsoleEnv>): Promise<ConsoleMember | null> {
+  const { deps } = c.get("runtime");
+  const token = getCookie(c, SESSION_COOKIE);
+  return isWellFormedToken(token) ? deps.consoleAuth.findSession(await hashToken(token), deps.clock.now()) : null;
+}
+
 /** Every console page and action after this needs an open session of an active member. */
 export const requireMember: MiddlewareHandler<ConsoleEnv> = async (c, next) => {
-  const { config, deps } = c.get("runtime");
+  const { config } = c.get("runtime");
   if (config.devConsole) {
     c.set("member", DEV_MEMBER);
     c.set("csrf", DEV_CSRF);
     return next();
   }
   if (config.linkSigningSecret === "") return notReady(c);
-  const token = getCookie(c, SESSION_COOKIE);
-  const member = isWellFormedToken(token) ? await deps.consoleAuth.findSession(await hashToken(token), deps.clock.now()) : null;
+  const member = await sessionMember(c);
   if (member === null) return c.html(simplePage(COPY.enterTitle, html`<p>${COPY.loginNeeded}</p>`), 401);
   c.set("member", member);
   c.set("csrf", await csrfToken(config.linkSigningSecret, member.sessionId));
   return next();
 };
+
+const MAX_FORM_BYTES = 16 * 1024;
+const crossSiteCheck = csrf();
+const sizeCheck = bodyLimit({ maxSize: MAX_FORM_BYTES, onError: (c) => formRefused(c, 413) });
+
+/**
+ * Refuses form posts from another site, the login form included (its invite would otherwise let a
+ * stranger swap the victim's session for one in their store), and forms larger than any console form.
+ * Screens that take uploads (`uploadPaths`) set their own size limit instead.
+ */
+export function sameSiteForms(uploadPaths: readonly string[] = []): MiddlewareHandler<ConsoleEnv> {
+  return async (c, next) => {
+    try {
+      await crossSiteCheck(c, async () => {});
+    } catch (error) {
+      if (error instanceof HTTPException && error.status === 403) return formRefused(c, 403);
+      throw error;
+    }
+    return uploadPaths.includes(c.req.path) ? next() : sizeCheck(c, next);
+  };
+}
 
 /** A POST must carry the session's CSRF value. */
 export const requireCsrf: MiddlewareHandler<ConsoleEnv> = async (c, next) => {
@@ -125,10 +160,14 @@ export const requireCsrf: MiddlewareHandler<ConsoleEnv> = async (c, next) => {
   const sent = (await c.req.parseBody())["csrf"];
   if (typeof sent !== "string" || !sameToken(sent, c.get("csrf"))) {
     c.get("runtime").deps.log.warn("console_csrf_refused", { businessId: c.get("member").businessId });
-    return c.html(simplePage("Consola", html`<p>${COPY.formExpired}</p><p><a href="/console/preparacion">Volver</a></p>`), 403);
+    return formRefused(c, 403);
   }
   return next();
 };
+
+function formRefused(c: Context<ConsoleEnv>, status: 403 | 413) {
+  return c.html(simplePage("Consola", html`<p>${COPY.formExpired}</p><p><a href="/console/preparacion">Volver</a></p>`), status);
+}
 
 export const requireOwner: MiddlewareHandler<ConsoleEnv> = async (c, next) => {
   if (c.get("member").role !== "owner") return c.html(simplePage("Consola", html`<p>${COPY.ownerOnly}</p>`), 403);

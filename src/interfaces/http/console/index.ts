@@ -4,9 +4,8 @@
  * routes below. Everything after `requireMember` has a session; every POST carries its CSRF value.
  */
 import { Hono } from "hono";
-import { csrf } from "hono/csrf";
 import { anotarBodyLimit, anotarScreen } from "./anotar";
-import { type ConsoleEnv, registerEntryRoutes, requireCsrf, requireMember } from "./auth";
+import { type ConsoleEnv, registerEntryRoutes, requireCsrf, requireMember, sameSiteForms } from "./auth";
 import { bienvenidaScreen } from "./bienvenida";
 import { empleadosScreen } from "./empleados";
 import { preparacionScreen } from "./preparacion";
@@ -14,9 +13,9 @@ import { preparacionScreen } from "./preparacion";
 export function consoleRoutes() {
   const app = new Hono<ConsoleEnv>();
 
-  // Form posts from another site are refused, the login form included (its invite would otherwise
-  // let a stranger swap the victim's session for one in their store).
-  app.use("*", csrf());
+  // Cross-site and oversized form posts are refused, the login form included. Anotar takes photos
+  // and sets its own limit below.
+  app.use("*", sameSiteForms(["/console/anotar"]));
   registerEntryRoutes(app);
   app.use("*", requireMember);
   // Before the CSRF check, which reads the whole body: Anotar's uploads have a size limit.

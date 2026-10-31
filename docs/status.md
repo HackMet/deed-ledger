@@ -21,7 +21,8 @@ Last updated: Fri Oct 30, 2026, morning Honduras time, by Claude Code (engine co
   - `JobOutcome.commits`: the engine's writes save in the batch that completes the job. This unblocks the engine.
   - Contract v1 draft ([contract.md](contract.md)): types and fixtures between perception, the engine and the
     console. For the spec meeting; not agreed.
-  - The console's preparation list, on an in-memory pretend engine, in local dev mode only (no login yet).
+  - The console's preparation list, on an in-memory pretend engine. Console login (#22) is in PR #61
+    (`claude/console-login`).
 - Spikes are done (handoffs in [handoffs/](handoffs/)): Muse Spark reads invoices and orders with structured output;
   voice transcription 6/6; voice notes decode to WAV inside the Worker.
 - Two independent reviews of Tech Spec v3 (Oct 30) both said "build with changes". The contract draft takes in their
@@ -34,7 +35,7 @@ Last updated: Fri Oct 30, 2026, morning Honduras time, by Claude Code (engine co
 | 1 | Spec meeting: agree contract v1 and its open questions | Both | [contract.md](contract.md#open-for-the-meeting) |
 | 2 | PR `claude/base-layer` into `main` on the team repo | Angel | Merge commit, not squash |
 | 3 | Engine on the contract, saving through `JobOutcome.commits` | Teammate | Replaces the pretend engine |
-| 4 | Console login (invite QR, sessions, roles), then a deploy | Angel (Claude Code) | Needed for the console gate |
+| 4 | Console login (invite QR, sessions, roles), then a deploy | Angel (Claude Code) | PR #61; the deploy needs `LINK_SIGNING_SECRET` set first |
 | 5 | Replies and the claim check; perception for customer orders | Angel (Claude Code) | Against the contract fixtures |
 | 6 | The two-minute "te respondemos en un momento" fallback | Angel (Claude Code) | Specified, not built |
 

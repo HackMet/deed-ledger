@@ -615,6 +615,13 @@ export interface InvitePreview {
   readonly storeName: string;
 }
 
+export interface NewConsoleSession {
+  readonly id: string;
+  readonly tokenHash: string;
+  readonly nowMs: number;
+  readonly expiresAtMs: number;
+}
+
 export interface MemberSummary {
   readonly userId: string;
   readonly displayName: string | null;
@@ -631,10 +638,7 @@ export interface ConsoleAuthRepository {
    * One batch: uses the invite and opens the session, only while the invite is unused and unexpired
    * and its membership active. Null when it isn't, and then nothing was written.
    */
-  acceptInvite(
-    tokenHash: string,
-    session: { readonly id: string; readonly tokenHash: string; readonly nowMs: number; readonly expiresAtMs: number },
-  ): Promise<ConsoleMember | null>;
+  acceptInvite(tokenHash: string, session: NewConsoleSession): Promise<ConsoleMember | null>;
   /** The session's member while the session is open and the membership active; checked on every request. */
   findSession(tokenHash: string, nowMs: number): Promise<ConsoleMember | null>;
   /** Ends every open session of the member. Returns how many were open. */
