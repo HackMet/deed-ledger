@@ -104,4 +104,113 @@ export class D1ConsoleAuthRepository implements ConsoleAuthRepository {
       canApproveFiado: row.can_approve_fiado === 1,
     }));
   }
+
+  async addStaff(
+    tenant: Tenant,
+    person: { readonly phone: string; readonly displayName: string | null; readonly nowMs: number },
+  ): Promise<{ readonly userId: string; readonly role: "owner" | "staff" }> {
+    await this.db.batch([
+      // A person can belong to several stores: an existing name is kept, a blank one is filled.
+      this.db
+        .prepare(
+          `INSERT INTO users (id, phone, display_name, created_at_ms) VALUES (?, ?, ?, ?)
+           ON CONFLICT (phone) DO UPDATE SET display_name = COALESCE(users.display_name, excluded.display_name)`,
+        )
+        .bind(crypto.randomUUID(), person.phone, person.displayName, person.nowMs),
+      this.db
+        .prepare(
+          `INSERT INTO memberships (business_id, user_id, location_id, role, created_at_ms)
+           SELECT ?, id, NULL, 'staff', ? FROM users WHERE phone = ?
+           ON CONFLICT (business_id, user_id) DO NOTHING`,
+        )
+        .bind(tenant.businessId, person.nowMs, person.phone),
+    ]);
+    const row = await this.db
+      .prepare(
+        `SELECT m.user_id, m.role FROM memberships m JOIN users u ON u.id = m.user_id
+         WHERE m.business_id = ? AND u.phone = ?`,
+      )
+      .bind(tenant.businessId, person.phone)
+      .first<{ user_id: string; role: "owner" | "staff" }>();
+    if (row === null) throw new Error("staff membership missing after insert");
+    return { userId: row.user_id, role: row.role };
+  }
+
+  async createStaffInvite(
+    tenant: Tenant,
+    userId: string,
+    invite: { readonly id: string; readonly tokenHash: string; readonly nowMs: number; readonly expiresAtMs: number },
+  ): Promise<{ readonly phone: string; readonly displayName: string | null } | null> {
+    // Both statements match only a staff membership of this store, so an owner or another store's
+    // member gets neither a reactivation nor an invite. A re-added person starts without fiado.
+    await this.db.batch([
+      this.db
+        .prepare(
+          `UPDATE memberships SET can_approve_fiado = CASE WHEN active = 0 THEN 0 ELSE can_approve_fiado END, active = 1
+           WHERE business_id = ? AND user_id = ? AND role = 'staff'`,
+        )
+        .bind(tenant.businessId, userId),
+      this.db
+        .prepare(
+          `INSERT INTO console_invites (id, business_id, user_id, token_hash, expires_at_ms, created_at_ms)
+           SELECT ?, business_id, user_id, ?, ?, ? FROM memberships
+           WHERE business_id = ? AND user_id = ? AND role = 'staff' AND active = 1`,
+        )
+        .bind(invite.id, invite.tokenHash, invite.expiresAtMs, invite.nowMs, tenant.businessId, userId),
+    ]);
+    const row = await this.db
+      .prepare(
+        `SELECT u.phone, u.display_name FROM console_invites i JOIN users u ON u.id = i.user_id
+         WHERE i.token_hash = ? AND i.business_id = ?`,
+      )
+      .bind(invite.tokenHash, tenant.businessId)
+      .first<{ phone: string; display_name: string | null }>();
+    return row === null ? null : { phone: row.phone, displayName: row.display_name };
+  }
+
+  async removeStaff(tenant: Tenant, userId: string, nowMs: number): Promise<boolean> {
+    const [removed] = await this.db.batch([
+      this.db
+        .prepare(`UPDATE memberships SET active = 0 WHERE business_id = ? AND user_id = ? AND role = 'staff'`)
+        .bind(tenant.businessId, userId),
+      // An unused invite would open a session again if the person were re-added within 15 minutes.
+      this.db
+        .prepare(
+          `UPDATE console_invites SET expires_at_ms = ?
+           WHERE business_id = ? AND user_id = ? AND used_at_ms IS NULL AND expires_at_ms > ?
+             AND EXISTS (SELECT 1 FROM memberships WHERE business_id = ? AND user_id = ? AND role = 'staff')`,
+        )
+        .bind(nowMs, tenant.businessId, userId, nowMs, tenant.businessId, userId),
+    ]);
+    return (removed?.meta.changes ?? 0) > 0;
+  }
+
+  async setFiadoPermission(tenant: Tenant, userId: string, allowed: boolean): Promise<boolean> {
+    const result = await this.db
+      .prepare(
+        `UPDATE memberships SET can_approve_fiado = ?
+         WHERE business_id = ? AND user_id = ? AND role = 'staff' AND active = 1`,
+      )
+      .bind(allowed ? 1 : 0, tenant.businessId, userId)
+      .run();
+    return result.meta.changes > 0;
+  }
+
+  async voiceNoticeSeen(tenant: Tenant, userId: string): Promise<boolean> {
+    const row = await this.db
+      .prepare(`SELECT voice_notice_seen_at_ms FROM memberships WHERE business_id = ? AND user_id = ?`)
+      .bind(tenant.businessId, userId)
+      .first<{ voice_notice_seen_at_ms: number | null }>();
+    return row !== null && row.voice_notice_seen_at_ms !== null;
+  }
+
+  async markVoiceNoticeSeen(tenant: Tenant, userId: string, nowMs: number): Promise<void> {
+    await this.db
+      .prepare(
+        `UPDATE memberships SET voice_notice_seen_at_ms = ?
+         WHERE business_id = ? AND user_id = ? AND voice_notice_seen_at_ms IS NULL`,
+      )
+      .bind(nowMs, tenant.businessId, userId)
+      .run();
+  }
 }

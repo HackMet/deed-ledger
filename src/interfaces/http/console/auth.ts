@@ -12,6 +12,7 @@ import type { ConsoleMember } from "../../../application/ports";
 import type { Runtime } from "../../../composition";
 import { isWellFormedToken, SESSION_COOKIE, SESSION_TTL_MS } from "../../../domain/console-auth";
 import { csrfToken, hashToken, newToken, sameToken } from "../../../infrastructure/tokens";
+import { simplePage } from "./layout";
 
 export type ConsoleEnv = {
   Bindings: Env;
@@ -95,7 +96,9 @@ export function registerEntryRoutes(app: Hono<ConsoleEnv>) {
       maxAge: Math.floor(SESSION_TTL_MS / 1000),
     });
     deps.log.info("console_session_opened", { businessId: member.businessId });
-    return c.redirect("/console/preparacion", 303);
+    // Until the member has read the voice-note notice, logging in shows it first.
+    const seen = await deps.consoleAuth.voiceNoticeSeen(member, member.userId);
+    return c.redirect(seen ? "/console/preparacion" : "/console/bienvenida", 303);
   });
 }
 
@@ -135,19 +138,4 @@ export const requireOwner: MiddlewareHandler<ConsoleEnv> = async (c, next) => {
 function notReady(c: Context<ConsoleEnv>) {
   c.get("runtime").deps.log.error("console_not_configured");
   return c.html(simplePage("Consola", html`<p>${COPY.notReady}</p>`), 503);
-}
-
-export function simplePage(title: string, body: unknown) {
-  return html`<!doctype html>
-<html lang="es">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${title}</title>
-<style>body{margin:0;padding:24px 18px;font:17px/1.5 system-ui,sans-serif;background:#f4f4f2;color:#1b1b1b}
-h1{font-size:20px}button{min-height:48px;width:100%;font-size:17px;border:0;border-radius:8px;background:#2f6f45;color:#fff}
-li{padding:6px 0}</style>
-</head>
-<body><h1>${title}</h1>${body}</body>
-</html>`;
 }

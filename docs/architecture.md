@@ -254,6 +254,16 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
 - **First login:** `npm run admin:invite -- --phone-number-id … --phone … --role owner|staff [--remote]` adds the
   person as a member if needed and prints a link. The raw code is only printed, never written to disk.
 - **Dev mode** (`DEV_CONSOLE=1`, local simulator only) skips login and CSRF with a fixed demo member.
+- **Screens** live in `src/interfaces/http/console/`, one file each, rendered through the shared layout in
+  `layout.ts` (header, tabs, notice). A new screen is a file that registers its routes, one line in `index.ts`, and
+  a tab in `NAV` if it needs one.
+- **Empleados** (`empleados.ts`, owner only): invite by phone (a new person becomes staff; an owner's number is
+  refused), "Código nuevo", the fiado permission, and "Quitar", which deactivates the membership, expires unused
+  invites and revokes every session. Only staff memberships of the session's store can be changed there, so an
+  owner can't lock themselves out; owners are managed with `admin:invite`. Inviting a removed person again
+  reactivates them with fiado off.
+- **Voice-note notice** (`bienvenida.ts`, migration 0008): until a member taps "Entendido", logging in shows that voice
+  notes are kept as the store's records.
 
 ### Known limits
 

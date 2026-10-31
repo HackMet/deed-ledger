@@ -1,17 +1,18 @@
 /**
- * The staff console: server-rendered pages for a 360 px Android screen, behind the login in
- * `console/auth.ts`. The list refreshes itself every few seconds; every button posts one action with
- * its own operation key and the session's CSRF value, so a double tap saves once.
+ * The preparation list: every order to pack, refreshed every few seconds. Every button posts one
+ * action with the version on screen, its own operation key and the session's CSRF value, so a
+ * double tap saves once.
  */
-import { type Context, Hono } from "hono";
-import { csrf } from "hono/csrf";
+import type { Context, Hono } from "hono";
 import { html } from "hono/html";
-import type { MemberContext } from "../../application/engine";
-import type { ActionEnvelope, ConsoleAction, LineMark } from "../../domain/contract/actions";
-import { formatLempiras } from "../../domain/contract/numbers";
-import type { EngineOutcome, OrderLineView, OrderView, PreparationCard } from "../../domain/contract/outcomes";
-import { type ConsoleEnv, memberContext, registerEntryRoutes, requireCsrf, requireMember, requireOwner, simplePage } from "./console/auth";
+import type { MemberContext } from "../../../application/engine";
+import type { ActionEnvelope, ConsoleAction, LineMark } from "../../../domain/contract/actions";
+import { formatLempiras } from "../../../domain/contract/numbers";
+import type { EngineOutcome, OrderLineView, OrderView, PreparationCard } from "../../../domain/contract/outcomes";
+import { type ConsoleEnv, memberContext } from "./auth";
+import { csrfField, shell } from "./layout";
 
+const PATH = "/console/preparacion";
 const REFRESH_SECONDS = 15;
 
 /** What a tap's result tells the person who tapped, by key in the redirect. */
@@ -31,24 +32,26 @@ const STATE_LABELS: Partial<Record<OrderView["state"], string>> = {
 
 const MARK_LABELS: Record<LineMark, string> = { listo: "Listo", no_hay: "No hay", ofrecer_otro: "Otro ofrecido" };
 
-export function consoleRoutes() {
-  const app = new Hono<ConsoleEnv>();
-
-  // Form posts from another site are refused, the login form included (its invite would otherwise
-  // let a stranger swap the victim's session for one in their store).
-  app.use("*", csrf());
-  registerEntryRoutes(app);
-  app.use("*", requireMember);
-  app.use("*", requireCsrf);
-
-  app.get("/", (c) => c.redirect("/console/preparacion", 302));
-
+export function preparacionScreen(app: Hono<ConsoleEnv>) {
   app.get("/preparacion", async (c) => {
     const engine = c.get("runtime").engine;
     if (engine === null) return engineNotReady(c);
     const cards = await engine.preparationList(memberContext(c));
     const notice = c.req.query("aviso");
-    return c.html(page(cards, notice !== undefined && notice in NOTICES ? NOTICES[notice as NoticeKey] : null, c.get("csrf")));
+    const csrf = c.get("csrf");
+    return c.html(
+      shell(c, {
+        title: "Pedidos por preparar",
+        path: PATH,
+        refreshSeconds: REFRESH_SECONDS,
+        notice: notice !== undefined && notice in NOTICES ? NOTICES[notice as NoticeKey] : null,
+        style: STYLE,
+        body:
+          cards.length === 0
+            ? html`<p class="empty">No hay pedidos por preparar.</p>`
+            : cards.map((card, n) => orderCard(card, n + 1, csrf)),
+      }),
+    );
   });
 
   app.post("/acciones", async (c) => {
@@ -61,27 +64,12 @@ export function consoleRoutes() {
     deps.log.info("console_action", { businessId: member.businessId, outcome: outcome.type });
     const notice = noticeFor(outcome);
     const anchor = "orderId" in envelope.action ? `#${envelope.action.orderId}` : "";
-    return c.redirect(`/console/preparacion${notice === null ? "" : `?aviso=${notice}`}${anchor}`, 303);
+    return c.redirect(`${PATH}${notice === null ? "" : `?aviso=${notice}`}${anchor}`, 303);
   });
-
-  app.get("/empleados", requireOwner, async (c) => {
-    const { deps } = c.get("runtime");
-    const members = await deps.consoleAuth.listMembers(c.get("member"));
-    return c.html(
-      simplePage(
-        "Empleados",
-        html`<ul>${members.map(
-          (m) => html`<li>${m.displayName ?? "Sin nombre"} · ${m.role === "owner" ? "Dueño" : "Empleado"}${m.active ? "" : " · quitado"}</li>`,
-        )}</ul>`,
-      ),
-    );
-  });
-
-  return app;
 }
 
 function engineNotReady(c: Context<ConsoleEnv>) {
-  return c.html(simplePage("Consola", html`<p>La lista de pedidos no está lista todavía.</p>`), 503);
+  return c.html(shell(c, { title: "Pedidos por preparar", path: PATH, body: html`<p class="empty">La lista de pedidos no está lista todavía.</p>` }), 503);
 }
 
 function noticeFor(outcome: EngineOutcome): NoticeKey | null {
@@ -128,24 +116,6 @@ function parseAction(form: Record<string, unknown>, member: MemberContext): Acti
 // ---------------------------------------------------------------------------------------------
 // Rendering. `html` escapes every interpolated string.
 
-function page(cards: readonly PreparationCard[], notice: string | null, csrf: string) {
-  return html`<!doctype html>
-<html lang="es">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="${REFRESH_SECONDS};url=/console/preparacion">
-<title>Pedidos por preparar</title>
-<style>${STYLE}</style>
-</head>
-<body>
-<header><h1>Pedidos por preparar</h1><a class="refresh" href="/console/preparacion">Actualizar</a></header>
-${notice === null ? "" : html`<p class="notice" role="status">${notice}</p>`}
-${cards.length === 0 ? html`<p class="empty">No hay pedidos por preparar.</p>` : cards.map((card, n) => orderCard(card, n + 1, csrf))}
-</body>
-</html>`;
-}
-
 function orderCard(card: PreparationCard, position: number, csrf: string) {
   const { order } = card;
   const packing = order.state === "confirmado" || order.state === "preparando";
@@ -188,7 +158,7 @@ function orderButton(order: OrderView, csrf: string) {
 
 /** Every form carries the version on screen and a fresh operation key: a double tap sends the same key. */
 function hidden(order: OrderView, type: string, csrf: string) {
-  return html`<input type="hidden" name="type" value="${type}"><input type="hidden" name="orderId" value="${order.orderId}"><input type="hidden" name="version" value="${order.version}"><input type="hidden" name="operationKey" value="${crypto.randomUUID()}"><input type="hidden" name="csrf" value="${csrf}">`;
+  return html`<input type="hidden" name="type" value="${type}"><input type="hidden" name="orderId" value="${order.orderId}"><input type="hidden" name="version" value="${order.version}"><input type="hidden" name="operationKey" value="${crypto.randomUUID()}">${csrfField(csrf)}`;
 }
 
 function fulfillmentText(order: OrderView): string {
@@ -197,23 +167,17 @@ function fulfillmentText(order: OrderView): string {
   return `Para llevar: ${order.fulfillment.placeText ?? "lugar guardado"}`;
 }
 
+/** The order cards; the header, tabs, notice and buttons come from the shared layout. */
 const STYLE = `
-*{box-sizing:border-box}body{margin:0;font:16px/1.4 system-ui,sans-serif;background:#f4f4f2;color:#1b1b1b}
-header{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;background:#1f3d2b;color:#fff}
-h1{font-size:18px;margin:0}.refresh{color:#fff}
-.notice{margin:10px;padding:10px;border-radius:8px;background:#fff3cd;border:1px solid #e0c060}
-.empty{padding:20px;text-align:center;color:#666}
 .order{margin:10px;padding:12px;border-radius:10px;background:#fff;border-left:6px solid #2f6f45}
 .order.listo{border-left-color:#999;opacity:.85}
 .head{display:flex;justify-content:space-between;gap:8px}.state{font-size:14px;color:#2f6f45}
 .meta{margin:4px 0 8px;font-size:14px;color:#555}
-ul{list-style:none;margin:0;padding:0}li{padding:8px 0;border-top:1px solid #eee}
+li{padding:8px 0;border-top:1px solid #eee}
 li.changed{background:#fff8e1}.line{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 em{font-style:normal;font-size:12px;background:#f0b400;color:#000;padding:1px 6px;border-radius:4px}
 .mark{font-size:13px;padding:1px 6px;border-radius:4px;background:#e3efe6}.mark.no_hay{background:#f8d7da}
-.buttons{display:flex;gap:8px;margin-top:6px}form{margin:0}
-button{min-height:44px;min-width:88px;font-size:16px;border-radius:8px;border:1px solid #888;background:#fff}
+.buttons{display:flex;gap:8px;margin-top:6px}
 button.listo{border-color:#2f6f45}button.no_hay{border-color:#b33}
-button.primary{width:100%;margin-top:10px;background:#2f6f45;color:#fff;border:0}
 .total{font-weight:600;margin:8px 0 0}
 `;
