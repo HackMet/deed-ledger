@@ -4,11 +4,13 @@
  * D1 repositories.
  */
 import type { Engine } from "./application/engine";
-import { placeholderHandler } from "./application/placeholder-handler";
+import { fixturePerceptionHandler } from "./application/engine/fixture-perception-handler";
+import { OrderEngine } from "./application/engine/order-engine";
 import type { Deps } from "./application/ports";
 import { type Config, readConfig } from "./infrastructure/config";
 import { D1ConsoleAuthRepository } from "./infrastructure/d1/console-auth-repository";
 import { D1IntakeRepository } from "./infrastructure/d1/intake-repository";
+import { D1OrderStore } from "./infrastructure/d1/order-store";
 import { D1JobRepository } from "./infrastructure/d1/job-repository";
 import { D1OutboxRepository } from "./infrastructure/d1/outbox-repository";
 import { D1TenancyRepository } from "./infrastructure/d1/tenancy-repository";
@@ -42,12 +44,15 @@ export type RuntimeOverrides = Partial<
 export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtime {
   const config = readConfig(env);
   const db = overrides.db ?? env.DB;
+  const ids = overrides.ids ?? randomIds;
+  const clock = overrides.clock ?? systemClock;
+  const orders = new D1OrderStore(db);
   return {
     config,
     engine: overrides.engine ?? (config.devConsole ? devEngine : null),
     deps: {
-      clock: overrides.clock ?? systemClock,
-      ids: overrides.ids ?? randomIds,
+      clock,
+      ids,
       log: overrides.log ?? consoleLogger,
       sleep: overrides.sleep ?? realSleep,
       hasher: overrides.hasher ?? new HmacKeyedHasher(config.senderHashSalt),
@@ -67,7 +72,8 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
         }),
       mediaSource: overrides.mediaSource ?? unavailableMediaSource,
       mediaStore: overrides.mediaStore ?? new R2MediaStore(env.MEDIA),
-      jobHandler: overrides.jobHandler ?? placeholderHandler,
+      // Fixture perception stands in until the teammate's perception lands (D-37); see its header.
+      jobHandler: overrides.jobHandler ?? fixturePerceptionHandler({ engine: new OrderEngine({ store: orders, ids }), orders, clock }),
     },
   };
 }

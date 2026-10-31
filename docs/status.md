@@ -27,8 +27,8 @@ Last updated: Fri Oct 30, 2026, evening Honduras time, by Claude Code (E7: docs 
   `FactCommit` in `domain/facts.ts`, `D1FactLedger.statementsFor` turning one into a `Commit` (D-41), post-guards that
   the fence now runs inside the batch, cancellation as compensating movements, and the dependency gate G4. On local D1
   only, **not deployed**. The chain's trace records T1 to T5 as PASS.
-- The order engine (issue #11) is built on local D1 only, **not deployed and not wired** into the composition root or
-  the job handler. Its E1 to E3 trace lines (E1, E1b, E2, E2b, E3, e3-engine-orders-fix1, e3-engine-orders-fix2) are
+- The order engine (issue #11) is built on local D1 only, **not deployed**, wired into the composition root only through
+  the fixture perception adapter (T6b, below). Its E1 to E3 trace lines (E1, E1b, E2, E2b, E3, e3-engine-orders-fix1, e3-engine-orders-fix2) are
   all PASS. What it does: a burst becomes one versioned order (`onBurst`); each saved decision is anchored by an
   operation key derived from the customer's own order and action (D-44); every decision reads first (D-42); the
   customer can confirm, cancel and remove a line, and a re-confirm after a change returns to the state the change
@@ -38,6 +38,20 @@ Last updated: Fri Oct 30, 2026, evening Honduras time, by Claude Code (E7: docs 
   it asks no perception questions (ambiguous size, missing fulfillment); unit prices are always null, so totals are
   null, and availability is always `no_se`. Verified by 238 tests on local D1 (26 files). `npm run dev:sim` and
   `npm run simulate` were **not run**, so the order flow is "tests on local D1", not end to end.
+- T6b (Oct 31): a WhatsApp text job now reaches the order engine through the default `jobHandler` in
+  `composition.ts`, and the engine's commits save in the job's own completion batch (D-37). The handler is
+  `src/application/engine/fixture-perception-handler.ts`: fixture perception adapter: replaced by the teammate's
+  perception when it lands (D-37). It reads only a few Spanish words in a text message (a pedido, a change, "confirmar",
+  "cancelar") and maps them to the contract fixtures; `customerId` is the conversation id until a customers table
+  exists. Anything else (photo, voice note, unreadable text) falls through to the placeholder. Verified by
+  `test/wire-engine.test.ts` on local D1: a failing commit guard leaves no order, no engine reply and a job that is
+  not done; order -> readback -> "confirmar" saves one order and one confirmation reply, and a repeated "confirmar"
+  adds nothing. Suite: 27 files / 246 tests (was 26 / 241). Not deployed.
+  **The Saturday 8:00 PM Honduras gate is NOT met without real perception.** Missing:
+  - real perception for photo -> draft (the fixture adapter reads words, not photos or voice)
+  - `dev:sim` / `simulate` not run for this flow
+  - issue #12's console taps, `preparationList` and `verifyClaims`
+  - issue #60's supplier invoices (the receipt handler stays unwired)
 - Every guard now has a read before it that answers the owner, with the guard left as the backstop
   for a race (D-42): a used operation key reads as `duplicate`, a stale draft revision as
   `rejected`/`stale_version`, a cancelled dependency as a rejection carrying the dead ids. A guard
@@ -79,7 +93,7 @@ staff use the preparation list on their own phones. If the console can't pass, i
 | D-41 (fact memory under `Commit`) and D-42 (read before every guard) are Proposed and need Angel's acceptance | Angel | Oct 30 |
 | D-43 (customer cancel refused once preparando; re-confirm returns to the interrupted state) and D-44 (operation keys derived from the customer's own order and action) are Proposed and need Angel's acceptance | Angel | Oct 30 |
 | Issue #12: `preparationList`, `verifyClaims` and the console taps are not built | Teammate | Oct 30 |
-| Order engine not wired into the composition root or the job handler; `dev:sim` and `simulate` not run | Teammate | Oct 30 |
+| Order engine is wired only through the fixture perception adapter (T6b); `dev:sim` and `simulate` not run | Teammate | Oct 30 |
 | Perception questions (ambiguous size, missing fulfillment) not asked; unit prices null, so totals null | Teammate, with Angel's perception | Oct 30 |
 | Order tables lack some guards: no FK between order tables, no version-immutability trigger, no partial UNIQUE for one open order, `facts.operation_key` has no FK to `operations` | Teammate | Oct 30 |
 | `operations` rows do not store `customer_id`; ownership is checked through the order instead | Teammate | Oct 30 |
