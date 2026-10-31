@@ -62,6 +62,7 @@ describe("a WhatsApp text job reaches the order engine (default handler)", () =>
     // The same word again is a new message, but the same action on the same order version.
     await say(h, store, phone, "confirmar");
     expect(await saved(store.businessId)).toEqual(after);
+    expect(h.sentTo(phone).at(-1)).toBe("Tu pedido ya estaba confirmado.");
     expect(confirmedReplies()).toHaveLength(1);
     expect(await jobStates(store.businessId)).toEqual(["done", "done", "done"]);
   });
@@ -81,6 +82,28 @@ describe("a WhatsApp text job reaches the order engine (default handler)", () =>
     expect(h.sentTo(phone)).toHaveLength(1);
     expect(await saved(store.businessId)).toEqual({ orders: 0, operations: 0, audit: 0 });
   });
+});
+
+describe("a negation or a cancel inside a longer text never reaches the order intent", () => {
+  for (const body of ["Cancelar mi pedido", "ya no quiero nada", "no necesito el pedido"]) {
+    it(`"${body}" leaves a confirmed order confirmed, at the same version, with the same lines`, async () => {
+      const h = harness();
+      const { phone, store } = await customer();
+      await say(h, store, phone, "Quiero hacer un pedido");
+      await say(h, store, phone, "confirmar");
+      const snapshot = async () => ({
+        orders: await rows(`SELECT state, current_version FROM orders WHERE business_id = ?`, store.businessId),
+        lines: await rows(`SELECT version, line_no FROM order_lines WHERE business_id = ? ORDER BY version, line_no`, store.businessId),
+        saved: await saved(store.businessId),
+      });
+      const before = await snapshot();
+      expect(before.orders).toEqual([{ state: "confirmado", current_version: expect.any(Number) }]);
+
+      await say(h, store, phone, body);
+      expect(await snapshot()).toEqual(before);
+      expect(h.sentTo(phone).at(-1)).toBe(RECEIVED_PLACEHOLDER);
+    });
+  }
 });
 
 describe("D-37: the engine's commits save in the job's one batch, or not at all", () => {

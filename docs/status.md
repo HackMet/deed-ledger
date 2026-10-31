@@ -46,12 +46,13 @@ Last updated: Fri Oct 30, 2026, evening Honduras time, by Claude Code (E7: docs 
   exists. Anything else (photo, voice note, unreadable text) falls through to the placeholder. Verified by
   `test/wire-engine.test.ts` on local D1: a failing commit guard leaves no order, no engine reply and a job that is
   not done; order -> readback -> "confirmar" saves one order and one confirmation reply, and a repeated "confirmar"
-  adds nothing. Suite: 27 files / 246 tests (was 26 / 241). Not deployed.
+  adds nothing. Suite: 27 files / 249 tests (was 26 / 241). Not deployed.
   **The Saturday 8:00 PM Honduras gate is NOT met without real perception.** Missing:
   - real perception for photo -> draft (the fixture adapter reads words, not photos or voice)
   - `dev:sim` / `simulate` not run for this flow
   - issue #12's console taps, `preparationList` and `verifyClaims`
   - issue #60's supplier invoices (the receipt handler stays unwired)
+  - console login and a deploy, so staff use the preparation list on their own phones (not deployed)
 - Every guard now has a read before it that answers the owner, with the guard left as the backstop
   for a race (D-42): a used operation key reads as `duplicate`, a stale draft revision as
   `rejected`/`stale_version`, a cancelled dependency as a rejection carrying the dead ids. A guard
@@ -71,7 +72,7 @@ Last updated: Fri Oct 30, 2026, evening Honduras time, by Claude Code (E7: docs 
 |---|---|---|---|
 | 1 | Spec meeting: agree contract v1 and its open questions | Both | [contract.md](contract.md#open-for-the-meeting) |
 | 2 | PR `claude/base-layer` into `main` on the team repo | Angel | Merge commit, not squash |
-| 3 | Engine on the contract, saving through `JobOutcome.commits` | Teammate | Order engine built on local D1 but not wired; the console still runs the pretend engine |
+| 3 | Engine on the contract, saving through `JobOutcome.commits` | Teammate | Order engine wired to text jobs through the fixture adapter (T6b); the console still runs the pretend engine |
 | 4 | Console login (invite QR, sessions, roles), then a deploy | Angel (Claude Code) | PR #61; the deploy needs `LINK_SIGNING_SECRET` set first |
 | 5 | Replies and the claim check; perception for customer orders | Angel (Claude Code) | Against the contract fixtures |
 | 6 | The two-minute "te respondemos en un momento" fallback | Angel (Claude Code) | Specified, not built |
