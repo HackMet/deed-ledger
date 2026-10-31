@@ -10,7 +10,7 @@ import { splitText } from "../src/domain/text";
 import { WhatsAppCloudChannel } from "../src/integrations/whatsapp/client";
 import { FakeClock, failWritesMatching, hookDb } from "./helpers/fakes";
 import { conversationOf, expireClaims, type Harness, harness, OUTLIVES_TEST_MS, rows } from "./helpers/harness";
-import { newPhone, seedStore } from "./helpers/seed";
+import { newPhone, seedIntroducedCustomer, seedStore } from "./helpers/seed";
 import { statusUpdate, textMessage, wamid, webhook } from "./helpers/whatsapp";
 
 const HOUR = 60 * 60 * 1000;
@@ -378,6 +378,8 @@ describe("expiry (F15)", () => {
   it("expires the placeholder after an hour instead of sending it late", async () => {
     const h = harness();
     const { store, phone } = await storeWithOwner();
+    // A returning customer, already introduced (#30): this test counts replies.
+    await seedIntroducedCustomer(store, phone);
     await h.post(webhook(store.phoneNumberId, { messages: [textMessage({ from: phone, id: wamid(), timestampS: nowS(h), body: "Hola" })] }));
     h.clock.advance(4_000);
     h.channel.nextResults.push({ ok: false, disposition: "retry", errorCode: "http_429" });

@@ -148,7 +148,9 @@ describe("migration 0004 (customers) on a database with existing rows", () => {
         .run(),
     ).rejects.toThrow(/FOREIGN KEY/);
 
-    // A migrated member writing again is recognized: same customer, same conversation.
+    // A migrated member writing again is recognized: same customer, same conversation. Today's
+    // intake runs on a fully migrated database (its batch reads customer_tombstones, 0010).
+    await applyD1Migrations(db, env.TEST_MIGRATIONS.filter((migration) => migration.name >= "0006"));
     const intake = new D1IntakeRepository(db);
     const recorded = await intake.recordCustomerMessage(
       { businessId: a.businessId },
@@ -162,9 +164,11 @@ describe("migration 0004 (customers) on a database with existing rows", () => {
         newInboundId: "in-4",
         newMediaAssetId: "new-asset",
         hourlyCap: 300,
+        senderHash: "0".repeat(64),
       },
     );
     expect(recorded).toEqual({ conversationId: "conv-a-shared", customerId: expect.any(String), outcome: "new" });
+    if (recorded.outcome === "refused") throw new Error("unexpected refusal");
     expect(recorded.customerId).not.toBe("new-customer");
   });
 });

@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { RECEIVED_PLACEHOLDER } from "../src/domain/copy";
 import { harness, rows } from "./helpers/harness";
-import { newPhone, seedStore } from "./helpers/seed";
+import { newPhone, seedIntroducedCustomer, seedStore } from "./helpers/seed";
 import { imageMessage, textMessage, wamid, webhook } from "./helpers/whatsapp";
 
 const T0 = 1_793_196_000;
@@ -13,6 +13,8 @@ describe("two stores", () => {
     const shared = newPhone();
     const a = await seedStore({ name: "Tienda A", members: [{ phone: shared, role: "owner" }] });
     const b = await seedStore({ name: "Tienda B", members: [{ phone: shared, role: "staff" }] });
+    // A returning customer, already introduced (#30): these checks count replies.
+    for (const store of [a, b]) await seedIntroducedCustomer(store, shared);
 
     await h.post(webhook(a.phoneNumberId, { messages: [imageMessage({ from: shared, id: wamid(), timestampS: T0, mediaId: "m-a", caption: "para A" })] }));
     await h.post(webhook(b.phoneNumberId, { messages: [imageMessage({ from: shared, id: wamid(), timestampS: T0, mediaId: "m-b", caption: "para B" })] }));
@@ -127,6 +129,8 @@ describe("two stores", () => {
     const a = await seedStore({ members: [{ phone: newPhone(), role: "owner" }] });
     // A member of store B writes to store A: to A, they are simply a customer.
     const b = await seedStore({ members: [{ phone: shared, role: "owner" }] });
+    // A returning customer, already introduced (#30): these checks count replies.
+    for (const store of [a, b]) await seedIntroducedCustomer(store, shared);
     for (const store of [a, b]) {
       await h.post(webhook(store.phoneNumberId, { messages: [textMessage({ from: shared, id: wamid(), timestampS: T0, body: "Hola" })] }));
     }

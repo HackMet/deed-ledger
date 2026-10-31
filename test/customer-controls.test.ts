@@ -1,7 +1,9 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
-import { purgeRequestedDeletions } from "../src/application/customer-deletion";
+import { MEDIA_RECHECK_AFTER_PURGE_MS, purgeRequestedDeletions } from "../src/application/customer-deletion";
+import { gatedHandler } from "../src/application/customer-gate";
 import { createOrderHandler } from "../src/application/order-handler";
+import { placeholderHandler } from "../src/application/placeholder-handler";
 import type { JobHandler, MediaEraser } from "../src/application/ports";
 import { RECEIVED_PLACEHOLDER } from "../src/domain/copy";
 import {
@@ -15,8 +17,9 @@ import {
 } from "../src/domain/customer-controls";
 import { MemoryEngine } from "../src/infrastructure/memory/memory-engine";
 import { LedgerEngine } from "./helpers/engines";
+import { hookDb } from "./helpers/fakes";
 import { type Harness, harness, rows, testEnv } from "./helpers/harness";
-import { newPhone, seedStore, type SeededStore } from "./helpers/seed";
+import { newPhone, seedIntroducedCustomer, seedStore, type SeededStore } from "./helpers/seed";
 import { imageMessage, textMessage, wamid, webhook } from "./helpers/whatsapp";
 
 const SETTLED_MS = 4_000;
@@ -139,6 +142,36 @@ describe("the first message", () => {
     expect(h.log.lines.join("\n")).not.toContain("buenas");
   });
 
+  it("comes first even when the first message is ALTO, and the stop holds", async () => {
+    const store = await storeWithOwner();
+    const h = gatedHarness();
+    const c = customerOf(h, store);
+    await c.say("ALTO");
+    expect(c.sent()).toEqual([introduction(VOICE), stopConfirmed(VOICE)]);
+    expect((await c.row())!.stopped_at_ms).not.toBeNull();
+    // Introduced once: the next message gets only the reminder.
+    await c.say("hola?");
+    expect(c.sent()).toEqual([introduction(VOICE), stopConfirmed(VOICE), STOPPED_REMINDER]);
+  });
+
+  it("comes first even when the first message asks to delete their data", async () => {
+    const store = await storeWithOwner();
+    const h = gatedHarness();
+    const c = customerOf(h, store);
+    await c.say("Borren mis datos");
+    expect(c.sent()).toEqual([introduction(VOICE), DELETION_CONFIRMED]);
+    expect((await c.row())!.deletion_requested_at_ms).not.toBeNull();
+  });
+
+  it("comes first even when the first message asks for Johan, once", async () => {
+    const store = await storeWithOwner();
+    const h = gatedHarness();
+    const c = customerOf(h, store);
+    await c.say("quiero hablar con Johan");
+    await c.say("Hola");
+    expect(c.sent()).toEqual([introduction(VOICE), handoffLine(VOICE), RECEIVED_PLACEHOLDER]);
+  });
+
   it("serves the privacy notice publicly, in Spanish", async () => {
     const h = gatedHarness();
     const response = await h.get("/privacidad");
@@ -243,6 +276,123 @@ describe("ALTO", () => {
     expect(row.deletion_requested_at_ms).toBeNull();
   });
 });
+
+describe("without an engine (the placeholder answers)", () => {
+  const plainHarness = () => harness({ env: testEnv({ PUBLIC_BASE_URL: BASE_URL }) });
+
+  it("introduces, stops on ALTO, reminds once and resumes on SEGUIR", async () => {
+    const store = await storeWithOwner();
+    const h = plainHarness();
+    const c = customerOf(h, store);
+    await c.say("Hola");
+    expect(c.sent()).toEqual([introduction(VOICE), RECEIVED_PLACEHOLDER]);
+    await c.say("ALTO");
+    await c.say("2 libras de arroz");
+    await c.say("y un aceite");
+    expect(c.sent().slice(2)).toEqual([stopConfirmed(VOICE), STOPPED_REMINDER]);
+    await c.say("SEGUIR");
+    await c.say("2 libras de arroz");
+    expect(c.sent().slice(4)).toEqual([RESUMED, RECEIVED_PLACEHOLDER]);
+  });
+
+  it("raises the handoff and deletes on request", async () => {
+    const store = await storeWithOwner();
+    const h = plainHarness();
+    const c = customerOf(h, store);
+    await c.say("Hola");
+    await c.say("Quiero hablar con Johan");
+    expect(c.sent().at(-1)).toBe(handoffLine(VOICE));
+    expect(h.log.fields("pendiente_raised").filter((line) => line.businessId === store.businessId)).toHaveLength(1);
+
+    const id = (await c.row())!.id;
+    await c.say("Borren mis datos");
+    expect(c.sent().at(-1)).toBe(DELETION_CONFIRMED);
+    await h.runCron();
+    const gone = (await rows<{ phone: string | null; deleted_at_ms: number | null }>(`SELECT phone, deleted_at_ms FROM customers WHERE id = ?`, id))[0]!;
+    expect(gone.phone).toBeNull();
+    expect(gone.deleted_at_ms).not.toBeNull();
+  });
+});
+
+describe("ALTO while a job is running", () => {
+  it("the running job's reply is never sent: only the stop's answer goes out", async () => {
+    const store = await storeWithOwner();
+    const phone = newPhone();
+    await seedIntroducedCustomer(store, phone);
+    let h!: Harness;
+    let stopSent = false;
+    h = gatedHarness({
+      handle: async (input) => {
+        if (!stopSent) {
+          // The customer types ALTO while this job (their earlier message) is being handled.
+          stopSent = true;
+          await h.post(webhook(store.phoneNumberId, { messages: [textMessage({ from: phone, id: wamid(), timestampS: nowS(h), body: "ALTO" })] }));
+        }
+        return gatedHandler(gate(h), placeholderHandler).handle(input);
+      },
+    });
+    const c = customerOf(h, store, phone);
+    await c.say("2 libras de arroz");
+    expect(stopSent).toBe(true);
+    expect(c.sent()).toEqual([]);
+
+    h.clock.advance(SETTLED_MS);
+    await h.deliver(h.takeRingsFor(store.businessId));
+    await h.runCron();
+    expect(c.sent()).toEqual([stopConfirmed(VOICE)]);
+    // Nothing queued for them is left to go out later.
+    const pending = await rows(
+      `SELECT o.id FROM outbound_messages o JOIN conversations cv ON cv.id = o.conversation_id
+       WHERE o.business_id = ? AND cv.customer_id = ? AND o.status IN ('pending', 'sending', 'waiting_window')`,
+      store.businessId,
+      (await c.row())!.id,
+    );
+    expect(pending).toEqual([]);
+  });
+});
+
+describe("ALTO while a job is running, when its reply is written", () => {
+  it("a reply the job wrote but hadn't sent before the stop was saved is not sent", async () => {
+    const store = await storeWithOwner();
+    const phone = newPhone();
+    await seedIntroducedCustomer(store, phone);
+    let h!: Harness;
+    let stopSent = false;
+    h = gatedHarness({
+      handle: async (input) => {
+        if (!stopSent) {
+          stopSent = true;
+          await h.post(webhook(store.phoneNumberId, { messages: [textMessage({ from: phone, id: wamid(), timestampS: nowS(h), body: "ALTO" })] }));
+          // Not a burst-closing reply (like the answer to a button tap): it is written even though ALTO arrived.
+          return { replies: [{ body: "Listo, anotado.", ttlMs: 3_600_000 }] };
+        }
+        return gatedHandler(gate(h), placeholderHandler).handle(input);
+      },
+    });
+    const c = customerOf(h, store, phone);
+    h.channel.configured = false; // the reply is queued, not sent, until after the stop is saved
+    await c.say("Confirmar");
+    h.clock.advance(SETTLED_MS);
+    await h.deliver(h.takeRingsFor(store.businessId));
+    expect((await c.row())!.stopped_at_ms).not.toBeNull();
+
+    h.channel.configured = true;
+    await h.runCron();
+    await h.runCron();
+    expect(c.sent()).toEqual([stopConfirmed(VOICE)]);
+  });
+});
+
+function gate(h: Harness) {
+  return {
+    controls: h.deps.customerControls,
+    jobs: h.deps.jobs,
+    pendientes: h.deps.pendientes,
+    clock: h.clock,
+    log: h.log,
+    privacyUrl: VOICE.privacyUrl,
+  };
+}
 
 describe("SEGUIR", () => {
   it("resumes a stopped customer; their next message is answered again", async () => {
@@ -400,6 +550,80 @@ describe("deletion", () => {
     const fresh = await rows<{ id: string }>(`SELECT id FROM customers WHERE business_id = ? AND phone = ?`, store.businessId, a.phone);
     expect(fresh).toHaveLength(1);
     expect(a.sent().slice(before)).toEqual([introduction(VOICE), RECEIVED_PLACEHOLDER]);
+  });
+
+  it("a late webhook whose reads ran before the purge still doesn't recreate the customer", async () => {
+    const store = await storeWithOwner();
+    let armed = false;
+    let h!: Harness;
+    // The purge commits after every read intake makes for the webhook, right before its batch.
+    const db = hookDb(
+      env.DB,
+      /FROM channel_accounts/,
+      async () => {
+        if (!armed) return;
+        armed = false;
+        expect(await purgeRequestedDeletions(h.deps)).toMatchObject({ purged: 1 });
+      },
+      Number.POSITIVE_INFINITY,
+    );
+    h = harness({ db, engine: new MemoryEngine(() => []), env: testEnv({ PUBLIC_BASE_URL: BASE_URL }) });
+    const a = customerOf(h, store);
+    const oldId = wamid();
+    const oldTimestamp = nowS(h) + 1;
+    await a.say("Hola", oldId);
+    await a.say("borren mis datos");
+
+    h.clock.advance(60_000);
+    armed = true;
+    const response = await h.post(webhook(store.phoneNumberId, { messages: [textMessage({ from: a.phone, id: oldId, timestampS: oldTimestamp, body: "Hola" })] }));
+    expect(response.status).toBe(200);
+    expect(armed).toBe(false);
+    expect(h.takeRingsFor(store.businessId)).toEqual([]);
+    expect(await rows(`SELECT id FROM customers WHERE business_id = ? AND phone = ?`, store.businessId, a.phone)).toEqual([]);
+    expect(h.log.events()).toContain("inbound_refused_after_deletion");
+  });
+
+  it("erases a photo that an in-flight job stored after the purge's first erase", async () => {
+    const store = await storeWithOwner();
+    const h = gatedHarness();
+    const a = customerOf(h, store);
+    await a.photo(`m-late-${crypto.randomUUID()}`);
+    await a.say("Borren mis datos");
+    const id = (await a.row())!.id;
+    const [{ object_key: prefix }] = (await rows<{ object_key: string }>(
+      `SELECT m.object_key FROM media_assets m JOIN inbound_messages i ON i.business_id = m.business_id AND i.media_asset_id = m.id
+       JOIN conversations c ON c.id = i.conversation_id WHERE c.customer_id = ?`,
+      id,
+    )) as [{ object_key: string }];
+
+    // A job still downloading writes its copy right after the first erase, before the D1 batch.
+    let landed = 0;
+    const real = h.deps.mediaEraser;
+    const racing: MediaEraser = {
+      erasePrefix: async (tenant, p) => {
+        const erased = await real.erasePrefix(tenant, p);
+        if (landed++ === 0) await env.MEDIA.put(`${p}/late-1`, "late bytes");
+        return erased;
+      },
+    };
+    await purgeRequestedDeletions({ ...h.deps, mediaEraser: racing });
+    expect((await rows<{ phone: string | null }>(`SELECT phone FROM customers WHERE id = ?`, id))[0]!.phone).toBeNull();
+    expect(await objectsUnder(store.businessId, id)).toEqual([]);
+
+    // One that lands later still is erased by the next sweep, while the customer is in the window.
+    await env.MEDIA.put(`${prefix}/late-2`, "late bytes");
+    h.clock.advance(60_000);
+    await h.runCron();
+    expect(await objectsUnder(store.businessId, id)).toEqual([]);
+    expect(h.log.events()).toContain("customer_late_media_erased");
+
+    // After the window the purged customer isn't listed again.
+    h.clock.advance(MEDIA_RECHECK_AFTER_PURGE_MS);
+    expect(await h.deps.customerControls.purgedSince(h.clock.now() - MEDIA_RECHECK_AFTER_PURGE_MS, 100)).not.toContainEqual({
+      businessId: store.businessId,
+      customerId: id,
+    });
   });
 
   it("retries a cleanup that failed, and leaves D1 as it was until the objects are gone", async () => {

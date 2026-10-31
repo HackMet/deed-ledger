@@ -5,7 +5,7 @@ import { COPY } from "../src/domain/replies";
 import { SLOW_NOTICE_AFTER_MS, SLOW_NOTICE_LOOKBACK_MS } from "../src/domain/slow-notice";
 import { hookDb } from "./helpers/fakes";
 import { type Harness, harness, rows } from "./helpers/harness";
-import { newPhone, seedStore } from "./helpers/seed";
+import { newPhone, seedIntroducedCustomer, seedStore } from "./helpers/seed";
 import { textMessage, wamid, webhook } from "./helpers/whatsapp";
 
 // The sweep spans every store and storage is shared within this file, so every assertion is
@@ -178,6 +178,8 @@ describe("the two-minute message", () => {
     const h = harness({ pendientes });
     const phone = newPhone();
     const store = await seedStore({ members: [{ phone, role: "owner" }] });
+    // A returning customer, already introduced (#30): this test counts replies.
+    await seedIntroducedCustomer(store, phone);
     const t0 = h.clock.now();
     await h.post(webhook(store.phoneNumberId, { messages: [textMessage({ from: phone, id: wamid(), timestampS: Math.floor(t0 / 1000), body: "Hola" })] }));
     h.clock.advance(4_000);

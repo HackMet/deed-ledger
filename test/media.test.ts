@@ -4,7 +4,7 @@ import { processConversation } from "../src/application/processor";
 import { COULD_NOT_OPEN_MEDIA, couldNotDownload, RECEIVED_PLACEHOLDER } from "../src/domain/copy";
 import { bytes, FakeMediaSource } from "./helpers/fakes";
 import { conversationOf, expireLease, type Harness, harness, rows } from "./helpers/harness";
-import { newPhone, seedStore } from "./helpers/seed";
+import { newPhone, seedIntroducedCustomer, seedStore } from "./helpers/seed";
 import { imageMessage, wamid, webhook } from "./helpers/whatsapp";
 
 const nowS = (h: Harness) => Math.floor(h.clock.now() / 1000);
@@ -26,6 +26,8 @@ async function assetOf(businessId: string) {
 describe("media downloads", () => {
   it("can't be overwritten by a stale consumer after a takeover during the download (F3)", async () => {
     const { store, phone } = await storeWithOwner();
+    // A returning customer, already introduced (#30): this test counts replies.
+    await seedIntroducedCustomer(store, phone);
     const media = new FakeMediaSource();
     let competitor: Promise<string> | undefined;
     let h!: Harness;

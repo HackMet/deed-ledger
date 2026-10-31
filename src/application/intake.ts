@@ -1,5 +1,4 @@
 import { MEMBER_MESSAGES_PER_HOUR, orderingTimestampS } from "../domain/processing";
-import { refusedAfterDeletion } from "./customer-deletion";
 import { describeError, PermanentWriteError } from "./errors";
 import type { ChannelAccount, ChannelEvent, ConversationRef, Deps, InboundMessageEvent, Tenant } from "./ports";
 
@@ -68,8 +67,6 @@ async function recordCustomerMessage(
   channel: ChannelAccount,
   event: InboundMessageEvent,
 ): Promise<ConversationRef | null> {
-  // A late or retried delivery for a customer deleted since must not create them again (#30).
-  if (await refusedAfterDeletion(deps, tenant, event)) return null;
   const receivedAtMs = deps.clock.now();
   const recorded = await deps.intake.recordCustomerMessage(tenant, {
     channelAccountId: channel.id,
@@ -81,7 +78,14 @@ async function recordCustomerMessage(
     newInboundId: deps.ids.newId(),
     newMediaAssetId: deps.ids.newId(),
     hourlyCap: MEMBER_MESSAGES_PER_HOUR,
+    // A late or retried delivery for a customer deleted since must not create them again (#30).
+    // The batch checks the tombstone itself, so a purge that commits meanwhile still wins.
+    senderHash: await deps.hasher.hash("sender", event.senderPhone),
   });
+  if (recorded.outcome === "refused") {
+    deps.log.info("inbound_refused_after_deletion", { businessId: tenant.businessId });
+    return null;
+  }
   const { outcome } = recorded;
   // IDs only: never the phone number.
   const fields = { businessId: tenant.businessId, conversationId: recorded.conversationId, outcome };
