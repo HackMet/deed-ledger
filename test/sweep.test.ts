@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { couldNotProcess, RECEIVED_PLACEHOLDER } from "../src/domain/copy";
 import { MAX_JOB_ATTEMPTS, STRANDED_AFTER_MS } from "../src/domain/processing";
 import { conversationOf, expireLease, type Harness, harness, rows } from "./helpers/harness";
-import { newPhone, seedStore } from "./helpers/seed";
+import { newPhone, seedIntroducedCustomer, seedStore } from "./helpers/seed";
 import { audioMessage, textMessage, wamid, webhook } from "./helpers/whatsapp";
 
 // The sweep spans every store and storage is shared within this file, so every assertion is
@@ -22,6 +22,8 @@ describe("cron sweep", () => {
   it("recovers a crash between saving and ringing, and the message is processed once", async () => {
     const h = harness();
     const { store, phone } = await storeWithOwner();
+    // A returning customer, already introduced (#30): this test counts replies.
+    await seedIntroducedCustomer(store, phone);
     h.doorbell.failNext = 1; // the save succeeds, the ring is lost
     const response = await h.post(
       webhook(store.phoneNumberId, { messages: [textMessage({ from: phone, id: wamid(), timestampS: nowS(h), body: "Hola" })] }),
@@ -59,6 +61,8 @@ describe("cron sweep", () => {
   it("re-rings a job whose consumer died mid-way, once its lease has expired", async () => {
     const h = harness();
     const { store, phone } = await storeWithOwner();
+    // A returning customer, already introduced (#30): this test counts replies.
+    await seedIntroducedCustomer(store, phone);
     await h.post(webhook(store.phoneNumberId, { messages: [textMessage({ from: phone, id: wamid(), timestampS: nowS(h), body: "Hola" })] }));
     h.doorbell.take();
     // A consumer took the lease, started the job and died.

@@ -5,7 +5,7 @@ import { buildRuntime } from "../src/composition";
 import { MAX_SEND_ATTEMPTS } from "../src/domain/outbox";
 import { WhatsAppCloudChannel } from "../src/integrations/whatsapp/client";
 import { conversationOf, type Harness, harness, OUTLIVES_TEST_MS, rows, testEnv } from "./helpers/harness";
-import { newPhone, seedStore } from "./helpers/seed";
+import { newPhone, seedIntroducedCustomer, seedStore } from "./helpers/seed";
 import { textMessage, wamid, webhook } from "./helpers/whatsapp";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -63,6 +63,8 @@ describe("outbox dispatch", () => {
   it("sends nothing without credentials and keeps the message pending", async () => {
     const h = harness();
     const { store, phone } = await storeWithOwner();
+    // A returning customer, already introduced (#30): this test counts replies.
+    await seedIntroducedCustomer(store, phone);
     await say(h, store.phoneNumberId, phone, "Hola");
     h.channel.configured = false;
     h.clock.advance(4_000);

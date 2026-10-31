@@ -328,11 +328,13 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
 ### Customer controls: first message, ALTO, handoff, deletion (#30)
 
 - `src/application/customer-gate.ts` runs ahead of the order handler (`OrderHandlerDeps.gate`, one call in
-  `createOrderHandler`). Control words come from the typed text only, matched against the whole message in any
+  `createOrderHandler`) and, with no engine wired, ahead of the placeholder handler (`gatedHandler` in
+  `composition.ts`), so the controls work either way. Control words come from the typed text only, matched against the whole message in any
   case or accent (`src/domain/customer-controls.ts`); a model's `stop` or `handoff` reading decides nothing.
 - First message: the introduction (store's assistant, not the owner or a person; `PUBLIC_BASE_URL/privacidad`;
   ALTO; how to reach the owner) goes before the customer's first reply; `customers.introduced_at_ms` is set in
-  the same batch, and only if the reply is written. The notice is `GET /privacidad` (`interfaces/http/privacy.ts`).
+  the same batch, and only if the reply is written. A first message that is itself a control word (ALTO, deletion,
+  handoff) gets the introduction first too, sent as a control answer so dispatch lets it through. The notice is `GET /privacidad` (`interfaces/http/privacy.ts`).
 - ALTO sets `customers.stopped_at_ms` and marks the message and every unread one before it read. Dispatch fails
   any row for a stopped customer unless its kind is `customer_control` (the direct answers to control words);
   while stopped, a message gets one reminder per stop and nothing else. Only SEGUIR resumes.
@@ -342,9 +344,12 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
   confirmation is sent (or 2 hours later): R2 objects under the customer's media prefixes first, then one D1 batch
   that clears phone, name, message text, provider IDs, media references and sent bodies, fails unsent rows, sets
   `deleted_at_ms` and writes `customer_tombstones (business_id, HMAC of the phone)`. A failure leaves D1 as it
-  was and the next minute retries. The customer row stays, empty, for sale and fiado history. Intake drops a
-  message from a tombstoned sender sent at or before the purge (Meta's provider timestamp, covered by the
-  signature); a later message starts a new customer.
+  was and the next minute retries. For 10 minutes after the purge, every sweep erases the prefixes again
+  (idempotent): a job that was already downloading a photo can still store it after the first erase, while no new
+  job can start once the batch has failed the pending ones. The customer row stays, empty, for sale and fiado
+  history. Intake refuses a message from a tombstoned sender sent at or before the purge (Meta's provider timestamp,
+  covered by the signature): every insert of the intake batch requires that no such tombstone exists, so a purge
+  that commits between intake's reads and its batch still wins (rule 6). A later message starts a new customer.
 
 ### The engine boundary and the console (dev only)
 

@@ -121,16 +121,6 @@ export class D1CustomerControlRepository implements CustomerControlRepository {
     );
   }
 
-  async isTombstoned(tenant: Tenant, senderHash: string, sentAtMs: number): Promise<boolean> {
-    const row = await this.db
-      .prepare(
-        `SELECT 1 AS dead FROM customer_tombstones WHERE business_id = ? AND sender_hash = ? AND deleted_at_ms >= ?`,
-      )
-      .bind(tenant.businessId, senderHash, sentAtMs)
-      .first<{ dead: number }>();
-    return row !== null;
-  }
-
   async deletionsDue(readyBeforeMs: number, limit: number): Promise<DeletionDue[]> {
     // Spans stores, like the sweep's stranded-job query: it only collects references, and each
     // purge then runs in its own store's scope. Waits for the confirmation to go out first.
@@ -147,6 +137,18 @@ export class D1CustomerControlRepository implements CustomerControlRepository {
          LIMIT ?`,
       )
       .bind(readyBeforeMs, limit)
+      .all<{ business_id: string; id: string }>();
+    return results.map((row) => ({ businessId: row.business_id, customerId: row.id }));
+  }
+
+  async purgedSince(sinceMs: number, limit: number): Promise<DeletionDue[]> {
+    // Spans stores like deletionsDue; each erase then runs in its own store's scope.
+    const { results } = await this.db
+      .prepare(
+        `SELECT business_id, id FROM customers WHERE deleted_at_ms IS NOT NULL AND deleted_at_ms >= ?
+         ORDER BY deleted_at_ms LIMIT ?`,
+      )
+      .bind(sinceMs, limit)
       .all<{ business_id: string; id: string }>();
     return results.map((row) => ({ businessId: row.business_id, customerId: row.id }));
   }

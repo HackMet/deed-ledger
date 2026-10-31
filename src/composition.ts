@@ -6,6 +6,7 @@
 import type { Engine } from "./application/engine";
 import { type BurstReader as OrderBurstReader, createOrderHandler } from "./application/order-handler";
 import { type BurstMediaResolver, createOrderReading, readingSourceOf, storedMediaResolver } from "./application/order-reading";
+import { gatedHandler } from "./application/customer-gate";
 import { placeholderHandler } from "./application/placeholder-handler";
 import type { Deps, Pendientes } from "./application/ports";
 import type { MediaEraser } from "./application/ports";
@@ -129,7 +130,9 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
           fetch: (input, init) => fetch(input, init),
         }),
       mediaStore,
-      jobHandler: overrides.jobHandler ?? orderHandler ?? placeholderHandler,
+      // Without an engine the placeholder answers, behind the same gate: ALTO, deletion and handoff
+      // work, and the first reply carries the introduction (#30).
+      jobHandler: overrides.jobHandler ?? orderHandler ?? gatedHandler(gate, placeholderHandler),
       // The second claim check reads the records through the engine; none wired, no claim holds.
       claimVerifier: engine,
       pendientes,

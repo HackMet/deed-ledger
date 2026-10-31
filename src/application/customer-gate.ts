@@ -9,7 +9,7 @@
  * - An explicit deletion request ("borren mis datos") stops the customer and marks them for the
  *   purge (customer-deletion.ts), which runs once the confirmation is out. It is never inferred.
  * - A new customer's first reply starts with who this is, the privacy notice, ALTO and how to
- *   reach the owner.
+ *   reach the owner, also when that first message is a control word (ALTO, deletion, handoff).
  *
  * The control word's own message, and for ALTO and deletion every unread message before it, are
  * marked read, so a later reading never acts on them. Direct answers to control words carry
@@ -36,6 +36,7 @@ import type {
   CustomerControlRepository,
   CustomerControlState,
   Deps,
+  JobHandler,
   JobInput,
   JobOutcome,
   JobRepository,
@@ -92,6 +93,11 @@ export async function gateCustomerJob(
   return withIntroduction(gate, input, state, outcome);
 }
 
+/** Any handler behind the gate: the order handler wraps itself; the placeholder is wrapped here. */
+export function gatedHandler(gate: CustomerGateDeps, handler: JobHandler): JobHandler {
+  return { handle: (input) => gateCustomerJob(gate, input, () => handler.handle(input)) };
+}
+
 type Decision = { readonly label: string; readonly outcome: JobOutcome } | null;
 
 async function decide(
@@ -108,14 +114,21 @@ async function decide(
     // Their data is on its way out: nothing more is answered or read.
     return { label: "deletion_pending", outcome: { replies: [], commits: [readThis] } };
   }
+  // A control word as the very first message still gets the introduction first (#30). It goes out
+  // as a control answer, so dispatch sends it even though ALTO or deletion stops the customer.
+  const first = state.introducedAtMs === null;
+  const intro = first ? [control(introduction(voice))] : [];
+  const introduced = first ? [gate.controls.markIntroducedCommit(lease, state.customerId, nowMs, null)] : [];
+
   if (word === "delete") {
     return {
       label: "deletion_requested",
       outcome: {
-        replies: [control(DELETION_CONFIRMED)],
+        replies: [...intro, control(DELETION_CONFIRMED)],
         commits: [
           gate.controls.requestDeletionCommit(lease, state.customerId, nowMs),
           await readEverythingUnread(gate, { lease, job }, nowMs),
+          ...introduced,
         ],
       },
     };
@@ -128,13 +141,9 @@ async function decide(
       customerId: state.customerId,
       inboundId: job.id,
     });
-    const first = state.introducedAtMs === null && state.stoppedAtMs === null;
     return {
       label: "handoff",
-      outcome: {
-        replies: [...(first ? [introReply(voice)] : []), control(handoffLine(voice))],
-        commits: [readThis, ...(first ? [gate.controls.markIntroducedCommit(lease, state.customerId, nowMs, null)] : [])],
-      },
+      outcome: { replies: [...intro, control(handoffLine(voice))], commits: [readThis, ...introduced] },
     };
   }
   if (state.stoppedAtMs !== null) {
@@ -159,8 +168,12 @@ async function decide(
     return {
       label: "stopped",
       outcome: {
-        replies: [control(stopConfirmed(voice))],
-        commits: [gate.controls.stopCommit(lease, state.customerId, nowMs), await readEverythingUnread(gate, { lease, job }, nowMs)],
+        replies: [...intro, control(stopConfirmed(voice))],
+        commits: [
+          gate.controls.stopCommit(lease, state.customerId, nowMs),
+          await readEverythingUnread(gate, { lease, job }, nowMs),
+          ...introduced,
+        ],
       },
     };
   }

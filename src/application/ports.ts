@@ -314,9 +314,15 @@ export interface CustomerMessageInput {
   readonly newInboundId: string;
   readonly newMediaAssetId: string;
   readonly hourlyCap: number;
+  /**
+   * The sender's keyed hash (`hasher.hash("sender", phone)`): the batch stores nothing when this
+   * sender's customer was deleted after the message was sent (#30).
+   */
+  readonly senderHash: string;
 }
 
-export type CustomerMessageOutcome = "new" | "duplicate" | "capped";
+/** "refused": the sender's customer was deleted after this message was sent; nothing was stored. */
+export type CustomerMessageOutcome = "new" | "duplicate" | "capped" | "refused";
 
 export interface UnknownMessageInput {
   readonly channelAccountId: string;
@@ -342,7 +348,10 @@ export interface IntakeRepository {
   recordCustomerMessage(
     tenant: Tenant,
     input: CustomerMessageInput,
-  ): Promise<{ readonly conversationId: string; readonly customerId: string; readonly outcome: CustomerMessageOutcome }>;
+  ): Promise<
+    | { readonly conversationId: string; readonly customerId: string; readonly outcome: Exclude<CustomerMessageOutcome, "refused"> }
+    | { readonly outcome: "refused" }
+  >;
   /**
    * One batch: the hashed record (unless over the daily cap) and the sender's notice. A notice is
    * created or re-opened unless one was sent in the last 24 hours. Returns the notice to send now.
@@ -835,8 +844,6 @@ export interface CustomerControlRepository {
   markStopRemindedCommit(tenant: Tenant, customerId: string, nowMs: number): Commit;
   /** An explicit deletion request: stops the customer and marks them for the purge. */
   requestDeletionCommit(tenant: Tenant, customerId: string, nowMs: number): Commit;
-  /** Intake: a message from this sender, sent at that time, belongs to a customer deleted after it. */
-  isTombstoned(tenant: Tenant, senderHash: string, sentAtMs: number): Promise<boolean>;
   /**
    * Customers due for the purge, across stores (the sweep, like findStrandedConversations): asked
    * at or before `readyBeforeMs`, or whose conversations have nothing left to send.
@@ -849,6 +856,11 @@ export interface CustomerControlRepository {
    * Only for a customer whose deletion was requested and not finished. False when there was none.
    */
   purge(tenant: Tenant, customerId: string, senderHash: string | null, nowMs: number): Promise<boolean>;
+  /**
+   * Customers purged at or after `sinceMs`, across stores: the sweep erases their media prefixes
+   * again, for an upload that was in flight during the purge.
+   */
+  purgedSince(sinceMs: number, limit: number): Promise<DeletionDue[]>;
 }
 
 /** Deletes stored objects. Used only by the deletion purge. */

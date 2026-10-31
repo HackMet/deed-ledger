@@ -6,17 +6,28 @@
  * 1. R2: every object under the customer's media prefixes.
  * 2. D1, one batch: phone, name, message text, provider IDs, media references, the bodies we sent
  *    them; unsent rows fail; a tombstone keyed by the phone's keyed hash, never the phone.
+ * 3. R2 again, on every sweep for MEDIA_RECHECK_AFTER_PURGE_MS: a job that was already downloading
+ *    a photo when step 1 ran can still write it afterwards. Once the D1 batch has run, no new job
+ *    starts (pending ones are failed) and the media IDs are gone, so only uploads already in flight
+ *    can land, and they finish within a lease or two. Erasing is idempotent: an empty prefix costs
+ *    one list call.
  *
  * The customer row stays, empty, so sale and fiado amounts that point at it keep their history
  * without the person. A webhook for a message sent before the purge (a late delivery or Meta's
- * retry) is dropped by `refusedAfterDeletion`; a message sent after it starts a new customer.
+ * retry) is refused inside the intake batch (intake-repository); a message sent after it starts a
+ * new customer.
  */
 import { describeError } from "./errors";
-import type { Deps, InboundMessageEvent, Tenant } from "./ports";
+import type { Deps, Tenant } from "./ports";
 
 /** How long a purge waits for the confirmation to go out before it runs anyway. */
 export const DELETION_ACK_GRACE_MS = 2 * 60 * 60 * 1000;
 const DELETIONS_PER_SWEEP = 20;
+/**
+ * How long after a purge its prefixes are erased again: well past the job lease (LEASE_TTL_MS, one
+ * minute) and the media download timeout, so an upload that was in flight has landed by then.
+ */
+export const MEDIA_RECHECK_AFTER_PURGE_MS = 10 * 60 * 1000;
 
 export interface PurgeSummary {
   readonly purged: number;
@@ -41,17 +52,23 @@ export async function purgeRequestedDeletions(deps: Deps): Promise<PurgeSummary>
     }
   }
   if (due.length > 0) deps.log.info("customer_purge_done", { count: purged, outcome: `failed:${failed}` });
+  await eraseLateUploads(deps);
   return { purged, failed };
 }
 
-/**
- * Intake: true when this sender's customer in this store was deleted after the message was sent.
- * Uses the provider's timestamp, which the webhook signature covers: the only clock that says when
- * a late or retried delivery was really sent.
- */
-export async function refusedAfterDeletion(deps: Deps, tenant: Tenant, event: InboundMessageEvent): Promise<boolean> {
-  const senderHash = await deps.hasher.hash("sender", event.senderPhone);
-  const refused = await deps.customerControls.isTombstoned(tenant, senderHash, event.providerTimestampS * 1000);
-  if (refused) deps.log.info("inbound_refused_after_deletion", { businessId: tenant.businessId });
-  return refused;
+/** Step 3: erases recently purged customers' prefixes again (including the ones purged just now). */
+async function eraseLateUploads(deps: Deps): Promise<void> {
+  const recent = await deps.customerControls.purgedSince(deps.clock.now() - MEDIA_RECHECK_AFTER_PURGE_MS, DELETIONS_PER_SWEEP);
+  for (const customer of recent) {
+    const tenant: Tenant = { businessId: customer.businessId };
+    try {
+      const { mediaPrefixes } = await deps.customerControls.deletionMedia(tenant, customer.customerId);
+      let erased = 0;
+      for (const prefix of mediaPrefixes) erased += await deps.mediaEraser.erasePrefix(tenant, prefix);
+      if (erased > 0) deps.log.warn("customer_late_media_erased", { businessId: tenant.businessId, count: erased });
+    } catch (error) {
+      // The next sweep tries again while the customer is inside the window.
+      deps.log.error("customer_late_media_erase_failed", { businessId: tenant.businessId, reason: describeError(error) });
+    }
+  }
 }

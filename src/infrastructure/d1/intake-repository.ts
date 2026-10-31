@@ -29,11 +29,19 @@ export class D1IntakeRepository implements IntakeRepository {
   async recordCustomerMessage(
     tenant: Tenant,
     input: CustomerMessageInput,
-  ): Promise<{ conversationId: string; customerId: string; outcome: CustomerMessageOutcome }> {
+  ): Promise<
+    | { conversationId: string; customerId: string; outcome: Exclude<CustomerMessageOutcome, "refused"> }
+    | { outcome: "refused" }
+  > {
     const { event } = input;
     const b = tenant.businessId;
     const phone = event.senderPhone;
     const conversationParams = [b, input.channelAccountId, b, phone];
+    // The tombstone check runs inside the batch, so a purge that commits after an earlier read
+    // can't be undone by this message: every insert below requires it (#30).
+    const notDeleted = `NOT EXISTS (SELECT 1 FROM customer_tombstones t
+                                    WHERE t.business_id = ? AND t.sender_hash = ? AND t.deleted_at_ms >= ?)`;
+    const notDeletedParams = [b, input.senderHash, event.providerTimestampS * 1000];
     // Admission, checked by the media and message inserts themselves: the message isn't stored yet,
     // and the conversation is under its hourly cap. Both inserts see the same answer (one batch is
     // one transaction), so a message that isn't admitted leaves no media asset behind either.
@@ -41,29 +49,31 @@ export class D1IntakeRepository implements IntakeRepository {
       AND NOT EXISTS (SELECT 1 FROM inbound_messages d
                       WHERE d.business_id = c.business_id AND d.provider = 'whatsapp' AND d.provider_message_id = ?)
       AND (SELECT COUNT(*) FROM inbound_messages r
-           WHERE r.business_id = c.business_id AND r.conversation_id = c.id AND r.received_at_ms > ?) < ?`;
+           WHERE r.business_id = c.business_id AND r.conversation_id = c.id AND r.received_at_ms > ?) < ?
+      AND ${notDeleted}`;
     const admittedParams = [
       ...conversationParams,
       event.providerMessageId,
       input.receivedAtMs - HOUR_MS,
       input.hourlyCap,
+      ...notDeletedParams,
     ];
 
     const statements: D1PreparedStatement[] = [
       // Whoever writes to the store's number is its customer: one record per store and phone.
       this.db
         .prepare(
-          `INSERT INTO customers (id, business_id, phone, created_at_ms) VALUES (?, ?, ?, ?)
+          `INSERT INTO customers (id, business_id, phone, created_at_ms) SELECT ?, ?, ?, ? WHERE ${notDeleted}
            ON CONFLICT (business_id, phone) DO NOTHING`,
         )
-        .bind(input.newCustomerId, b, phone, input.receivedAtMs),
+        .bind(input.newCustomerId, b, phone, input.receivedAtMs, ...notDeletedParams),
       this.db
         .prepare(
           `INSERT INTO conversations (id, business_id, channel_account_id, customer_id, created_at_ms)
-           SELECT ?, cu.business_id, ?, cu.id, ? FROM customers cu WHERE cu.business_id = ? AND cu.phone = ?
+           SELECT ?, cu.business_id, ?, cu.id, ? FROM customers cu WHERE cu.business_id = ? AND cu.phone = ? AND ${notDeleted}
            ON CONFLICT (business_id, channel_account_id, customer_id) DO NOTHING`,
         )
-        .bind(input.newConversationId, input.channelAccountId, input.receivedAtMs, b, phone),
+        .bind(input.newConversationId, input.channelAccountId, input.receivedAtMs, b, phone, ...notDeletedParams),
     ];
     if (event.media !== null) {
       statements.push(
@@ -126,18 +136,28 @@ export class D1IntakeRepository implements IntakeRepository {
         .prepare(
           `SELECT c.id AS conversation_id, c.customer_id,
                   (SELECT i.id FROM inbound_messages i
-                   WHERE i.business_id = ? AND i.provider = 'whatsapp' AND i.provider_message_id = ?) AS inbound_id
-           FROM conversations c WHERE ${SENDER_CONVERSATION}`,
+                   WHERE i.business_id = ? AND i.provider = 'whatsapp' AND i.provider_message_id = ?) AS inbound_id,
+                  NOT (${notDeleted}) AS refused
+           FROM (SELECT 1) LEFT JOIN conversations c ON ${SENDER_CONVERSATION}`,
         )
-        .bind(b, event.providerMessageId, ...conversationParams),
+        .bind(b, event.providerMessageId, ...notDeletedParams, ...conversationParams),
     );
 
-    const results = await this.batch<{ conversation_id: string; customer_id: string; inbound_id: string | null }>(
-      statements,
-    );
+    const results = await this.batch<{
+      conversation_id: string | null;
+      customer_id: string | null;
+      inbound_id: string | null;
+      refused: number;
+    }>(statements);
     const row = results.at(-1)?.results[0];
-    if (row === undefined) throw new Error("conversation missing after intake batch");
-    const outcome: CustomerMessageOutcome =
+    if (row !== undefined && row.refused === 1) {
+      // Nothing above was written (each insert carries the same condition, in the same transaction).
+      return { outcome: "refused" };
+    }
+    if (row === undefined || row.conversation_id === null || row.customer_id === null) {
+      throw new Error("conversation missing after intake batch");
+    }
+    const outcome: Exclude<CustomerMessageOutcome, "refused"> =
       row.inbound_id === input.newInboundId ? "new" : row.inbound_id === null ? "capped" : "duplicate";
     return { conversationId: row.conversation_id, customerId: row.customer_id, outcome };
   }
