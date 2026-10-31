@@ -501,6 +501,64 @@ export interface ConsoleAuthRepository {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Model provider (Muse Spark) and the per-store spend cap
+
+/** A user-content part. Message text, photos and transcripts only ever travel as these. */
+export type ModelContentPart =
+  | { readonly type: "text"; readonly text: string }
+  | { readonly type: "image"; readonly mimeType: string; readonly bytes: ArrayBuffer };
+
+/** One structured-output call: a fixed system prompt, untrusted user content, a strict schema. */
+export interface ModelRequest {
+  readonly system: string;
+  readonly user: readonly ModelContentPart[];
+  readonly schemaName: string;
+  readonly schema: { readonly [key: string]: unknown };
+}
+
+/**
+ * rejected: the provider refused the request (4xx other than 429), so nothing was spent.
+ * unavailable: rate limited, server error, timeout or network failure; spend unknown.
+ * invalid_json: the call succeeded but the content wasn't JSON.
+ */
+export type ModelResult =
+  | {
+      readonly ok: true;
+      readonly json: unknown;
+      readonly latencyMs: number;
+      readonly inputTokens: number | null;
+      readonly outputTokens: number | null;
+    }
+  | {
+      readonly ok: false;
+      readonly error: "rejected" | "unavailable" | "invalid_json";
+      readonly status: number | null;
+      readonly latencyMs: number;
+      readonly inputTokens: number | null;
+      readonly outputTokens: number | null;
+    };
+
+export interface ModelProvider {
+  /** A standard model ID; `*-contributor` IDs are refused when the provider is built. */
+  readonly model: string;
+  complete(request: ModelRequest): Promise<ModelResult>;
+}
+
+export interface SpendReservation extends Tenant {
+  /** The store's day the spend counts against, YYYY-MM-DD. */
+  readonly day: string;
+  readonly microUsd: number;
+}
+
+/** A per-store daily spend cap, in micro-dollars (1,000,000 is US$1). */
+export interface SpendLedger {
+  /** Atomically adds `microUsd` to the store's day, only if the day stays within `capMicroUsd`. */
+  reserve(tenant: Tenant, nowMs: number, microUsd: number, capMicroUsd: number): Promise<SpendReservation | null>;
+  /** Replaces a reservation's estimate with what the call actually cost. */
+  settle(reservation: SpendReservation, actualMicroUsd: number): Promise<void>;
+}
+
+// ---------------------------------------------------------------------------------------------
 
 export interface Deps {
   readonly clock: Clock;

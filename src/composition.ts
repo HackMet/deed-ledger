@@ -21,6 +21,10 @@ import { consoleLogger, randomIds, realSleep, systemClock } from "./infrastructu
 import { WhatsAppCloudChannel } from "./integrations/whatsapp/client";
 import { unavailableMediaSource } from "./integrations/whatsapp/media";
 import { SEND_TIMEOUT_MS } from "./domain/outbox";
+import { BurstReader } from "./application/perception/reader";
+import type { Clock, Logger } from "./application/ports";
+import { D1SpendLedger } from "./infrastructure/d1/spend-repository";
+import { MuseSparkProvider } from "./integrations/meta/spark";
 
 export interface Runtime {
   readonly config: Config;
@@ -70,4 +74,30 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
       jobHandler: overrides.jobHandler ?? placeholderHandler,
     },
   };
+}
+
+/**
+ * The burst reader: Muse Spark behind the per-store daily spend cap in D1. With MODEL_API_KEY blank
+ * (tests, a fresh checkout) every call is refused before the network. Tests pass `fetch` with
+ * recorded responses.
+ */
+export function buildBurstReader(
+  env: Env,
+  deps: { readonly clock: Clock; readonly log: Logger },
+  overrides: {
+    readonly db?: D1Database;
+    readonly fetch?: (input: string, init: RequestInit) => Promise<Response>;
+    readonly dailyCapMicroUsd?: number;
+  } = {},
+): BurstReader {
+  return new BurstReader({
+    provider: new MuseSparkProvider({
+      apiKey: env.MODEL_API_KEY ?? "",
+      fetch: overrides.fetch ?? ((input, init) => fetch(input, init)),
+    }),
+    spend: new D1SpendLedger(overrides.db ?? env.DB),
+    clock: deps.clock,
+    log: deps.log,
+    ...(overrides.dailyCapMicroUsd === undefined ? {} : { dailyCapMicroUsd: overrides.dailyCapMicroUsd }),
+  });
 }

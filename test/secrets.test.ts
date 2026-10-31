@@ -9,6 +9,7 @@ describe("test environment", () => {
     expect(env.WHATSAPP_TOKEN).toBe("");
     expect(env.SENDER_HASH_SALT).toBe("");
     expect(env.LINK_SIGNING_SECRET).toBe("");
+    expect(env.MODEL_API_KEY).toBe("");
   });
 
   it("builds a WhatsApp channel that can't send", () => {
@@ -18,7 +19,7 @@ describe("test environment", () => {
 
   it("applies every migration to the local D1", async () => {
     const { results } = await env.DB.prepare(`SELECT name FROM d1_migrations ORDER BY id`).all<{ name: string }>();
-    expect(results.map((row) => row.name)).toEqual(["0001_tenancy.sql", "0002_messaging.sql", "0003_console_auth.sql"]);
+    expect(results.map((row) => row.name)).toEqual(["0001_tenancy.sql", "0002_messaging.sql", "0003_console_auth.sql", "0007_model_spend.sql"]);
   });
 
   it("creates the final schema directly: every outbound row has an expiry and a send order", async () => {
