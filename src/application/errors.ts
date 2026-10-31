@@ -76,3 +76,16 @@ export class FactRefusedError extends Error {
     super(`fact refused: ${reason}`);
   }
 }
+
+/**
+ * An order write refused inside its batch: the order moved since the engine read it (another
+ * version, another state), or the customer opened an order meanwhile. Nothing was applied. A race,
+ * never the first answer (D-42): the retry's read produces the outcome.
+ */
+export class OrderMovedError extends Error {
+  override readonly name = "OrderMovedError";
+
+  constructor(readonly reason: "order_moved" | "open_order_exists") {
+    super(`order write refused: ${reason}`);
+  }
+}

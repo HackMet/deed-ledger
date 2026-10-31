@@ -24,6 +24,7 @@ describe("test environment", () => {
       "0003_console_auth.sql",
       "0004_ledger.sql",
       "0005_orders.sql",
+      "0006_order_line_details.sql",
     ]);
   });
 
