@@ -107,3 +107,12 @@ export class ReadingFailedError extends Error {
     super(`the burst could not be read: ${reason}`);
   }
 }
+
+/** A console notice's conversation isn't the store's (or is gone): the action saves nothing. */
+export class NoticeConversationMissingError extends Error {
+  override readonly name = "NoticeConversationMissingError";
+
+  constructor() {
+    super("the notice's conversation is not in this store");
+  }
+}

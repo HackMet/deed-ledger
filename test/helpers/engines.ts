@@ -1,9 +1,10 @@
 import { env } from "cloudflare:workers";
-import type { CustomerContext, Engine, EngineResult } from "../../src/application/engine";
+import type { CustomerContext, Engine, EngineResult, MemberContext } from "../../src/application/engine";
 import type { BurstReader, CustomerContextWithName } from "../../src/application/order-handler";
-import type { JobHandler, Tenant } from "../../src/application/ports";
+import type { BatchGuard, JobHandler, Tenant } from "../../src/application/ports";
+import type { ActionEnvelope, ConsoleAction } from "../../src/domain/contract/actions";
 import type { Observation } from "../../src/domain/contract/observation";
-import type { EngineOutcome } from "../../src/domain/contract/outcomes";
+import type { CustomerNotice, EngineOutcome } from "../../src/domain/contract/outcomes";
 import { createOrderHandler } from "../../src/application/order-handler";
 import type { Harness } from "./harness";
 
@@ -109,4 +110,54 @@ export function lateOrderHandler(engine: Engine, reader: BurstReader | null = li
       });
     },
   };
+}
+
+/**
+ * A fake engine for console actions whose decisions are real commits: each action saves one row in
+ * test_burst_lines (job_id = the operation key) behind a guard that holds unless `failGuard` is
+ * set, and returns `notices` as they are, every time (no operation-key memory of its own).
+ */
+export class CommitEngine implements Engine {
+  failGuard = false;
+  notices: readonly CustomerNotice[] = [];
+
+  async onBurst(): Promise<EngineResult> {
+    return { outcome: { type: "nothing" }, notices: [], commits: [] };
+  }
+
+  async onCustomerAction(): Promise<EngineResult> {
+    return { outcome: { type: "nothing" }, notices: [], commits: [] };
+  }
+
+  async onConsoleAction(context: MemberContext, envelope: ActionEnvelope<ConsoleAction>): Promise<EngineResult> {
+    const guard: BatchGuard = {
+      holdsSql: this.failGuard ? `SELECT NULL` : `SELECT 1`,
+      params: [],
+      error: () => new StaleOrderError(),
+    };
+    const statement = env.DB.prepare(`INSERT INTO test_burst_lines (business_id, job_id, text) VALUES (?, ?, ?)`).bind(
+      context.businessId,
+      envelope.operationKey,
+      envelope.action.type,
+    );
+    const order = this.notices.find((n) => "order" in n.notice);
+    return {
+      outcome: { type: "action_saved", order: order !== undefined && "order" in order.notice ? order.notice.order : null },
+      notices: this.notices,
+      commits: [{ guards: [guard], statements: [statement] }],
+    };
+  }
+
+  async verifyClaims(_tenant: Tenant, claims: readonly unknown[]): Promise<readonly boolean[]> {
+    return claims.map(() => true);
+  }
+
+  async preparationList() {
+    return [];
+  }
+}
+
+/** What a commit guard of CommitEngine throws when it doesn't hold. */
+export class StaleOrderError extends Error {
+  override readonly name = "StaleOrderError";
 }

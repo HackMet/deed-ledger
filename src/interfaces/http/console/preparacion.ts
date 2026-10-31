@@ -5,7 +5,10 @@
  */
 import type { Context, Hono } from "hono";
 import { html } from "hono/html";
+import { type ConsoleActionResult, runConsoleAction } from "../../../application/console-actions";
+import { dispatchOutbox } from "../../../application/dispatch";
 import type { MemberContext } from "../../../application/engine";
+import { describeError } from "../../../application/errors";
 import type { ActionEnvelope, ConsoleAction, LineMark } from "../../../domain/contract/actions";
 import { formatLempiras } from "../../../domain/contract/numbers";
 import type { EngineOutcome, OrderLineView, OrderView, PreparationCard } from "../../../domain/contract/outcomes";
@@ -21,6 +24,7 @@ const NOTICES = {
   estado: "Ese botón ya no aplica. La lista ya está al día.",
   permiso: "Eso lo confirma el dueño.",
   falta: "Ese pedido ya no está en la lista.",
+  guardar: "No se pudo guardar. Revisá el pedido y tocá otra vez.",
 } as const;
 type NoticeKey = keyof typeof NOTICES;
 
@@ -60,10 +64,26 @@ export function preparacionScreen(app: Hono<ConsoleEnv>) {
     const member = memberContext(c);
     const envelope = parseAction(await c.req.parseBody(), member);
     if (envelope === null) return c.text("Bad request", 400);
-    const { outcome } = await engine.onConsoleAction(member, envelope);
-    deps.log.info("console_action", { businessId: member.businessId, outcome: outcome.type });
-    const notice = noticeFor(outcome);
     const anchor = "orderId" in envelope.action ? `#${envelope.action.orderId}` : "";
+    let saved: ConsoleActionResult;
+    try {
+      saved = await runConsoleAction(deps, engine, member, envelope);
+    } catch (error) {
+      // Nothing was saved and no message queued: the list shows what holds now.
+      deps.log.warn("console_action_not_saved", { businessId: member.businessId, reason: describeError(error) });
+      return c.redirect(`${PATH}?aviso=guardar${anchor}`, 303);
+    }
+    const { outcome, dispatch } = saved;
+    deps.log.info("console_action", { businessId: member.businessId, outcome: outcome.type, count: dispatch.length });
+    // The customer's message goes out after the response; the cron sweep retries what doesn't.
+    for (const conversation of dispatch) {
+      c.executionCtx.waitUntil(
+        dispatchOutbox(deps, { limit: 10, conversation }).catch((error: unknown) => {
+          deps.log.error("outbox_dispatch_failed", { ...conversation, reason: describeError(error) });
+        }),
+      );
+    }
+    const notice = noticeFor(outcome);
     return c.redirect(`${PATH}${notice === null ? "" : `?aviso=${notice}`}${anchor}`, 303);
   });
 }

@@ -1,4 +1,11 @@
-import type { Logger, PendienteItem, Pendientes, SlowReplyPendiente, Tenant } from "../application/ports";
+import type {
+  Logger,
+  NoticeWaitingPendiente,
+  PendienteItem,
+  Pendientes,
+  SlowReplyPendiente,
+  Tenant,
+} from "../application/ports";
 
 /**
  * Stands in for Pendientes until contract gap (c) is agreed: the item is only logged (IDs and
@@ -7,7 +14,17 @@ import type { Logger, PendienteItem, Pendientes, SlowReplyPendiente, Tenant } fr
 export class LoggingPendientes implements Pendientes {
   constructor(private readonly log: Logger) {}
 
-  async raise(tenant: Tenant, item: PendienteItem | SlowReplyPendiente): Promise<void> {
+  async raise(tenant: Tenant, item: PendienteItem | SlowReplyPendiente | NoticeWaitingPendiente): Promise<void> {
+    if (item.kind === "notice_waiting_window") {
+      this.log.warn("pendiente_raised", {
+        businessId: tenant.businessId,
+        conversationId: item.conversationId,
+        outboxId: item.outboxId,
+        reason: item.kind,
+        outcome: item.notice,
+      });
+      return;
+    }
     if (item.kind === "slow_reply") {
       this.log.warn("pendiente_raised", {
         businessId: tenant.businessId,
