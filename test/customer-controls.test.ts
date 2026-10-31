@@ -172,6 +172,16 @@ describe("the first message", () => {
     expect(c.sent()).toEqual([introduction(VOICE), handoffLine(VOICE), RECEIVED_PLACEHOLDER]);
   });
 
+  it("names the owner as this store's console names them", async () => {
+    const store = await storeWithOwner();
+    // The store's own name for its owner (0015) wins over the operator's users.display_name.
+    await env.DB.prepare(`UPDATE memberships SET display_name = 'Mario Díaz' WHERE business_id = ?`).bind(store.businessId).run();
+    const h = gatedHarness();
+    const c = customerOf(h, store);
+    await c.say("Hola");
+    expect(c.sent()[0]).toBe(introduction({ ...VOICE, ownerName: "Mario" }));
+  });
+
   it("serves the privacy notice publicly, in Spanish", async () => {
     const h = gatedHarness();
     const response = await h.get("/privacidad");

@@ -92,7 +92,7 @@ function intro() {
   console.log(`${color.dim}Para que la IA lea pedidos, arrancá el simulador con: npm run dev:sim -- --ai --vars ../hackathon/.dev.vars${color.off}\n`);
 }
 
-lastSeq = (readReplies(0) ?? []).reduce((max, row) => Math.max(max, row.seq), 0);
+lastSeq = (repliesSince(0) ?? []).reduce((max, row) => Math.max(max, row.seq), 0);
 intro();
 const rl = createInterface({ input: process.stdin, output: process.stdout, prompt: "\x1b[32mVos:\x1b[0m " });
 rl.prompt();

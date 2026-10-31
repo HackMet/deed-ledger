@@ -36,7 +36,7 @@ export function empleadosScreen(app: Hono<ConsoleEnv>) {
       shell(c, {
         title: "Empleados",
         path: PATH,
-        notice: notice !== undefined && notice in NOTICES ? NOTICES[notice as NoticeKey] : null,
+        notice: notice !== undefined && Object.hasOwn(NOTICES, notice) ? NOTICES[notice as NoticeKey] : null,
         style: STYLE,
         body: html`${inviteForm(csrf)}${members.map((m) => memberCard(m, csrf))}`,
       }),

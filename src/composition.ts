@@ -3,14 +3,25 @@
  * Tests pass overrides for providers (channel, doorbell, media source, clock) and keep the real
  * D1 repositories.
  */
+import { gatedHandler } from "./application/customer-gate";
 import type { Engine } from "./application/engine";
 import { type BurstReader as OrderBurstReader, createOrderHandler } from "./application/order-handler";
 import { type BurstMediaResolver, createOrderReading, readingSourceOf, storedMediaResolver } from "./application/order-reading";
-import { gatedHandler } from "./application/customer-gate";
+import { BurstReader } from "./application/perception/reader";
 import { placeholderHandler } from "./application/placeholder-handler";
-import type { Deps, Pendientes } from "./application/ports";
-import type { MediaEraser } from "./application/ports";
+import type {
+  AudioDecoder,
+  Clock,
+  Deps,
+  Logger,
+  MediaEraser,
+  MediaStore,
+  ModelProvider,
+  Pendientes,
+  Transcriber,
+} from "./application/ports";
 import { PRIVACY_PATH } from "./domain/customer-controls";
+import { SEND_TIMEOUT_MS } from "./domain/outbox";
 import { type Config, readConfig } from "./infrastructure/config";
 import { D1ConsoleAuthRepository } from "./infrastructure/d1/console-auth-repository";
 import { D1CustomerControlRepository } from "./infrastructure/d1/customer-control-repository";
@@ -18,6 +29,7 @@ import { D1CustomerRepository } from "./infrastructure/d1/customer-repository";
 import { D1IntakeRepository } from "./infrastructure/d1/intake-repository";
 import { D1JobRepository } from "./infrastructure/d1/job-repository";
 import { D1OutboxRepository } from "./infrastructure/d1/outbox-repository";
+import { D1SpendLedger } from "./infrastructure/d1/spend-repository";
 import { D1TenancyRepository } from "./infrastructure/d1/tenancy-repository";
 import { HmacKeyedHasher } from "./infrastructure/keyed-hasher";
 import { LoggingPendientes } from "./infrastructure/logging-pendientes";
@@ -28,15 +40,11 @@ import { QueueDoorbell } from "./infrastructure/queue-doorbell";
 import { R2MediaEraser } from "./infrastructure/r2-media-eraser";
 import { R2MediaStore } from "./infrastructure/r2-media-store";
 import { consoleLogger, randomIds, realSleep, systemClock } from "./infrastructure/runtime";
+import { OpusAudioDecoder } from "./integrations/audio";
+import { MuseSparkProvider } from "./integrations/meta/spark";
+import { MuseVoiceTranscriber } from "./integrations/meta/transcribe";
 import { WhatsAppCloudChannel } from "./integrations/whatsapp/client";
 import { WhatsAppMediaSource } from "./integrations/whatsapp/media";
-import { OpusAudioDecoder } from "./integrations/audio";
-import { MuseVoiceTranscriber } from "./integrations/meta/transcribe";
-import { SEND_TIMEOUT_MS } from "./domain/outbox";
-import { BurstReader } from "./application/perception/reader";
-import type { AudioDecoder, Clock, Logger, MediaStore, ModelProvider, Transcriber } from "./application/ports";
-import { D1SpendLedger } from "./infrastructure/d1/spend-repository";
-import { MuseSparkProvider } from "./integrations/meta/spark";
 
 export interface Runtime {
   readonly config: Config;

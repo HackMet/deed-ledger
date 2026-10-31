@@ -1,6 +1,6 @@
 // Build step, Node only. opus-decoder ships libopus as a compressed string inside its JavaScript and
 // compiles it at runtime, which Workers forbid. This writes the same binary to dist/opus-decoder.wasm,
-// which Wrangler bundles as a precompiled WebAssembly.Module (src/integrations/audio/opus-module.ts).
+// which Wrangler bundles as a precompiled WebAssembly.Module (src/integrations/audio/index.ts).
 // Runs from wrangler.jsonc's build command (dev, deploy) and from vitest.config.ts (tests).
 // The file is rewritten only when its bytes change, so `wrangler dev` doesn't rebuild in a loop.
 import { createHash } from "node:crypto";

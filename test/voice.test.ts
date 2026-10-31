@@ -89,6 +89,16 @@ describe("voice note decoding", () => {
     expect(readOggOpus(oggOpus([packet, packet]), 10).packets).toHaveLength(2);
   });
 
+  it("refuses a note with a page missing from the middle", async () => {
+    const full = toneOgg();
+    const ends = pageEnds(full);
+    // Drop the first audio page (after OpusHead and OpusTags): what's left still ends properly.
+    const gap = new Uint8Array([...full.subarray(0, ends[1]!), ...full.subarray(ends[2]!)]);
+    await expect(decoder.toTranscriberWav(ogg(gap))).rejects.toThrow(
+      expect.objectContaining({ name: "OggOpusError", message: "an Ogg page is missing" }),
+    );
+  });
+
   it("refuses more audio packets than a 10-minute note can hold, while reading them", async () => {
     // 2.5 ms is the shortest Opus packet: 10 minutes is at most 240,000 of them.
     const cap = maxOpusPackets(MAX_VOICE_NOTE_MS);

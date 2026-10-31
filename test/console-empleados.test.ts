@@ -157,6 +157,9 @@ describe("Empleados", () => {
     expect(await rows(`SELECT id FROM console_invites WHERE user_id = ?`, owner.userId)).toHaveLength(1);
     const page = await (await send(h, "/console/empleados?aviso=dueno", { cookie })).text();
     expect(page).toContain("Ese número es del dueño.");
+    // Only the screen's own notices: an inherited name like toString shows nothing.
+    const odd = await (await send(h, "/console/empleados?aviso=toString", { cookie })).text();
+    expect(odd).not.toContain("function");
   });
 
   it("Quitar ends every session of that person on the next request, and only theirs", async () => {

@@ -5,3 +5,5 @@ WHATSAPP_VERIFY_TOKEN=
 WHATSAPP_TOKEN=
 SENDER_HASH_SALT=
 LINK_SIGNING_SECRET=
+# The Meta model key (Muse Spark, Muse Voice Transcribe). Never name it META_API_KEY.
+MODEL_API_KEY=

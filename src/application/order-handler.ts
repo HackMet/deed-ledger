@@ -349,11 +349,13 @@ function channelCommits(
   const commits: Commit[] = [];
   const shown = readbackShown(outcome);
   if (shown !== null) {
+    // Stamped now, not when the reading began: a word typed while the model read this version
+    // answered the one before it, so it must not count as an answer to this one.
     commits.push(
       deps.customers.rememberReadbackCommit(
         lease,
         { orderId: shown.orderId, version: shown.version },
-        nowMs,
+        deps.clock.now(),
         closesBurst ? job.id : null,
       ),
     );

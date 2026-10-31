@@ -502,11 +502,14 @@ class RecordedProvider implements ModelProvider {
   readonly model = "muse-spark-1.3";
   readonly requests: ModelRequest[] = [];
   failNext = 0;
+  /** Runs inside a call, as if the call took that long. */
+  during: (() => Promise<void>) | null = null;
 
   constructor(private readonly readings: unknown[]) {}
 
   async complete(request: ModelRequest) {
     this.requests.push(request);
+    await this.during?.();
     if (this.failNext > 0) {
       this.failNext--;
       return { ok: false, error: "unavailable", status: 503, latencyMs: 30, inputTokens: null, outputTokens: null } as const;
@@ -659,6 +662,31 @@ describe("the first order, from reading to reply", () => {
     expect(t.provider.requests).toHaveLength(6);
     expect(await rows(`SELECT 1 FROM inbound_messages WHERE business_id = ? AND job_state <> 'done'`, t.store.businessId)).toEqual([]);
   }, 30_000);
+
+  it("stamps the readback when its reply is built, not when the reading began", async () => {
+    const t = await firstOrderTrip([READINGS.hola, READINGS.nameListVoice, READINGS.deLitro, READINGS.pickup]);
+    await t.burst(t.text("Hola, quiero hacer un pedido"));
+    await t.burst(
+      t.text("Carla"),
+      imageMessage({ ...t.at(), mediaId: "media-list" }),
+      audioMessage({ ...t.at(), mediaId: "media-voice" }),
+    );
+    await t.burst(t.text("de litro"));
+    // A word typed while the model reads answers the version before: it must land before the stamp.
+    let readEndedAt = 0;
+    t.provider.during = async () => {
+      t.h.clock.advance(5_000);
+      readEndedAt = t.h.clock.now();
+    };
+    await t.burst(t.text("lo paso a traer"));
+
+    expect(t.h.sentTo(t.phone).at(-1)).toBe(EXPECTED_READBACK);
+    const [conversation] = await rows<{ at: number }>(
+      `SELECT last_readback_at_ms AS at FROM conversations WHERE business_id = ?`,
+      t.store.businessId,
+    );
+    expect(conversation!.at).toBeGreaterThanOrEqual(readEndedAt);
+  });
 
   it("gives perception the burst in order, the open order's labels and the question asked last", async () => {
     const t = await firstOrderTrip([READINGS.hola, READINGS.nameListVoice, READINGS.deLitro]);

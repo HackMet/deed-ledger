@@ -52,8 +52,8 @@ or piped into `wrangler secret put`; never paste them into a file, a chat or a l
 
 ## Every later deploy
 
-1. **Back up first:** `npx wrangler d1 export DB --remote --output backup-$(date +%Y%m%d-%H%M).sql`. Keep the
-   file outside the repo; it holds real data once customers write.
+1. **Back up first**, outside the repo (the file holds real data once customers write):
+   `mkdir -p ~/store-assistant-backups && npx wrangler d1 export DB --remote --output ~/store-assistant-backups/backup-$(date +%Y%m%d-%H%M).sql`
 2. `npx wrangler d1 migrations apply DB --remote` (applies only new migrations).
 3. `npx wrangler secret put <NAME>` for any secret a branch added to `secrets.required` in `wrangler.jsonc`.
 4. Deploy with the same `--var`s, then the smoke test.

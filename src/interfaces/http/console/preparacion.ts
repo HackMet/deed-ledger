@@ -48,7 +48,7 @@ export function preparacionScreen(app: Hono<ConsoleEnv>) {
         title: "Pedidos por preparar",
         path: PATH,
         refreshSeconds: REFRESH_SECONDS,
-        notice: notice !== undefined && notice in NOTICES ? NOTICES[notice as NoticeKey] : null,
+        notice: notice !== undefined && Object.hasOwn(NOTICES, notice) ? NOTICES[notice as NoticeKey] : null,
         style: STYLE,
         body:
           cards.length === 0

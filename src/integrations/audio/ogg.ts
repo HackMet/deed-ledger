@@ -58,6 +58,7 @@ export function readOggOpus(bytes: Uint8Array, maxAudioPackets: number): OggOpus
   const packets: Uint8Array[] = [];
   let pending: Uint8Array[] = [];
   let serial: number | null = null;
+  let nextSequence: number | null = null;
   let finalGranule: number | null = null;
   let offset = 0;
   let endOfStream = false;
@@ -72,6 +73,7 @@ export function readOggOpus(bytes: Uint8Array, maxAudioPackets: number): OggOpus
     const granuleLow = view.getUint32(offset + 6, true);
     const granuleHigh = view.getInt32(offset + 10, true);
     const pageSerial = view.getUint32(offset + 14, true);
+    const pageSequence = view.getUint32(offset + 18, true);
     const segmentCount = bytes[offset + 26]!;
     const tableStart = offset + 27;
     const bodyStart = tableStart + segmentCount;
@@ -87,9 +89,10 @@ export function readOggOpus(bytes: Uint8Array, maxAudioPackets: number): OggOpus
       serial = pageSerial;
     }
     if (pageSerial !== serial) throw new OggOpusError("more than one logical stream");
-
-    // A page that does not continue a packet means the pending fragment was cut off.
-    if (!(flags & FLAG_CONTINUED)) pending = [];
+    // A skipped page number, or a packet left open or continued from nothing, means a page is missing.
+    if (nextSequence !== null && pageSequence !== nextSequence) throw new OggOpusError("an Ogg page is missing");
+    nextSequence = (pageSequence + 1) >>> 0;
+    if (Boolean(flags & FLAG_CONTINUED) !== pending.length > 0) throw new OggOpusError("an Ogg page is missing");
 
     let pieceStart = bodyStart;
     let position = bodyStart;

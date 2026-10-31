@@ -21,3 +21,6 @@ docs/source/official-rules-*.pdf
 # OS and editor files
 .DS_Store
 *.swp
+
+# Database exports hold real data
+backup-*.sql

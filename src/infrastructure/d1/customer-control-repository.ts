@@ -26,9 +26,9 @@ export class D1CustomerControlRepository implements CustomerControlRepository {
       .prepare(
         `SELECT cu.id, b.name AS store_name, cu.introduced_at_ms, cu.stopped_at_ms, cu.stop_reminded_at_ms,
                 cu.deletion_requested_at_ms,
-                (SELECT u.display_name FROM memberships m JOIN users u ON u.id = m.user_id
+                (SELECT COALESCE(m.display_name, u.display_name) FROM memberships m JOIN users u ON u.id = m.user_id
                  WHERE m.business_id = c.business_id AND m.role = 'owner' AND m.active = 1
-                   AND u.display_name IS NOT NULL
+                   AND COALESCE(m.display_name, u.display_name) IS NOT NULL
                  ORDER BY m.created_at_ms, m.user_id LIMIT 1) AS owner_name
          FROM conversations c
          JOIN customers cu ON cu.business_id = c.business_id AND cu.id = c.customer_id
