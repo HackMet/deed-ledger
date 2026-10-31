@@ -16,6 +16,7 @@ import type {
 } from "../../application/ports";
 import { BURST_MAX_MESSAGES } from "../../domain/burst";
 import { MAX_JOB_ATTEMPTS, type MessageKind } from "../../domain/processing";
+import { slowNoticeDedupeKey } from "../../domain/slow-notice";
 import { DB_NOW_MS, fencedBatch, type Guard, jobGuard, leaseIsHeld } from "./fence";
 import { NEXT_OUTBOX_SEQ } from "./outbox-repository";
 
@@ -50,12 +51,23 @@ const EARLIER_OPEN_MESSAGE = `SELECT 1 FROM inbound_messages e
     AND (e.received_at_ms < i.received_at_ms OR (e.received_at_ms = i.received_at_ms AND e.id < i.id))`;
 
 /**
- * Something was written to `i`'s conversation at or after `i` arrived: an answer, a failure reply
- * or an earlier slow notice. Any of them means the customer isn't left with silence.
+ * Something that reaches the customer was written to `i`'s conversation at or after `i` arrived: an
+ * answer, a failure reply or an earlier slow notice, sent or still on its way. A row that ended
+ * unsent (failed, expired) or that WhatsApp reported failed leaves the customer with silence, so it
+ * doesn't count. unknown_delivery counts: it may have gone out, and every other check (the 24-hour
+ * notice slot, at-most-once sending) treats it as sent.
  */
 const WRITTEN_TO_SINCE = `SELECT 1 FROM outbound_messages o
   WHERE o.business_id = i.business_id AND o.conversation_id = i.conversation_id
-    AND o.created_at_ms >= i.received_at_ms`;
+    AND o.created_at_ms >= i.received_at_ms
+    AND o.status IN ('pending', 'sending', 'waiting_window', 'sent', 'unknown_delivery')
+    AND (o.provider_status IS NULL OR o.provider_status <> 'failed')`;
+
+/**
+ * `i` already has its notice, whatever became of it. The dedupe key alone would refuse a second
+ * one; this keeps a burst whose notice failed from taking a slot in every sweep's scan.
+ */
+const HAS_SLOW_NOTICE = `SELECT 1 FROM outbound_messages s WHERE s.dedupe_key = ? || i.id`;
 
 const JOB_COLUMNS = `id, kind, text_body, reply_id, context_message_id, media_asset_id, order_ts_s,
   received_at_ms, attempts, retry_after_ms`;
@@ -331,10 +343,11 @@ export class D1JobRepository implements JobRepository {
          WHERE i.job_state IN ('pending', 'processing') AND i.received_at_ms < ? AND i.received_at_ms >= ?
            AND NOT EXISTS (${EARLIER_OPEN_MESSAGE})
            AND NOT EXISTS (${WRITTEN_TO_SINCE})
+           AND NOT EXISTS (${HAS_SLOW_NOTICE})
          ORDER BY i.received_at_ms
          LIMIT ?`,
       )
-      .bind(receivedBeforeMs, notBeforeMs, limit)
+      .bind(receivedBeforeMs, notBeforeMs, slowNoticeDedupeKey(""), limit)
       .all<{ business_id: string; conversation_id: string; id: string; received_at_ms: number }>();
     return results.map((row) => ({
       businessId: row.business_id,
