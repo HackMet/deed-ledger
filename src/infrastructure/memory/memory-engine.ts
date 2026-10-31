@@ -45,21 +45,27 @@ export class MemoryEngine implements Engine {
    */
   async onCustomerAction(context: CustomerContext, envelope: ActionEnvelope<CustomerAction>): Promise<EngineResult> {
     const state = this.state(context);
-    const first = state.operations.get(envelope.operationKey);
-    if (first !== undefined) return result({ type: "duplicate", first });
-
     const { action } = envelope;
+    // Authorize before answering a repeated key: button keys are predictable, so another customer
+    // replaying one must never get the first customer's outcome back.
+    if (envelope.actor.type !== "customer" || envelope.actor.customerId !== context.customerId) {
+      return result({ type: "rejected", reason: "not_allowed", order: null });
+    }
     const stored = state.orders.get(action.orderId);
     if (stored === undefined || stored.customerId !== context.customerId) {
       return result({ type: "rejected", reason: "not_found", order: null });
     }
+    const operationKey = customerOperationKey(context.customerId, envelope.operationKey);
+    const first = state.operations.get(operationKey);
+    if (first !== undefined) return result({ type: "duplicate", first });
+
     if (action.version !== stored.order.version) {
       return result({ type: "rejected", reason: "stale_version", order: stored.order });
     }
     const answered = answer(stored, action, context.nowMs);
     if (answered === null) return result({ type: "rejected", reason: "invalid_state", order: stored.order });
     state.orders.set(action.orderId, answered.stored);
-    state.operations.set(envelope.operationKey, answered.outcome);
+    state.operations.set(operationKey, answered.outcome);
     return result(answered.outcome);
   }
 
@@ -112,6 +118,11 @@ export class MemoryEngine implements Engine {
     }
     return state;
   }
+}
+
+/** Customer keys are kept per customer, apart from the console's. */
+function customerOperationKey(customerId: string, operationKey: string): string {
+  return `customer:${customerId}:${operationKey}`;
 }
 
 function result(outcome: EngineOutcome): EngineResult {

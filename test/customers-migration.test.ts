@@ -15,7 +15,8 @@ describe("migration 0004 (customers) on a database with existing rows", () => {
   it("keeps every conversation, message and reply, and makes each member who wrote a customer of that store", async () => {
     const db = env.MIGRATION_TEST_DB;
     const before = env.TEST_MIGRATIONS.filter((migration) => migration.name < "0004");
-    const after = env.TEST_MIGRATIONS.filter((migration) => migration.name >= "0004");
+    // Only the two this test is about: later migrations belong to other branches and tests.
+    const after = env.TEST_MIGRATIONS.filter((migration) => migration.name >= "0004" && migration.name < "0006");
     expect(after.map((migration) => migration.name)).toEqual(["0004_customers.sql", "0005_burst_reads.sql"]);
     await applyD1Migrations(db, before);
 

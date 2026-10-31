@@ -323,7 +323,7 @@ describe("a burst is read once", () => {
     expect(await savedLines(c.store.businessId)).toEqual(items);
     expect(await rows(`SELECT 1 FROM burst_reads WHERE business_id = ?`, c.store.businessId)).toHaveLength(60);
     expect(await rows(`SELECT 1 FROM inbound_messages WHERE business_id = ? AND job_state <> 'done'`, c.store.businessId)).toEqual([]);
-  });
+  }, 30_000); // 60 messages through intake and the processor on local D1
 
   it("fails loudly, reading nothing, when a burst is over the cap instead of reading part of it", async () => {
     const c = await customerOnLedger();

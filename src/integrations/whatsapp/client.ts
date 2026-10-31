@@ -2,9 +2,16 @@
  * Sends text messages through the WhatsApp Cloud API. Request shape from Meta's docs (October 28,
  * 2026): https://developers.facebook.com/documentation/business-messaging/whatsapp/messages/text-messages
  *
+ * Reply buttons, checked against Meta's docs on October 30, 2026:
+ * https://developers.facebook.com/documentation/business-messaging/whatsapp/messages/interactive-reply-buttons-messages
+ * type "interactive", interactive.type "button", body.text up to 1024 characters, action.buttons of
+ * up to 3 `{ type: "reply", reply: { id, title } }`, IDs up to 256 characters, titles up to 20 and
+ * unique. A tap comes back as an interactive message with `button_reply.id`.
+ *
  * Never called by the default test run: tests use a fake MessagingChannel.
  */
-import type { MessagingChannel, OutgoingText, SendResult } from "../../application/ports";
+import type { MessagingChannel, OutgoingButtons, OutgoingText, SendResult } from "../../application/ports";
+import type { ReplyButton } from "../../domain/replies";
 import { WHATSAPP_LIMITS } from "./limits";
 
 export interface WhatsAppCloudOptions {
@@ -29,6 +36,24 @@ export class WhatsAppCloudChannel implements MessagingChannel {
     if (message.body.length > this.maxTextChars) {
       return { ok: false, disposition: "permanent", errorCode: "body_too_long" };
     }
+    return this.post(message, { type: "text", text: { preview_url: false, body: message.body } });
+  }
+
+  /** Buttons that break Meta's limits are dropped: the body goes as text, with its typed fallback. */
+  async sendButtons(message: OutgoingButtons): Promise<SendResult> {
+    if (!fitsReplyButtons(message.body, message.buttons)) return this.sendText(message);
+    return this.post(message, {
+      type: "interactive",
+      interactive: {
+        type: "button",
+        body: { text: message.body },
+        action: { buttons: message.buttons.map(({ id, title }) => ({ type: "reply", reply: { id, title } })) },
+      },
+    });
+  }
+
+  private async post(message: OutgoingText, content: Record<string, unknown>): Promise<SendResult> {
+    if (!this.configured) return { ok: false, disposition: "permanent", errorCode: "channel_not_configured" };
     const url = `https://graph.facebook.com/${this.options.apiVersion}/${encodeURIComponent(message.fromPhoneNumberId)}/messages`;
 
     let response: Response;
@@ -40,8 +65,7 @@ export class WhatsAppCloudChannel implements MessagingChannel {
           messaging_product: "whatsapp",
           recipient_type: "individual",
           to: `+${message.toPhone}`,
-          type: "text",
-          text: { preview_url: false, body: message.body },
+          ...content,
         }),
         signal: AbortSignal.timeout(this.options.timeoutMs),
       });
@@ -66,6 +90,23 @@ export class WhatsAppCloudChannel implements MessagingChannel {
       ? { ok: false, disposition: "unknown", errorCode: "unexpected_response" }
       : { ok: true, providerMessageId: id };
   }
+}
+
+/** Whether Meta accepts these as reply buttons with this body. */
+export function fitsReplyButtons(body: string, buttons: readonly ReplyButton[]): boolean {
+  const limits = WHATSAPP_LIMITS.replyButtons;
+  const titles = new Set(buttons.map((b) => b.title));
+  return (
+    buttons.length >= 1 &&
+    buttons.length <= limits.maxButtons &&
+    titles.size === buttons.length &&
+    body.trim() !== "" &&
+    body.length <= limits.bodyChars &&
+    buttons.every(
+      (b) =>
+        b.id !== "" && b.id.length <= limits.buttonIdChars && b.title.trim() !== "" && b.title.length <= limits.buttonTitleChars,
+    )
+  );
 }
 
 function readMessageId(body: unknown): string | null {

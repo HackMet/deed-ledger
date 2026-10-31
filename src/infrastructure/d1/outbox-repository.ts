@@ -13,6 +13,7 @@ import {
   UNKNOWN_SENDER_NOTICE_INTERVAL_MS,
   UNKNOWN_SENDER_RETENTION_MS,
 } from "../../domain/outbox";
+import type { ClaimCheck, ReplyButton } from "../../domain/replies";
 import { DB_NOW_MS, type Guard, guardedBatch } from "./fence";
 
 /** The next send order: one more than any row's. D1 runs one batch at a time, and seq is UNIQUE. */
@@ -47,6 +48,8 @@ interface OutboxRow {
   body_text: string;
   attempts: number;
   expires_at_ms: number;
+  claims_json: string | null;
+  buttons_json: string | null;
 }
 
 const COLUMN_NAMES = [
@@ -59,6 +62,8 @@ const COLUMN_NAMES = [
   "body_text",
   "attempts",
   "expires_at_ms",
+  "claims_json",
+  "buttons_json",
 ];
 const COLUMNS = COLUMN_NAMES.join(", ");
 
@@ -72,7 +77,50 @@ const toMessage = (row: OutboxRow): OutboxMessage => ({
   body: row.body_text,
   attempts: row.attempts,
   expiresAtMs: row.expires_at_ms,
+  ...(row.claims_json === null ? {} : { claims: readClaims(row.claims_json) }),
+  ...(row.buttons_json === null ? {} : { buttons: readButtons(row.buttons_json) }),
 });
+
+/** A check that never holds: what stored claims we can't read amount to. */
+const UNREADABLE_CLAIMS: readonly ClaimCheck[] = [{ anyOf: [] }];
+
+function readClaims(json: string): readonly ClaimCheck[] {
+  try {
+    const value: unknown = JSON.parse(json);
+    const valid =
+      Array.isArray(value) &&
+      value.every(
+        (check: unknown) =>
+          typeof check === "object" &&
+          check !== null &&
+          Array.isArray((check as { anyOf?: unknown }).anyOf) &&
+          (check as { anyOf: unknown[] }).anyOf.every(
+            (claim) => typeof claim === "object" && claim !== null && typeof (claim as { type?: unknown }).type === "string",
+          ),
+      );
+    return valid ? (value as ClaimCheck[]) : UNREADABLE_CLAIMS;
+  } catch {
+    return UNREADABLE_CLAIMS;
+  }
+}
+
+/** Buttons we can't read are dropped: the body still carries the typed fallback. */
+function readButtons(json: string): readonly ReplyButton[] {
+  try {
+    const value: unknown = JSON.parse(json);
+    if (!Array.isArray(value)) return [];
+    const valid = value.every(
+      (b: unknown) =>
+        typeof b === "object" &&
+        b !== null &&
+        typeof (b as { id?: unknown }).id === "string" &&
+        typeof (b as { title?: unknown }).title === "string",
+    );
+    return valid ? (value as ReplyButton[]) : [];
+  } catch {
+    return [];
+  }
+}
 
 export class D1OutboxRepository implements OutboxRepository {
   constructor(private readonly db: D1Database) {}
@@ -254,6 +302,28 @@ export class D1OutboxRepository implements OutboxRepository {
       [final ? "failed" : "pending", errorCode.slice(0, 200)],
       final,
     );
+  }
+
+  async markClaimsBlocked(tenant: Tenant, outboxId: string, claimId: string, nowMs: number): Promise<boolean> {
+    const blocked = this.db
+      .prepare(
+        `UPDATE outbound_messages SET claims_blocked_at_ms = ?, updated_at_ms = ?
+         WHERE business_id = ? AND id = ? AND status = 'sending' AND claim_id = ?`,
+      )
+      .bind(nowMs, nowMs, tenant.businessId, outboxId, claimId);
+    // The reply's later parts carry the same claims: none of them goes out. Other replies of the
+    // job have claims of their own and are checked on their own.
+    const restOfReply = this.db
+      .prepare(
+        `UPDATE outbound_messages SET status = 'failed', last_error = 'claims_blocked_in_reply', updated_at_ms = ?
+         WHERE business_id = ? AND status IN ('pending', 'waiting_window')
+           AND EXISTS (SELECT 1 FROM outbound_messages b
+                       WHERE b.business_id = outbound_messages.business_id AND b.id = ?
+                         AND b.job_id = outbound_messages.job_id AND b.reply_index = outbound_messages.reply_index
+                         AND b.seq < outbound_messages.seq)`,
+      )
+      .bind(nowMs, tenant.businessId, outboxId);
+    return this.whileClaimed(claimHeld(tenant, outboxId, claimId), [blocked, restOfReply]);
   }
 
   async maintain(nowMs: number): Promise<OutboxMaintenance> {
