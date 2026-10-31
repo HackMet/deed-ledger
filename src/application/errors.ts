@@ -94,3 +94,16 @@ export class CustomerNotFoundError extends Error {
     super("no such customer in this store");
   }
 }
+
+/**
+ * A burst couldn't be read: the store's daily model budget is spent, the provider refused or failed,
+ * or the output didn't fit the schema. Nothing was read or saved; the processor retries the job and,
+ * after its last attempt, sends the honest failure reply.
+ */
+export class ReadingFailedError extends Error {
+  override readonly name = "ReadingFailedError";
+
+  constructor(readonly reason: "spend_cap" | "rejected" | "unavailable" | "invalid_output") {
+    super(`the burst could not be read: ${reason}`);
+  }
+}

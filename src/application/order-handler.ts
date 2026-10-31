@@ -13,11 +13,13 @@
 import { BURST_LOOKBACK_MS, parseReadbackButton, type ReadbackAnswer, readbackOperationKey, typedReadbackWord } from "../domain/burst";
 import type { CustomerAction } from "../domain/contract/actions";
 import type { BurstReading } from "../domain/contract/observation";
-import type { EngineOutcome } from "../domain/contract/outcomes";
+import type { EngineOutcome, OrderView, QuestionCode } from "../domain/contract/outcomes";
 import { RECEIVED_PLACEHOLDER } from "../domain/copy";
-import { ANSWER_NEW_READBACK, readbackShown, renderOrderOutcome } from "../domain/order-copy";
+import { ANSWER_NEW_READBACK, WHAT_TO_CORRECT } from "../domain/order-copy";
 import { PLACEHOLDER_TTL_MS } from "../domain/outbox";
-import type { CustomerContext, Engine, EngineResult } from "./engine";
+import { safeReply } from "../domain/replies";
+import type { CustomerContext, Engine, EngineResult, LineMatch } from "./engine";
+import { CUSTOMER_REPLY_TTL_MS, replyForOutcome } from "./replies";
 import type {
   Clock,
   Commit,
@@ -30,11 +32,12 @@ import type {
   JobRepository,
   Lease,
   Logger,
+  Pendientes,
   ReplyDraft,
 } from "./ports";
 
 /** A reply about an order is worth sending for an hour, like the placeholder. */
-export const ORDER_REPLY_TTL_MS = PLACEHOLDER_TTL_MS;
+export const ORDER_REPLY_TTL_MS = CUSTOMER_REPLY_TTL_MS;
 
 /**
  * The customer context with the name and whether it was asked, so the engine asks once, at a point
@@ -45,15 +48,28 @@ export type CustomerContextWithName = CustomerContext & {
   readonly customerNameAsked: boolean;
 };
 
-/** What perception (#17) is given: the burst's messages, oldest first. Their content is untrusted. */
+/** What perception is given: the burst's messages, oldest first (content untrusted), and who asks. */
 export interface BurstReaderInput {
   readonly lease: Lease;
   readonly messages: readonly Job[];
+  /** The engine's context for this customer; perception's context is read with it (gap a). */
+  readonly context: CustomerContextWithName;
 }
 
-/** Perception's seam. Not built yet: without a reader, a burst gets the placeholder. */
+/** A validated reading, with the catalog matches code found inside the store's scope. */
+export interface BurstRead {
+  readonly reading: BurstReading;
+  readonly matches: readonly LineMatch[];
+  /** The question the engine had asked last, as perception was told; null when none. */
+  readonly pendingQuestion: QuestionCode | null;
+}
+
+/**
+ * Perception's seam (`createOrderReading` in ./order-reading.ts). Throws ReadingFailedError when
+ * the burst can't be read; without a reader, a burst gets the placeholder.
+ */
 export interface BurstReader {
-  read(input: BurstReaderInput): Promise<BurstReading>;
+  read(input: BurstReaderInput): Promise<BurstRead>;
 }
 
 export interface OrderHandlerDeps {
@@ -62,6 +78,8 @@ export interface OrderHandlerDeps {
   readonly customers: CustomerRepository;
   readonly clock: Clock;
   readonly log: Logger;
+  /** Where a reply blocked by the claim check's first pass is raised. */
+  readonly pendientes: Pendientes;
   readonly reader?: BurstReader | null;
 }
 
@@ -171,9 +189,9 @@ async function handleBurst(
     };
   }
 
-  const reading = await deps.reader.read({ lease, messages });
-  // Catalog matches come from perception's side (#17); none on this path.
-  const result = await deps.engine.onBurst(context(lease, job, customer, nowMs), reading, []);
+  const customerContext = context(lease, job, customer, nowMs);
+  const { reading, matches, pendingQuestion } = await deps.reader.read({ lease, messages, context: customerContext });
+  const result = await deps.engine.onBurst(customerContext, reading, matches);
   deps.log.info("burst_read", {
     businessId: lease.businessId,
     conversationId: lease.conversationId,
@@ -181,16 +199,31 @@ async function handleBurst(
     count: messages.length,
     outcome: result.outcome.type,
   });
-  const named = reading.observations.find((observation) => observation.kind === "customer_name");
-  const nameCommits =
-    named?.kind === "customer_name" && customer.name === null
-      ? [deps.customers.saveNameCommit(lease, customer.id, named.name, nowMs)]
-      : [];
+  const name = customer.name === null ? givenName(reading, pendingQuestion) : null;
+  const nameCommits = name === null ? [] : [deps.customers.saveNameCommit(lease, customer.id, name, nowMs)];
   return complete(deps, lease, job, customer, messages, result, null, closesBurst, nowMs, nameCommits);
 }
 
-/** Replies and commits for the job: what was read, the engine's facts, and the channel records. */
-function complete(
+/**
+ * The name the customer gave in this burst: said outright ("soy Carla"), or the answer to the name
+ * question asked last ("Carla"). Saved through our own records (gap d), first answer wins.
+ */
+function givenName(reading: BurstReading, pendingQuestion: QuestionCode | null): string | null {
+  for (const observation of reading.observations) {
+    if (observation.kind === "customer_name") return observation.name;
+  }
+  if (pendingQuestion !== "customer_name") return null;
+  for (const observation of reading.observations) {
+    if (observation.kind === "clarification") return observation.answer;
+  }
+  return null;
+}
+
+/**
+ * Replies and commits for the job: what was read, the engine's facts, and the channel records. The
+ * reply comes from the replies templates after the claim check's first pass.
+ */
+async function complete(
   deps: OrderHandlerDeps,
   lease: Lease,
   job: Job,
@@ -201,22 +234,59 @@ function complete(
   closesBurst: boolean,
   nowMs: number,
   extra: readonly Commit[] = [],
-): JobOutcome {
-  const body = renderOrderOutcome(result.outcome, answered);
+): Promise<JobOutcome> {
+  const replies = await repliesFor(deps, lease, customer, result.outcome, answered, closesBurst);
   const commits: Commit[] = [
     deps.jobs.markReadCommit(lease, job.id, read.map((message) => message.id), nowMs),
     ...result.commits,
     ...extra,
   ];
-  if (body !== null) {
+  // What the reply showed is remembered only if it went out as rendered, not as the safe reply.
+  const shownAsRendered = replies.length > 0 && replies[0]!.body !== safeReply().body;
+  if (shownAsRendered) {
     commits.push(...channelCommits(deps, lease, job, customer, result.outcome, closesBurst, nowMs));
   }
-  const replies: ReplyDraft[] = body === null ? [] : [{ body, ttlMs: ORDER_REPLY_TTL_MS, closesBurst }];
   // Notices for other customers (staff actions) don't arise from a customer's own message here.
   if (result.notices.length > 0) {
     deps.log.warn("customer_notices_dropped", { businessId: lease.businessId, count: result.notices.length });
   }
   return { replies, commits };
+}
+
+/**
+ * The reply to the outcome. A readback answer's reply never closes the burst: it goes out even if
+ * more messages follow. "Corregir" leaves the order as it is, so the engine has nothing to say and
+ * the customer is asked what to change.
+ */
+async function repliesFor(
+  deps: OrderHandlerDeps,
+  lease: Lease,
+  customer: ConversationCustomer,
+  outcome: EngineOutcome,
+  answered: ReadbackAnswer["word"] | null,
+  closesBurst: boolean,
+): Promise<ReplyDraft[]> {
+  if (outcome.type === "nothing" && answered === "correct") {
+    return [{ body: WHAT_TO_CORRECT, ttlMs: ORDER_REPLY_TTL_MS }];
+  }
+  const drafts = await replyForOutcome(deps, { ...lease, customerId: customer.id }, outcome);
+  return drafts.map(({ closesBurst: _closes, ...draft }) => (closesBurst ? { ...draft, closesBurst } : draft));
+}
+
+/**
+ * The order version a reply asks the customer to confirm, so a typed "confirmar" answers it: a
+ * readback, or a refused tap or status answer for an order waiting on Confirmar.
+ */
+function readbackShown(outcome: EngineOutcome): OrderView | null {
+  switch (outcome.type) {
+    case "readback":
+    case "order_changed":
+    case "order_status":
+    case "rejected":
+      return outcome.order !== null && outcome.order.state === "por_confirmar" ? outcome.order : null;
+    default:
+      return null;
+  }
 }
 
 /** What the reply shows, remembered with it: the readback version and that the name was asked. */

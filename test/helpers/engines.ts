@@ -24,7 +24,7 @@ export const lineReader: BurstReader = {
         issues: [],
       };
     });
-    return { observations, calls: [] };
+    return { reading: { observations, calls: [] }, matches: [], pendingQuestion: null };
   },
 };
 
@@ -98,7 +98,15 @@ export function lateOrderHandler(engine: Engine, reader: BurstReader | null = li
   return {
     jobHandler: { handle: (input) => handler!.handle(input) } satisfies JobHandler,
     attach(h: Harness) {
-      handler = createOrderHandler({ engine, jobs: h.deps.jobs, customers: h.deps.customers, clock: h.clock, log: h.log, reader });
+      handler = createOrderHandler({
+        engine,
+        jobs: h.deps.jobs,
+        customers: h.deps.customers,
+        clock: h.clock,
+        log: h.log,
+        pendientes: h.deps.pendientes,
+        reader,
+      });
     },
   };
 }

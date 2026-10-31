@@ -5,14 +5,25 @@ import type { OrderView } from "../src/domain/contract/outcomes";
 import { BurstTooLargeError } from "../src/application/errors";
 import { BURST_MAX_MESSAGES } from "../src/domain/burst";
 import { RECEIVED_PLACEHOLDER } from "../src/domain/copy";
-import { ANSWER_NEW_READBACK, ASK_NAME, ORDER_CONFIRMED, ORDER_NOT_OPEN, READBACK_CHANGED, renderReadback } from "../src/domain/order-copy";
+import { ANSWER_NEW_READBACK } from "../src/domain/order-copy";
+import { COPY, renderOutcome } from "../src/domain/replies";
 import { MemoryEngine, type StoredOrder } from "../src/infrastructure/memory/memory-engine";
 import { ensureLinesTable, LedgerEngine, lateOrderHandler, savedLines } from "./helpers/engines";
 import { conversationOf, expireLease, type Harness, harness, rows } from "./helpers/harness";
 import { newPhone, seedStore } from "./helpers/seed";
-import { buttonReply, textMessage, wamid, webhook } from "./helpers/whatsapp";
+import { audioMessage, buttonReply, imageMessage, textMessage, wamid, webhook } from "./helpers/whatsapp";
+import type { BurstMediaResolver } from "../src/application/order-reading";
+import type { ModelProvider, ModelRequest } from "../src/application/ports";
+import { buildOrderReading } from "../src/composition";
+import { renderNotice } from "../src/domain/replies";
+import type { CustomerNotice } from "../src/domain/contract/outcomes";
+import type { PretendProduct } from "../src/infrastructure/memory/memory-engine";
+import { box, line, photo, quote, voice } from "./fixtures/model/recorded";
+import { csrfFor, login, send as consoleSend, storeWithStaff } from "./helpers/console";
+import { testEnv } from "./helpers/harness";
 
 const SETTLED_MS = 4_000;
+const ASK_NAME = "¿A nombre de quién lo anoto?";
 const nowS = (h: Harness) => Math.floor(h.clock.now() / 1000);
 
 beforeAll(ensureLinesTable);
@@ -110,7 +121,7 @@ describe("readback answers reach the engine with no model", () => {
     expect(await c.orderState("o-1")).toBe("confirmado");
     await c.say("Confirmar");
 
-    expect(c.h.sentTo(c.phone)).toEqual([RECEIVED_PLACEHOLDER, ORDER_CONFIRMED]);
+    expect(c.h.sentTo(c.phone)).toEqual([RECEIVED_PLACEHOLDER, COPY.confirmed]);
     const jobs = await rows<{ job_state: string }>(`SELECT job_state FROM inbound_messages WHERE business_id = ?`, c.store.businessId);
     expect(jobs.map((job) => job.job_state)).toEqual(["done", "done", "done"]);
   });
@@ -124,7 +135,7 @@ describe("readback answers reach the engine with no model", () => {
 
     await c.say("  CONFIRMÁR! ");
     await c.tap("confirm:o-2:v1", "Confirmar");
-    expect(c.h.sentTo(c.phone)).toEqual([RECEIVED_PLACEHOLDER, ORDER_CONFIRMED]);
+    expect(c.h.sentTo(c.phone)).toEqual([RECEIVED_PLACEHOLDER, COPY.confirmed]);
     expect(await c.orderState("o-2")).toBe("confirmado");
   });
 
@@ -143,7 +154,7 @@ describe("readback answers reach the engine with no model", () => {
     await c.tap("confirm:o-3:v1", "Confirmar"); // a second tap
     expect(await rows(`SELECT id FROM outbound_messages WHERE business_id = ?`, c.store.businessId)).toEqual(outboxAfterFirst);
     expect((await c.engine.preparationList(c.tenant))[0]!.confirmedAtMs).toBe(confirmedAt);
-    expect(c.h.sentTo(c.phone)).toEqual([RECEIVED_PLACEHOLDER, ORDER_CONFIRMED]);
+    expect(c.h.sentTo(c.phone)).toEqual([RECEIVED_PLACEHOLDER, COPY.confirmed]);
     expect(await rows(`SELECT 1 FROM inbound_messages WHERE business_id = ?`, c.store.businessId)).toHaveLength(3);
   });
 
@@ -154,7 +165,7 @@ describe("readback answers reach the engine with no model", () => {
     await c.h.deliver(c.h.takeRingsFor(c.store.businessId));
 
     await c.tap("confirm:o-theirs:v1", "Confirmar");
-    expect(c.h.sentTo(c.phone)).toEqual([RECEIVED_PLACEHOLDER, ORDER_NOT_OPEN]);
+    expect(c.h.sentTo(c.phone)).toEqual([RECEIVED_PLACEHOLDER, COPY.refusedTap]);
     // Still por_confirmar: not on the preparation list.
     expect(await c.orderState("o-theirs")).toBeNull();
   });
@@ -167,14 +178,18 @@ describe("readback answers reach the engine with no model", () => {
     await c.showReadback("o-4", 1);
 
     await c.say("confirmar"); // answers v1, which changed
-    expect(c.h.sentTo(c.phone).at(-1)).toBe(`${READBACK_CHANGED}\n${renderReadback(order("o-4", 2))}`);
+    expect(c.h.sentTo(c.phone).at(-1)).toBe(
+      renderOutcome({ type: "rejected", reason: "stale_version", order: order("o-4", 2) }, { customerId: c.customerId })!.body,
+    );
     expect(await c.orderState("o-4")).toBeNull();
+    // The current readback carries its own buttons.
+    expect(c.h.channel.sent.at(-1)?.buttons?.map((button) => button.id)).toEqual(["confirm:o-4:v2", "correct:o-4:v2", "cancel:o-4:v2"]);
     expect(
       await rows(`SELECT last_readback_order_id, last_readback_version FROM conversations WHERE id = ?`, c.conversation.conversationId),
     ).toEqual([{ last_readback_order_id: "o-4", last_readback_version: 2 }]);
 
     await c.say("Confirmar");
-    expect(c.h.sentTo(c.phone).at(-1)).toBe(ORDER_CONFIRMED);
+    expect(c.h.sentTo(c.phone).at(-1)).toBe(COPY.confirmed);
     expect(await c.orderState("o-4")).toBe("confirmado");
   });
 
@@ -195,8 +210,18 @@ describe("readback answers reach the engine with no model", () => {
 
     // Typed after seeing v2, it confirms v2.
     await c.say("confirmar");
-    expect(c.h.sentTo(c.phone).at(-1)).toBe(ORDER_CONFIRMED);
+    expect(c.h.sentTo(c.phone).at(-1)).toBe(COPY.confirmed);
     expect(await c.orderState("o-6")).toBe("confirmado");
+  });
+
+  it("asks what to change on Corregir, and leaves the order waiting", async () => {
+    const c = await customerOnMemoryEngine();
+    c.orders.push(stored(c.customerId, order("o-7", 1)));
+    c.h.clock.advance(SETTLED_MS);
+    await c.h.deliver(c.h.takeRingsFor(c.store.businessId));
+    await c.tap("correct:o-7:v1", "Corregir");
+    expect(c.h.sentTo(c.phone)).toEqual([RECEIVED_PLACEHOLDER, "Va. Decime qué le cambiamos al pedido."]);
+    expect(await c.orderState("o-7")).toBeNull();
   });
 
   it("reads \"confirmar\" as a message when no readback is open", async () => {
@@ -425,5 +450,277 @@ describe("the customer's name", () => {
     expect(c.engine.contexts.at(-1)).toMatchObject({ customerName: "Carla" });
     // Known by name, so it isn't asked.
     expect(c.h.sentTo(c.phone)).not.toContain(ASK_NAME);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// The whole trip, PRD "A first order": WhatsApp in, Muse Spark's reading (recorded), the pretend
+// engine, the replies templates and the claim check, the outbox, the fake channel, and the staff's
+// taps on the preparation list.
+
+/** Synthetic catalog with the store's confirmed prices. "aceite clover" alone fits two sizes. */
+const CATALOG: readonly PretendProduct[] = [
+  { productId: "p-clover-1l", names: ["Aceite Clover 1 L"], aliases: ["aceite clover", "aceite clover de litro"], barcode: null, price: 6000 },
+  { productId: "p-clover-500", names: ["Aceite Clover 500 ml"], aliases: ["aceite clover", "aceite clover de medio"], barcode: null, price: 3400 },
+  { productId: "p-arroz", names: ["Arroz 1 lb", "Arroz"], aliases: [], barcode: null, price: 3000 },
+  { productId: "p-azucar", names: ["Azúcar 1 lb", "Azúcar"], aliases: [], barcode: null, price: 3000 },
+  { productId: "p-jabon", names: ["Jabón Xtra"], aliases: [], barcode: null, price: 3500 },
+];
+
+const TRANSCRIPT = "Y agregale dos libras de azúcar";
+const none = { issues: [] };
+
+/** Recorded readings in the wire format, one per burst, in the order the bursts are read. */
+const READINGS = {
+  hola: { observations: [{ kind: "other", ...none }] },
+  nameListVoice: {
+    observations: [
+      { kind: "customer_name", name: "Carla", evidence: quote(0, "Carla"), ...none },
+      {
+        kind: "customer_order",
+        lines: [
+          line("1 aceite clover", "aceite clover", "1", null, box(1, [0.08, 0.12, 0.71, 0.2])),
+          line("3 lb arroz", "arroz", "3", "libra", box(1, [0.08, 0.22, 0.6, 0.3])),
+          line("3 jabon xtra", "jabon xtra", "3", null, box(1, [0.08, 0.32, 0.66, 0.4])),
+          line("dos libras de azúcar", "azúcar", "2", "libra", quote(2, "dos libras de azúcar")),
+        ],
+        issues: [{ code: "ambiguous_size", line: 0, evidence: box(1, [0.08, 0.12, 0.71, 0.2]) }],
+      },
+    ],
+  },
+  deLitro: { observations: [{ kind: "clarification", answer: "de litro", evidence: quote(0, "de litro"), ...none }] },
+  pickup: { observations: [{ kind: "fulfillment", mode: "pickup", place_text: null, same_as_before: false, ...none }] },
+  whenReady: { observations: [{ kind: "question", topic: "order_status", products: [], ...none }] },
+} as const;
+
+/** Muse Spark's place, answering each call with the next recorded reading. Never the network. */
+class RecordedProvider implements ModelProvider {
+  readonly model = "muse-spark-1.3";
+  readonly requests: ModelRequest[] = [];
+  failNext = 0;
+
+  constructor(private readonly readings: unknown[]) {}
+
+  async complete(request: ModelRequest) {
+    this.requests.push(request);
+    if (this.failNext > 0) {
+      this.failNext--;
+      return { ok: false, error: "unavailable", status: 503, latencyMs: 30, inputTokens: null, outputTokens: null } as const;
+    }
+    const json = this.readings.shift();
+    if (json === undefined) throw new Error("no recorded reading left");
+    return { ok: true, json, latencyMs: 7_000, inputTokens: 3_950, outputTokens: 1_500 } as const;
+  }
+
+  /** The text the model was given in call n (context and messages), joined. */
+  textOf(n: number): string {
+    return this.requests[n]!.user.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n");
+  }
+}
+
+/** Photos and voice notes as #26 and #27 will resolve them: synthetic bytes, a recorded transcript. */
+const recordedMedia: BurstMediaResolver = {
+  async resolve(_tenant, job) {
+    return job.kind === "image" ? photo() : voice(TRANSCRIPT);
+  },
+};
+
+async function firstOrderTrip(readings: unknown[]) {
+  const store = await storeWithStaff();
+  const staff = store.members[1]!;
+  const phone = newPhone();
+  const engine = new MemoryEngine(() => [], { catalog: CATALOG });
+  const provider = new RecordedProvider(readings);
+  const h = harness({ engine, modelProvider: provider, burstMedia: recordedMedia });
+  const tenant = { businessId: store.businessId };
+
+  const notices: CustomerNotice[] = [];
+  const onConsoleAction = engine.onConsoleAction.bind(engine);
+  engine.onConsoleAction = async (context, envelope) => {
+    const result = await onConsoleAction(context, envelope);
+    notices.push(...result.notices);
+    return result;
+  };
+
+  const settle = async () => {
+    h.clock.advance(SETTLED_MS);
+    await h.deliver(h.takeRingsFor(store.businessId));
+  };
+  /** One burst: each message a moment after the one before, then the conversation settles. */
+  const burst = async (...messages: readonly unknown[]) => {
+    h.clock.advance(1_000);
+    for (const message of messages) {
+      h.clock.advance(200);
+      await h.post(webhook(store.phoneNumberId, { messages: [message] }));
+    }
+    await settle();
+  };
+  const at = () => ({ from: phone, id: wamid(), timestampS: nowS(h) });
+  const text = (body: string) => textMessage({ ...at(), body });
+
+  let cookie: string | null = null;
+  /** A staff tap on the preparation list, through the console route. */
+  const staffTap = async (type: "start_preparing" | "mark_ready", operationKey: string) => {
+    cookie ??= await login(h, store.businessId, staff.userId);
+    const card = (await engine.preparationList(tenant))[0]!;
+    const response = await consoleSend(h, "/console/acciones", {
+      method: "POST",
+      cookie,
+      form: { type, orderId: card.order.orderId, version: String(card.order.version), operationKey, csrf: await csrfFor(h, cookie) },
+    });
+    expect(response.status).toBe(303);
+  };
+
+  return { h, store, phone, engine, provider, tenant, notices, burst, text, at, staffTap };
+}
+
+const EXPECTED_READBACK = [
+  "Tu pedido:",
+  "1. Aceite Clover 1 L: 1 × L 60 = L 60",
+  "2. Arroz 1 lb: 3 libras × L 30 = L 90",
+  "3. Jabón Xtra: 3 × L 35 = L 105",
+  "4. Azúcar 1 lb: 2 libras × L 30 = L 60",
+  "Lo recogés en la tienda.",
+  "Total: L 315",
+  "¿Está bien así? Respondé Confirmar, Corregir o Cancelar.",
+].join("\n");
+
+describe("the first order, from reading to reply", () => {
+  it("goes Hola → name → list and voice note → size → pickup → readback → Confirmar → on the list → listo", async () => {
+    const t = await firstOrderTrip(Object.values(READINGS).concat([READINGS.whenReady]));
+
+    await t.burst(t.text("Hola, quiero hacer un pedido"));
+    // The name, a photo of the list and a voice note settle into one burst: one reading, one reply.
+    await t.burst(
+      t.text("Carla"),
+      imageMessage({ ...t.at(), mediaId: "media-list" }),
+      audioMessage({ ...t.at(), mediaId: "media-voice" }),
+    );
+    expect(t.provider.requests).toHaveLength(2);
+    await t.burst(t.text("de litro"));
+    await t.burst(t.text("lo paso a traer"));
+
+    const readback = t.h.channel.sent.filter((sent) => sent.toPhone === t.phone).at(-1)!;
+    expect(readback.body).toBe(EXPECTED_READBACK);
+    const confirm = readback.buttons?.find((button) => button.title === "Confirmar");
+    expect(readback.buttons?.map((button) => button.title)).toEqual(["Confirmar", "Corregir", "Cancelar"]);
+    expect(confirm?.id).toMatch(/^confirm:order-[0-9a-f-]+:v1$/);
+    expect(await t.engine.preparationList(t.tenant)).toEqual([]); // nothing on the list before Confirmar
+
+    await t.burst(buttonReply({ ...t.at(), replyId: confirm!.id, title: "Confirmar" }));
+    const [card] = await t.engine.preparationList(t.tenant);
+    expect(card).toMatchObject({ customerName: "Carla", order: { state: "confirmado", version: 1, total: 31500 } });
+
+    await t.burst(t.text("¿a qué hora está?"));
+    await t.staffTap("start_preparing", "k-start");
+    await t.staffTap("mark_ready", "k-ready");
+    expect((await t.engine.preparationList(t.tenant))[0]!.order.state).toBe("listo");
+    // The engine's notice renders as the PRD says; queuing it with the tap is #18 (console taps save
+    // with their customer messages), so it doesn't reach the phone yet.
+    expect(t.notices.map((notice) => renderNotice(notice.notice).body)).toEqual([
+      "Tu pedido ya está listo. Total L 315. Ya podés pasar a traerlo.",
+    ]);
+    await t.burst(t.text("¿ya está?"));
+
+    expect(t.h.sentTo(t.phone)).toEqual([
+      "¿A nombre de quién lo anoto?",
+      "¿De qué tamaño querés 1 aceite clover?",
+      "¿Lo recogés en la tienda o te lo llevamos?",
+      EXPECTED_READBACK,
+      COPY.confirmed,
+      "Vas primero en la lista. Te aviso apenas esté listo.",
+      COPY.statusReady,
+    ]);
+
+    // Each reply was written once and sent once, in order.
+    const outbox = await rows<{ body_text: string; status: string }>(
+      `SELECT body_text, status FROM outbound_messages WHERE business_id = ? ORDER BY seq`,
+      t.store.businessId,
+    );
+    expect(outbox.map((row) => row.body_text)).toEqual(t.h.sentTo(t.phone));
+    expect(outbox.every((row) => row.status === "sent")).toBe(true);
+
+    // The name was asked once and saved once, through our own records.
+    expect(await rows(`SELECT name, name_asked_at_ms IS NOT NULL AS asked FROM customers WHERE business_id = ?`, t.store.businessId)).toEqual([
+      { name: "Carla", asked: 1 },
+    ]);
+    // Six readings, one model call each; the tap needed none.
+    expect(t.provider.requests).toHaveLength(6);
+    expect(await rows(`SELECT 1 FROM inbound_messages WHERE business_id = ? AND job_state <> 'done'`, t.store.businessId)).toEqual([]);
+  }, 30_000);
+
+  it("gives perception the burst in order, the open order's labels and the question asked last", async () => {
+    const t = await firstOrderTrip([READINGS.hola, READINGS.nameListVoice, READINGS.deLitro]);
+    await t.burst(t.text("Hola, quiero hacer un pedido"));
+    await t.burst(
+      t.text("Carla"),
+      imageMessage({ ...t.at(), mediaId: "media-list" }),
+      audioMessage({ ...t.at(), mediaId: "media-voice" }),
+    );
+    await t.burst(t.text("de litro"));
+
+    expect(t.provider.textOf(0)).toContain("PREGUNTA PENDIENTE: ninguna");
+    expect(t.provider.textOf(1)).toContain("PREGUNTA PENDIENTE: customer_name");
+    const burst = t.provider.requests[1]!.user;
+    expect(burst.filter((part) => part.type === "image")).toHaveLength(1);
+    expect(t.provider.textOf(1)).toContain(`[0] texto: "Carla"`);
+    expect(t.provider.textOf(1)).toContain("[1] foto:");
+    expect(t.provider.textOf(1)).toContain(`[2] nota de voz (transcripcion): ${JSON.stringify(TRANSCRIPT)}`);
+    expect(t.provider.textOf(2)).toContain("PREGUNTA PENDIENTE: ambiguous_size");
+    expect(t.provider.textOf(2)).toContain(`L1: "1 aceite clover: 1"\nL2: "Arroz 1 lb: 3"\nL3: "Jabón Xtra: 3"\nL4: "Azúcar 1 lb: 2"`);
+    // Logs carry IDs and counts, never what the customer wrote.
+    expect(t.h.log.lines.join("\n")).not.toMatch(/Carla|aceite|azúcar|litro/i);
+  });
+
+  it("a replayed webhook changes nothing: no reading, no record, no reply", async () => {
+    const t = await firstOrderTrip([READINGS.hola, READINGS.nameListVoice, READINGS.deLitro, READINGS.pickup]);
+    await t.burst(t.text("Hola, quiero hacer un pedido"));
+    await t.burst(t.text("Carla"), imageMessage({ ...t.at(), mediaId: "m1" }), audioMessage({ ...t.at(), mediaId: "m2" }));
+    await t.burst(t.text("de litro"));
+    const pickup = t.text("lo paso a traer");
+    await t.burst(pickup);
+
+    const before = {
+      outbox: await rows(`SELECT id, status FROM outbound_messages WHERE business_id = ? ORDER BY seq`, t.store.businessId),
+      inbound: await rows(`SELECT id, job_state FROM inbound_messages WHERE business_id = ?`, t.store.businessId),
+      reads: await rows(`SELECT * FROM burst_reads WHERE business_id = ?`, t.store.businessId),
+      sent: t.h.sentTo(t.phone),
+    };
+    await t.burst(pickup); // Meta delivers the same message again
+    await t.burst(pickup);
+
+    expect(t.provider.requests).toHaveLength(4);
+    expect(await rows(`SELECT id, status FROM outbound_messages WHERE business_id = ? ORDER BY seq`, t.store.businessId)).toEqual(before.outbox);
+    expect(await rows(`SELECT id, job_state FROM inbound_messages WHERE business_id = ?`, t.store.businessId)).toEqual(before.inbound);
+    expect(await rows(`SELECT * FROM burst_reads WHERE business_id = ?`, t.store.businessId)).toEqual(before.reads);
+    expect(t.h.sentTo(t.phone)).toEqual(before.sent);
+    expect(t.h.sentTo(t.phone).at(-1)).toBe(EXPECTED_READBACK);
+    // The order is still version 1, waiting on Confirmar: nothing was applied twice.
+    const [customer] = await rows<{ id: string }>(`SELECT id FROM customers WHERE business_id = ?`, t.store.businessId);
+    const context = { ...t.tenant, customerId: customer!.id, conversationId: "", jobId: "", nowMs: 0 };
+    expect((await t.engine.perceptionContext(context)).openOrder?.lines).toHaveLength(4);
+  });
+
+  it("a reading that fails is retried; it never saves half a burst, and the honest reply comes after the last try", async () => {
+    const t = await firstOrderTrip([READINGS.hola]);
+    t.provider.failNext = 3;
+    await t.burst(t.text("Hola, quiero hacer un pedido"));
+    for (let n = 0; n < 3; n++) {
+      t.h.clock.advance(30_000);
+      await t.h.deliver(t.h.takeRingsFor(t.store.businessId));
+    }
+    expect(t.provider.requests).toHaveLength(3);
+    expect(t.h.sentTo(t.phone)).toEqual(["Perdón, no pude revisar tu mensaje. ¿Me lo mandás otra vez?"]);
+    expect(await rows(`SELECT 1 FROM burst_reads WHERE business_id = ?`, t.store.businessId)).toEqual([]);
+    expect(t.h.log.fields("job_attempt_failed").map((fields) => fields.reason)).toContain("ReadingFailedError");
+  });
+
+  it("uses no reader without MODEL_API_KEY, or with an engine that can't tell perception about the order", async () => {
+    const engine = new MemoryEngine();
+    const deps = { clock: { now: () => 0 }, log: { info() {}, warn() {}, error() {} } };
+    expect(buildOrderReading(testEnv({ MODEL_API_KEY: "" } as Partial<Env>), engine, deps)).toBeNull();
+    const provider = new RecordedProvider([]);
+    expect(buildOrderReading(testEnv(), engine, deps, { provider })).not.toBeNull();
+    expect(buildOrderReading(testEnv(), new LedgerEngine(), deps, { provider })).toBeNull();
   });
 });

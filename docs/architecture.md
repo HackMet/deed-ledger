@@ -196,6 +196,17 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
   leaves them unread for the retry; a message arriving during handling waits for its own reading. A readback is
   remembered (and the name marked asked) only when its reply is written, so a typed word never answers a readback the
   customer didn't get.
+- **Reading a burst (#17).** The reading's job asks the engine for perception's context (the open order's labelled
+  lines and the question asked last, gap a) and the store's catalog (gap b), through `OrderReadingSource`
+  (`src/application/order-reading.ts`, local until the contract has both). Each job becomes one message of the
+  burst, in order; photos and voice notes go through `BurstMediaResolver` (#26 reads the photo back from R2, #27
+  transcribes; until then a photo reads as "no disponible" and a voice note as an empty transcript). One Muse Spark
+  call reads the burst; code matches lines by barcode, exact name or known alias, and `Engine.onBurst` gets the
+  reading and those matches only (the model's label picks are logged and dropped until the contract has them). A
+  reading that fails (spend cap, provider refusal or outage, output off the schema) throws `ReadingFailedError`:
+  the job retries and, after its last attempt, sends the failure reply; nothing is saved. Replies come from
+  `replyForOutcome` (templates, claims, buttons). The reader is wired in `composition.ts` when an engine with those
+  reads exists and `MODEL_API_KEY` is set; otherwise a burst gets the placeholder.
 - **Customers.** `CustomerRepository` builds the channel-side commits the handler adds to the job's batch: the name
   (saved once, first answer wins), that the name was asked (once), and the readback shown. Business records are the
   engine's.

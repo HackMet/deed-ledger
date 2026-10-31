@@ -4,7 +4,8 @@
  * D1 repositories.
  */
 import type { Engine } from "./application/engine";
-import { createOrderHandler } from "./application/order-handler";
+import { type BurstReader as OrderBurstReader, createOrderHandler } from "./application/order-handler";
+import { type BurstMediaResolver, createOrderReading, readingSourceOf, unresolvedMedia } from "./application/order-reading";
 import { placeholderHandler } from "./application/placeholder-handler";
 import type { Deps, Pendientes } from "./application/ports";
 import { type Config, readConfig } from "./infrastructure/config";
@@ -25,7 +26,7 @@ import { WhatsAppCloudChannel } from "./integrations/whatsapp/client";
 import { unavailableMediaSource } from "./integrations/whatsapp/media";
 import { SEND_TIMEOUT_MS } from "./domain/outbox";
 import { BurstReader } from "./application/perception/reader";
-import type { Clock, Logger } from "./application/ports";
+import type { Clock, Logger, ModelProvider } from "./application/ports";
 import { D1SpendLedger } from "./infrastructure/d1/spend-repository";
 import { MuseSparkProvider } from "./integrations/meta/spark";
 
@@ -44,7 +45,15 @@ export type RuntimeOverrides = Partial<
     Deps,
     "clock" | "ids" | "log" | "sleep" | "hasher" | "doorbell" | "channel" | "mediaSource" | "mediaStore" | "jobHandler"
   >
-> & { readonly db?: D1Database; readonly engine?: Engine; readonly pendientes?: Pendientes };
+> & {
+  readonly db?: D1Database;
+  readonly engine?: Engine;
+  readonly pendientes?: Pendientes;
+  /** Stands in for Muse Spark (tests answer with recorded readings). */
+  readonly modelProvider?: ModelProvider;
+  /** Photos and voice notes for the reader (#26, #27); unresolved until they land. */
+  readonly burstMedia?: BurstMediaResolver;
+};
 
 export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtime {
   const config = readConfig(env);
@@ -54,8 +63,10 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
   const log = overrides.log ?? consoleLogger;
   const jobs = new D1JobRepository(db);
   const customers = new D1CustomerRepository(db);
+  const pendientes = overrides.pendientes ?? new LoggingPendientes(log);
   // Customers' messages go to the order handler once an engine is wired in (#13 plugs the real one in here).
-  const orderHandler = engine === null ? null : createOrderHandler({ engine, jobs, customers, clock, log });
+  const reader = engine === null ? null : buildOrderReading(env, engine, { clock, log }, { db, ...readingOverrides(overrides) });
+  const orderHandler = engine === null ? null : createOrderHandler({ engine, jobs, customers, clock, log, pendientes, reader });
   return {
     config,
     engine,
@@ -85,7 +96,7 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
       jobHandler: overrides.jobHandler ?? orderHandler ?? placeholderHandler,
       // The second claim check reads the records through the engine; none wired, no claim holds.
       claimVerifier: engine,
-      pendientes: overrides.pendientes ?? new LoggingPendientes(overrides.log ?? consoleLogger),
+      pendientes,
     },
   };
 }
@@ -102,16 +113,50 @@ export function buildBurstReader(
     readonly db?: D1Database;
     readonly fetch?: (input: string, init: RequestInit) => Promise<Response>;
     readonly dailyCapMicroUsd?: number;
+    readonly provider?: ModelProvider;
   } = {},
 ): BurstReader {
   return new BurstReader({
-    provider: new MuseSparkProvider({
-      apiKey: env.MODEL_API_KEY ?? "",
-      fetch: overrides.fetch ?? ((input, init) => fetch(input, init)),
-    }),
+    provider:
+      overrides.provider ??
+      new MuseSparkProvider({
+        apiKey: env.MODEL_API_KEY ?? "",
+        fetch: overrides.fetch ?? ((input, init) => fetch(input, init)),
+      }),
     spend: new D1SpendLedger(overrides.db ?? env.DB),
     clock: deps.clock,
     log: deps.log,
     ...(overrides.dailyCapMicroUsd === undefined ? {} : { dailyCapMicroUsd: overrides.dailyCapMicroUsd }),
   });
+}
+
+/**
+ * The order handler's reader: Muse Spark when MODEL_API_KEY is set (or a provider is passed) and the
+ * engine offers perception's reads (gaps a and b). Otherwise null, and bursts get the placeholder.
+ */
+export function buildOrderReading(
+  env: Env,
+  engine: Engine,
+  deps: { readonly clock: Clock; readonly log: Logger },
+  overrides: { readonly db?: D1Database; readonly provider?: ModelProvider; readonly media?: BurstMediaResolver } = {},
+): OrderBurstReader | null {
+  const source = readingSourceOf(engine);
+  if (source === null) return null;
+  if (overrides.provider === undefined && (env.MODEL_API_KEY ?? "") === "") return null;
+  return createOrderReading({
+    reader: buildBurstReader(env, deps, {
+      ...(overrides.db === undefined ? {} : { db: overrides.db }),
+      ...(overrides.provider === undefined ? {} : { provider: overrides.provider }),
+    }),
+    source,
+    media: overrides.media ?? unresolvedMedia,
+    log: deps.log,
+  });
+}
+
+function readingOverrides(overrides: RuntimeOverrides): { provider?: ModelProvider; media?: BurstMediaResolver } {
+  return {
+    ...(overrides.modelProvider === undefined ? {} : { provider: overrides.modelProvider }),
+    ...(overrides.burstMedia === undefined ? {} : { media: overrides.burstMedia }),
+  };
 }

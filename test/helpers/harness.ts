@@ -7,7 +7,8 @@ import {
 } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import type { Engine } from "../../src/application/engine";
-import type { Deps, JobHandler, MediaSource } from "../../src/application/ports";
+import type { BurstMediaResolver } from "../../src/application/order-reading";
+import type { Deps, JobHandler, MediaSource, ModelProvider } from "../../src/application/ports";
 import { buildRuntime } from "../../src/composition";
 import { createWorker } from "../../src/index";
 import type { DoorbellMessage } from "../../src/infrastructure/queue-doorbell";
@@ -44,6 +45,9 @@ export interface HarnessOptions {
   readonly db?: D1Database;
   readonly env?: Env;
   readonly engine?: Engine;
+  /** Recorded readings instead of Muse Spark: with an engine, wires the real reader. */
+  readonly modelProvider?: ModelProvider;
+  readonly burstMedia?: BurstMediaResolver;
 }
 
 /** The real Worker (routes, D1 repositories, R2) with fake providers and a controllable clock. */
@@ -69,6 +73,8 @@ export function harness(options: HarnessOptions = {}) {
       ...(options.jobHandler === undefined ? {} : { jobHandler: options.jobHandler }),
       ...(options.db === undefined ? {} : { db: options.db }),
       ...(options.engine === undefined ? {} : { engine: options.engine }),
+      ...(options.modelProvider === undefined ? {} : { modelProvider: options.modelProvider }),
+      ...(options.burstMedia === undefined ? {} : { burstMedia: options.burstMedia }),
     });
   const worker = createWorker(makeRuntime);
   const deps: Deps = makeRuntime(workerEnv).deps;
