@@ -5,11 +5,37 @@
 //   3. seeds the synthetic demo store if it isn't there yet
 //   4. starts `wrangler dev` with only that env file, so .dev.vars is never loaded
 //
-//   npm run dev:sim            then, in another terminal:   npm run simulate -- --text "Hola"
+//   npm run dev:sim            then, in another terminal:   npm run chat
+//
+// With --ai, customer messages are read by Muse Spark for real, which spends Meta credits (about
+// US$0.01 per message, inside the per-store daily cap). Only MODEL_API_KEY is taken, from
+// MODEL_API_KEY in the environment or the --vars file (default .dev.vars); WhatsApp stays fake.
+//
+//   npm run dev:sim -- --ai --vars ../hackathon/.dev.vars
 import { spawn } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { queryLocal, SIM, SIM_SECRETS, SIM_VARS, simChildEnv, wrangler } from "./lib/sim.mjs";
+import { parseArgs, queryLocal, SIM, SIM_SECRETS, SIM_VARS, simChildEnv, wrangler } from "./lib/sim.mjs";
+
+const args = parseArgs(process.argv.slice(2));
+
+/** The model key for --ai, read without printing it; null when there is none. */
+function modelKey() {
+  if ((process.env.MODEL_API_KEY ?? "") !== "") return process.env.MODEL_API_KEY;
+  const path = typeof args.vars === "string" ? args.vars : ".dev.vars";
+  if (!existsSync(path)) return null;
+  const line = readFileSync(path, "utf8")
+    .split("\n")
+    .find((row) => row.startsWith("MODEL_API_KEY="));
+  const value = line?.slice("MODEL_API_KEY=".length).trim().replace(/^["']|["']$/g, "") ?? "";
+  return value === "" ? null : value;
+}
+
+const aiKey = args.ai === true ? modelKey() : null;
+if (args.ai === true && aiKey === null) {
+  console.error("--ai needs MODEL_API_KEY: set it in the environment or pass --vars <path to .dev.vars>.");
+  process.exit(1);
+}
 
 mkdirSync(dirname(SIM.envFile), { recursive: true });
 writeFileSync(
@@ -50,7 +76,9 @@ console.log(`Starting the Worker on http://127.0.0.1:${SIM.port} (fake secrets, 
 const dev = spawn(
   "npx",
   ["wrangler", "dev", "--env-file", SIM.envFile, "--persist-to", SIM.persistTo, "--port", String(SIM.port), "--ip", "127.0.0.1"],
-  { stdio: "inherit", env: simChildEnv() },
+  // The key travels only in the child's environment, never in the env file on disk.
+  { stdio: "inherit", env: aiKey === null ? simChildEnv() : { ...simChildEnv(), MODEL_API_KEY: aiKey } },
 );
+if (aiKey !== null) console.log("AI mode: customer messages are read by Muse Spark (spends Meta credits).");
 dev.on("exit", (code) => process.exit(code ?? 0));
 for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => dev.kill(signal));

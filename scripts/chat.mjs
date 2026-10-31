@@ -89,7 +89,7 @@ async function printReplies() {
 function intro() {
   console.log(`${color.dim}Chateás como el cliente ${phone} con ${SIM.storeName}.`);
   console.log(`Escribí como en WhatsApp. 1, 2 o 3 tocan un botón. /new, /sweep, /q.${color.off}`);
-  console.log(`${color.dim}Sin MODEL_API_KEY el simulador no lee pedidos: la bienvenida, ALTO y los botones sí funcionan.${color.off}\n`);
+  console.log(`${color.dim}Para que la IA lea pedidos, arrancá el simulador con: npm run dev:sim -- --ai --vars ../hackathon/.dev.vars${color.off}\n`);
 }
 
 lastSeq = (readReplies(0) ?? []).reduce((max, row) => Math.max(max, row.seq), 0);
