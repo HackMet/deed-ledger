@@ -8,8 +8,8 @@
 //   npm run simulate -- --text "Hola" --from 50400000099     (another customer)
 //   npm run simulate -- --sweep            (also run the cron sweep once)
 // Options: --to <phone_number_id>, --url <base URL>, --wait <seconds> (default 6)
-import { createHmac, randomUUID } from "node:crypto";
-import { parseArgs, queryLocal, SIM } from "./lib/sim.mjs";
+import { randomUUID } from "node:crypto";
+import { parseArgs, postWebhook, queryLocal, SIM } from "./lib/sim.mjs";
 
 const args = parseArgs(process.argv.slice(2));
 const url = typeof args.url === "string" ? args.url : `http://127.0.0.1:${SIM.port}`;
@@ -27,32 +27,7 @@ if (args.image === true) {
   message = { ...base, type: "text", text: { body: typeof args.text === "string" ? args.text : "Hola" } };
 }
 
-const body = JSON.stringify({
-  object: "whatsapp_business_account",
-  entry: [
-    {
-      id: "900000000000001",
-      changes: [
-        {
-          field: "messages",
-          value: {
-            messaging_product: "whatsapp",
-            metadata: { display_phone_number: "15550000000", phone_number_id: to },
-            contacts: [{ profile: { name: "Simulador" }, wa_id: from }],
-            messages: [message],
-          },
-        },
-      ],
-    },
-  ],
-});
-const signature = `sha256=${createHmac("sha256", SIM.appSecret).update(body).digest("hex")}`;
-
-const response = await fetch(`${url}/webhooks/whatsapp`, {
-  method: "POST",
-  headers: { "content-type": "application/json", "x-hub-signature-256": signature },
-  body,
-});
+const response = await postWebhook(url, message, { from, to });
 console.log(`POST /webhooks/whatsapp → ${response.status} ${await response.text()}`);
 
 if (args.sweep === true) {

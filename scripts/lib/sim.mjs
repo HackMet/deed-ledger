@@ -1,5 +1,6 @@
 // Shared settings for the local simulator. Everything here is fake and safe to commit.
 import { spawnSync } from "node:child_process";
+import { createHmac } from "node:crypto";
 
 export const SIM = {
   appSecret: "sim-app-secret-not-real",
@@ -78,4 +79,33 @@ export function parseArgs(argv) {
     }
   }
   return args;
+}
+
+/** Posts one message to the local Worker as a Meta webhook, signed with the simulator's app secret. */
+export async function postWebhook(url, message, { from, to = SIM.phoneNumberId }) {
+  const body = JSON.stringify({
+    object: "whatsapp_business_account",
+    entry: [
+      {
+        id: "900000000000001",
+        changes: [
+          {
+            field: "messages",
+            value: {
+              messaging_product: "whatsapp",
+              metadata: { display_phone_number: "15550000000", phone_number_id: to },
+              contacts: [{ profile: { name: "Simulador" }, wa_id: from }],
+              messages: [message],
+            },
+          },
+        ],
+      },
+    ],
+  });
+  const signature = `sha256=${createHmac("sha256", SIM.appSecret).update(body).digest("hex")}`;
+  return fetch(`${url}/webhooks/whatsapp`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-hub-signature-256": signature },
+    body,
+  });
 }

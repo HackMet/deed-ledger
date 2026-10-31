@@ -13,6 +13,7 @@
     "cf-typegen": "wrangler types",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "simulate": "node scripts/simulate.mjs",
+    "chat": "node scripts/chat.mjs",
     "admin:create-store": "node scripts/admin-create-store.mjs",
     "admin:invite": "node scripts/admin-invite.mjs"
   },

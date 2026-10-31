@@ -21,6 +21,7 @@ import { D1OutboxRepository } from "./infrastructure/d1/outbox-repository";
 import { D1TenancyRepository } from "./infrastructure/d1/tenancy-repository";
 import { HmacKeyedHasher } from "./infrastructure/keyed-hasher";
 import { LoggingPendientes } from "./infrastructure/logging-pendientes";
+import { DEMO_CATALOG } from "./infrastructure/memory/demo-catalog";
 import { demoOrders } from "./infrastructure/memory/demo-orders";
 import { MemoryEngine } from "./infrastructure/memory/memory-engine";
 import { QueueDoorbell } from "./infrastructure/queue-doorbell";
@@ -47,7 +48,7 @@ export interface Runtime {
 }
 
 /** One pretend engine per Worker isolate, so the dev console's taps last between requests. */
-const devEngine = new MemoryEngine(() => demoOrders(Date.now()));
+const devEngine = new MemoryEngine(() => demoOrders(Date.now()), { catalog: DEMO_CATALOG });
 
 export type RuntimeOverrides = Partial<
   Pick<
