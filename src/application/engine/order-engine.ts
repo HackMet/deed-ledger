@@ -64,6 +64,25 @@ const CANCELLABLE: readonly OrderState[] = ["armando", "por_confirmar", "confirm
 /** The operation key of a customer's burst: a retried job saves once. */
 export const burstKey = (jobId: string): string => `burst:${jobId}`;
 
+/**
+ * The operation key a customer action must carry (contract: `confirm:<order>:v<version>`), so a key
+ * names one action on one order. Null for actions that save nothing in this cut.
+ */
+export function actionKey(action: Extract<CustomerAction, { type: "confirm_order" | "cancel_order" | "remove_line" }>): string;
+export function actionKey(action: CustomerAction): string | null;
+export function actionKey(action: CustomerAction): string | null {
+  switch (action.type) {
+    case "confirm_order":
+      return `confirm:${action.orderId}:v${action.version}`;
+    case "cancel_order":
+      return `cancel:${action.orderId}:v${action.version}`;
+    case "remove_line":
+      return `remove:${action.orderId}:v${action.version}:${action.lineId}`;
+    default:
+      return null;
+  }
+}
+
 /** 1500 -> "1.5": the canonical decimal for a quantity in thousandths. */
 export function fromThousandths(milli: number): string {
   const whole = Math.floor(milli / 1000);
@@ -187,6 +206,12 @@ export class OrderEngine implements Engine {
       const own = await store.openOrder(context, context.customerId);
       return result({ type: "rejected", reason: "not_found", order: own?.view ?? null });
     }
+    // The key must be the one this action on this order derives: an unrelated string is refused, so a
+    // key can only ever name an order that passed the check above.
+    const expected = actionKey(action);
+    // correct_order, accept_saved_place, accept_substitute: not in this cut (#11). Nothing is read or saved.
+    if (expected === null) return result({ type: "nothing" });
+    if (envelope.operationKey !== expected) return result({ type: "rejected", reason: "not_allowed", order: null });
     // Only now is the key this customer's own: a replay answers from the first outcome, before the version check.
     const first = await store.firstOutcome(context, envelope.operationKey);
     if (first !== null) return result({ type: "duplicate", first });
@@ -207,7 +232,6 @@ export class OrderEngine implements Engine {
         return this.change(context, envelope.operationKey, stored, next.lines, view.fulfillment);
       }
       default:
-        // correct_order, accept_saved_place, accept_substitute: not in this cut (#11).
         return result({ type: "nothing" });
     }
   }
@@ -222,7 +246,7 @@ export class OrderEngine implements Engine {
     if (open === null || open.view.state !== "por_confirmar") return null;
     const { orderId, version } = open.view;
     return {
-      operationKey: `${type === "confirm_order" ? "confirm" : "cancel"}:${orderId}:v${version}`,
+      operationKey: actionKey({ type, orderId, version }),
       actor: { type: "customer", customerId: context.customerId },
       action: { type, orderId, version },
     };
