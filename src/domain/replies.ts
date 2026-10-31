@@ -18,8 +18,10 @@ import type {
   OrderState,
   OrderView,
   QuestionCode,
+  StoreHours,
 } from "./contract/outcomes";
 import { countedLineAmount, countsTowardTotal, orderSubtotal } from "./money";
+import { formatStoreHours, isUsableStoreHours, storeHoursKey } from "./store-hours";
 
 // ---------------------------------------------------------------------------------------------
 // Types
@@ -63,6 +65,7 @@ export const OUTCOME_TEMPLATES = {
   order_cancelled: "order_cancelled",
   order_status: "order_status",
   answer: "answer",
+  store_hours: "store_hours",
   balance: "balance",
   payment_claimed: "payment_claimed",
   handoff: "handoff",
@@ -127,6 +130,8 @@ export const COPY = {
   outOfScope: "Solo te puedo ayudar con pedidos, precios y tu cuenta de la tienda. ¿Qué te mando?",
   refusedTap: "Ese botón ya no aplica. Si necesitás algo con tu pedido, escribime.",
   whichProduct: "¿De qué producto me preguntás?",
+  /** Store hours not set in settings (#47): never a guessed schedule. */
+  hoursUnknown: "El horario te lo confirmo.",
   paymentRejected: "No pudimos confirmar ese pago. Si tenés otro comprobante, mandámelo.",
   pickupReady: "Ya podés pasar a traerlo.",
   substituteFallback: "Tocá un botón o escribime qué preferís.",
@@ -239,6 +244,8 @@ export function renderOutcome(outcome: EngineOutcome, context: { readonly custom
       return statusReply("order_status", outcome.order);
     case "answer":
       return answerReply(outcome.topic, outcome.facts);
+    case "store_hours":
+      return storeHoursReply(outcome.hours);
     case "balance":
       return balanceReply(outcome.balance, context.customerId);
     case "payment_claimed":
@@ -471,16 +478,38 @@ function answerReply(topic: "price" | "availability", facts: readonly AnswerFact
         lines.push(`${capitalize(asked)}: el precio te lo confirmo.`);
       }
     } else if (fact.productId !== null && fact.availability === "hay") {
-      lines.push(`Sí hay ${asked}.`);
+      lines.push(`${capitalize(asked)}: sí hay.`);
       claims.push(one({ type: "availability", productId: fact.productId, availability: "hay" }));
     } else if (fact.productId !== null && fact.availability === "se_acabo") {
-      lines.push(`No nos queda ${asked}.`);
+      lines.push(`${capitalize(asked)}: se nos acabó.`);
       claims.push(one({ type: "availability", productId: fact.productId, availability: "se_acabo" }));
     } else {
-      lines.push(`Te confirmo si hay ${asked}.`);
+      // No record (or no recent evidence): never a guess (PRD "Honest stock").
+      lines.push(`${capitalize(asked)}: te lo anoto y te confirmo.`);
     }
   }
   return reply("answer", lines.join("\n"), claims);
+}
+
+/** Hours from store settings only; unset (or unreadable) is "te confirmo", never a default. */
+function storeHoursReply(hours: StoreHours | null): RenderedReply {
+  if (!isUsableStoreHours(hours)) return reply("store_hours", COPY.hoursUnknown);
+  return reply("store_hours", formatStoreHours(hours), [one({ type: "store_hours", hours })]);
+}
+
+/**
+ * How many things a reply to this outcome tells the customer "te confirmo" about (#47): products
+ * with no match, no confirmed price or no recent stock evidence, or hours not set. Restricted
+ * products and "¿de qué producto?" promise nothing. Zero for every other outcome.
+ */
+export function unansweredCount(outcome: EngineOutcome): number {
+  if (outcome.type === "store_hours") return isUsableStoreHours(outcome.hours) ? 0 : 1;
+  if (outcome.type !== "answer") return 0;
+  return outcome.facts.filter((fact) => {
+    if (fact.restricted) return false;
+    if (fact.productId === null) return true;
+    return outcome.topic === "price" ? fact.unitPrice === null : fact.availability === "no_se";
+  }).length;
 }
 
 function balanceReply(balance: Centavos | null, customerId: string): RenderedReply {
@@ -598,6 +627,8 @@ function claimKey(claim: Claim): string {
       return `payment_confirmed|${claim.paymentClaimId}|${claim.amount}`;
     case "balance":
       return `balance|${claim.customerId}|${claim.balance}`;
+    case "store_hours":
+      return `store_hours|${storeHoursKey(claim.hours)}`;
     default:
       return unreachable(claim);
   }
@@ -655,6 +686,9 @@ export function backedClaims(source: ReplySource): Claim[] {
       break;
     case "balance":
       if (outcome.balance !== null) claims.push({ type: "balance", customerId: source.customerId, balance: outcome.balance });
+      break;
+    case "store_hours":
+      if (outcome.hours !== null) claims.push({ type: "store_hours", hours: outcome.hours });
       break;
     default:
       break;

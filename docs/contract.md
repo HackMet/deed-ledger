@@ -64,3 +64,58 @@ against the types and the fixtures; `npm run typecheck` fails when a fixture sto
 ## Open for the meeting
 
 1. **Kerly's spec:** not read yet. Anything here that conflicts with it wins a discussion, not a default.
+
+## Proposed (#47): customer questions
+
+**Status:** proposed by Angel's side, not agreed. Built against the pretend engine only. The types below are already
+in `src/domain/contract/outcomes.ts`, marked "Proposed (#47)"; they are additive (no existing type changed).
+
+1. **Question products are matched like lines.** For a `question` observation, a `LineMatch` with
+   `observation: i, line: n` points at `products[n]`. Code matches (exact name, known alias, barcode); a product
+   the code can't match has no `LineMatch` and is unknown. A question may drop one leading article ("el arroz")
+   only when the words as said match nothing; a tie stays unmatched. The model never supplies a product ID.
+2. **`price` and `availability` questions return the existing `answer` outcome,** one `AnswerFact` per entry of
+   `products`, in order, `asked` = the customer's words:
+   - `productId`: from a `LineMatch` only, else null.
+   - `unitPrice`: Johan's confirmed price (#36), else null. Never a proposed price. Null for restricted products.
+   - `availability`: from evidence (#37): `hay` only with recent evidence, `se_acabo` after No hay, else `no_se`.
+     `no_se` for an unmatched or restricted product.
+   - `restricted`: the product is alcohol or tobacco.
+   - Customers hear: "Arroz: sí hay." / "Leche: se nos acabó." / "Pan: te lo anoto y te confirmo." and
+     "El arroz: L 18." / "Pan: el precio te lo confirmo." Restricted: "eso solo lo vendemos aquí en la tienda."
+3. **New outcome for store hours (gap f):**
+
+   ```ts
+   export interface StoreHoursEntry {
+     readonly days: readonly number[]; // ISO weekdays, 1 = Monday … 7 = Sunday
+     readonly opens: string;           // "HH:MM", 24-hour, store local time
+     readonly closes: string;          // later than opens; past midnight isn't expressible yet
+   }
+   export type StoreHours = readonly StoreHoursEntry[];
+
+   // EngineOutcome gains:
+   | { readonly type: "store_hours"; readonly hours: StoreHours | null }
+   ```
+
+   `hours` comes from store settings (#40); unset is `null`, never a default. A day in no entry is closed; no day
+   appears in two entries. Customers hear "Abrimos de lunes a sábado de 7 a. m. a 7 p. m., y el domingo de 8 a. m.
+   a 12 del mediodía." or, when null or unreadable, "El horario te lo confirmo."
+4. **New claim:**
+
+   ```ts
+   // Claim gains:
+   | { readonly type: "store_hours"; readonly hours: StoreHours }
+   ```
+
+   `verifyClaims` answers true only when the store's hours now are exactly these (same entries, same order).
+   `unit_price` and `availability` claims need `verifyClaims` support too: true only while the confirmed price,
+   or the availability from evidence, is still the one claimed. Until then those replies go out as the safe reply.
+5. **Topic routing in the engine:** `order_status` → `order_status`; `price`/`availability` → `answer`;
+   `store_hours` → `store_hours`; `other` → `out_of_scope` (the short redirect); `balance` → unchanged (handoff in
+   the pretend engine). A burst that also changes the order gets the order's next step; the question isn't
+   answered in that reply (one outcome per burst).
+6. **Pendientes (our side):** every reply that says "te confirmo" about a price, a product or the hours raises a
+   `customer_question` Pendientes item (IDs, topic and a count; never the words). Part of gap (c).
+
+Open: `Question.products` are bare strings, so an unmatched "cerveza" can't be known as restricted and hears "te lo
+anoto y te confirmo". Proposal: the wire adds `restricted` per question product, like `ItemLine.restrictedCategory`.

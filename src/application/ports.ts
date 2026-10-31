@@ -789,7 +789,30 @@ export interface NoticeWaitingPendiente {
  * (the proposal there returns a Commit for the caller's own batch instead). Never throws.
  */
 export interface Pendientes {
-  raise(tenant: Tenant, item: PendienteItem | SlowReplyPendiente | HandoffPendienteItem | NoticeWaitingPendiente): Promise<void>;
+  raise(tenant: Tenant, item: AnyPendiente): Promise<void>;
+}
+
+export type AnyPendiente =
+  | PendienteItem
+  | SlowReplyPendiente
+  | HandoffPendienteItem
+  | NoticeWaitingPendiente
+  | CustomerQuestionPendiente;
+
+/**
+ * A customer asked something the records can't answer yet and was told "te lo anoto y te
+ * confirmo" (#47): a price not confirmed, a product with no recent stock evidence or not matched,
+ * or hours not set. Someone answers from the conversation. IDs and counts only, never the words.
+ */
+export interface CustomerQuestionPendiente {
+  readonly kind: "customer_question";
+  readonly conversationId: string;
+  readonly customerId: string;
+  /** The message that closed the burst holding the question. */
+  readonly inboundId: string;
+  readonly topic: "price" | "availability" | "store_hours";
+  /** How many things asked about got "te confirmo" (1 for hours). */
+  readonly unknown: number;
 }
 
 /** A customer asked to talk to a person ("quiero hablar con Johan"). IDs only, never the text. */

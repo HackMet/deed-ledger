@@ -324,6 +324,10 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
   row, fails the reply's later parts and raises a Pendientes item. An engine error retries the row later. Claims
   and buttons live on the row (migration 0006); a stored value that can't be read never holds.
 - Pendientes from outside the engine (gap c) go through the `Pendientes` port; today it only logs.
+- Customer questions (#47): a `question` reading's products are matched by code like order lines; the engine
+  answers `price`/`availability` with `answer` facts and `store_hours` with the proposed `store_hours` outcome
+  (contract "Proposed (#47)"). Price, stock and hours claims are checked twice like any other. An answer that says
+  "te confirmo" raises a `customer_question` Pendientes item from the order handler, IDs and counts only.
 - Reply buttons: up to three, IDs are operation keys (`confirm:<order>:v<version>`, `correct:…`, `cancel:…`,
   `substitute:<order>:v<version>:<line>`, `remove:…`). `WhatsAppCloudChannel.sendButtons` sends Meta's
   interactive reply-button shape, or plain text when the buttons don't fit; the body always carries

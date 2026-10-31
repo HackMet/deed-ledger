@@ -59,6 +59,8 @@ function sampleOutcome(kind: EngineOutcome["type"]): EngineOutcome {
       return { type: "order_status", order: confirmedOrder };
     case "answer":
       return { type: "answer", topic: "price", facts: [{ asked: "el arroz", productId: "p-arroz", unitPrice: 3000, availability: "hay", restricted: false }] };
+    case "store_hours":
+      return { type: "store_hours", hours: [{ days: [1, 2, 3, 4, 5, 6], opens: "07:00", closes: "19:00" }] };
     case "balance":
       return { type: "balance", balance: 12050 };
     case "payment_claimed":
@@ -117,7 +119,7 @@ function sampleNotice(kind: CustomerNotice["notice"]["type"]): CustomerNotice["n
 describe("the template list", () => {
   it("names a template for every outcome kind and every notice kind", () => {
     const outcomeKinds = Object.keys(OUTCOME_TEMPLATES) as EngineOutcome["type"][];
-    expect(outcomeKinds).toHaveLength(16);
+    expect(outcomeKinds).toHaveLength(17);
     for (const kind of outcomeKinds) {
       const outcome = sampleOutcome(kind);
       const rendered = renderOutcome(outcome, CUSTOMER);
@@ -302,7 +304,7 @@ describe("templates", () => {
         { asked: "pan", productId: "p-pan", unitPrice: null, availability: "no_se", restricted: false },
       ],
     });
-    expect(stock.body).toBe(["Sí hay huevos.", "No nos queda leche.", "Te confirmo si hay pan."].join("\n"));
+    expect(stock.body).toBe(["Huevos: sí hay.", "Leche: se nos acabó.", "Pan: te lo anoto y te confirmo."].join("\n"));
   });
 
   it("quotes customer words flat and capped, as data", () => {
@@ -499,5 +501,6 @@ const _claimKinds: Record<Claim["type"], true> = {
   availability: true,
   payment_confirmed: true,
   balance: true,
+  store_hours: true,
 };
 void _claimKinds;

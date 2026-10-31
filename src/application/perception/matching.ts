@@ -43,14 +43,22 @@ export function labelCatalog(products: readonly CatalogProduct[]): LabelledCatal
   return { labels, productByLabel };
 }
 
-/** Lines matched by barcode, exact name or known alias. Unmatched lines are simply absent. */
+/**
+ * Lines matched by barcode, exact name or known alias. Unmatched lines are simply absent. A
+ * question's products are matched the same way, `line` indexing its `products` (proposed, #47).
+ */
 export function matchLines(observations: readonly Observation[], products: readonly CatalogProduct[]): LineMatch[] {
   const matches: LineMatch[] = [];
   observations.forEach((observation, index) => {
-    linesOf(observation).forEach((line, lineIndex) => {
-      if (!line) return;
-      const found = matchName(line.name, products);
-      if (found) matches.push({ observation: index, line: lineIndex, productId: found.productId, how: found.how });
+    namesOf(observation).forEach((name, lineIndex) => {
+      if (name === null) return;
+      let found = matchName(name, products);
+      if (found === null && observation.kind === "question") {
+        // Only when the words as said fit nothing at all, never to break a tie.
+        const bare = withoutArticle(name);
+        if (bare !== name) found = matchName(bare, products);
+      }
+      if (found !== null && found !== "ambiguous") matches.push({ observation: index, line: lineIndex, productId: found.productId, how: found.how });
     });
   });
   return matches;
@@ -71,19 +79,33 @@ export function resolvePicks(
   return out;
 }
 
-/** Lines by index (edits, for order_change: only `add` edits carry a line). */
-function linesOf(observation: Observation): readonly (ItemLine | null)[] {
+/**
+ * Product names by index: lines (edits, for order_change: only `add` edits carry a line), or a
+ * question's products in the customer's words.
+ */
+function namesOf(observation: Observation): readonly (string | null)[] {
+  const name = (line: ItemLine) => line.name;
   switch (observation.kind) {
     case "customer_order":
     case "sale_report":
     case "fiado_report":
     case "supplier_invoice":
-      return observation.lines;
+      return observation.lines.map(name);
     case "order_change":
-      return observation.edits.map((edit) => (edit.op === "add" ? edit.line : null));
+      return observation.edits.map((edit) => (edit.op === "add" ? edit.line.name : null));
+    case "question":
+      return observation.products;
     default:
       return [];
   }
+}
+
+/**
+ * "el arroz", "los huevos": a question names a product with an article more often than an order
+ * line does. One leading article is dropped; nothing else is guessed.
+ */
+function withoutArticle(said: string): string {
+  return said.trim().replace(/^(el|la|los|las|un|una|unos|unas)\s+/i, "");
 }
 
 /**
@@ -93,7 +115,7 @@ function linesOf(observation: Observation): readonly (ItemLine | null)[] {
 function matchName(
   said: string,
   products: readonly CatalogProduct[],
-): { productId: string; how: LineMatch["how"] } | null {
+): { productId: string; how: LineMatch["how"] } | "ambiguous" | null {
   const name = normalize(said);
   if (name === "") return null;
   const steps: [LineMatch["how"], (product: CatalogProduct) => boolean][] = [
@@ -103,7 +125,7 @@ function matchName(
   if (/^\d{8,14}$/.test(name)) steps.unshift(["barcode", (product) => product.barcode === name]);
   for (const [how, fits] of steps) {
     const [first, ...more] = products.filter(fits);
-    if (more.length > 0) return null;
+    if (more.length > 0) return "ambiguous";
     if (first) return { productId: first.productId, how };
   }
   return null;

@@ -11,8 +11,10 @@
  * Bursts are pretended just enough for a first order (PRD "A first order"): lines from the reading,
  * matched products priced from an optional catalog, one question at a time (an unclear line, the
  * name once, pickup or delivery), then the readback. It also answers "¿a qué hora está?", a cancel
- * and the reads perception needs (contract gaps a and b). Payments, prices, places and substitutes
- * aren't pretended: they get the handoff.
+ * and the reads perception needs (contract gaps a and b). Customer questions (#47) are answered
+ * from the catalog and the hours it was given, never guessed: a product with no record is "no sé",
+ * a price only when set, hours only when set. Payments, places and substitutes aren't pretended:
+ * they get the handoff.
  */
 import type { CustomerContext, Engine, EngineResult, LineMatch, MemberContext } from "../../application/engine";
 import type { OrderReadingSource } from "../../application/order-reading";
@@ -22,6 +24,8 @@ import { type ActionEnvelope, type ConsoleAction, type CustomerAction, OWNER_ACT
 import type { Centavos } from "../../domain/contract/numbers";
 import type { BurstReading, ItemLine, Observation, PerceptionContext } from "../../domain/contract/observation";
 import type {
+  AnswerFact,
+  Availability,
   Claim,
   CustomerNotice,
   EngineOutcome,
@@ -29,8 +33,10 @@ import type {
   OrderView,
   PreparationCard,
   QuestionCode,
+  StoreHours,
 } from "../../domain/contract/outcomes";
 import { orderSubtotal } from "../../domain/money";
+import { storeHoursKey } from "../../domain/store-hours";
 
 export interface StoredOrder {
   readonly customerId: string;
@@ -42,11 +48,18 @@ export interface StoredOrder {
 
 /** A catalog product with the store's confirmed price, for the pretend readback. */
 export interface PretendProduct extends CatalogProduct {
+  /** Johan's confirmed price; null when none is confirmed. */
   readonly price: Centavos | null;
+  /** From recent evidence (#37); absent means "no_se", never "hay". */
+  readonly availability?: Availability;
+  /** Alcohol or tobacco: never priced or offered in chat. */
+  readonly restricted?: boolean;
 }
 
 export interface MemoryEngineOptions {
   readonly catalog?: readonly PretendProduct[];
+  /** Store hours as settings would hold them (#40); absent or null means unset. */
+  readonly storeHours?: StoreHours | null;
 }
 
 /** What the pretend engine keeps about an order while it's being put together. */
@@ -109,7 +122,7 @@ export class MemoryEngine implements Engine, OrderReadingSource {
     const first = state.operations.get(key);
     if (first !== undefined) return result(first);
 
-    const burst = new BurstApplier(state, context, this.options.catalog ?? [], matches);
+    const burst = new BurstApplier(state, context, this.options.catalog ?? [], matches, this.options.storeHours ?? null);
     reading.observations.forEach((observation, index) => burst.apply(observation, index));
     const outcome = burst.decide();
     state.operations.set(key, outcome);
@@ -191,7 +204,13 @@ export class MemoryEngine implements Engine, OrderReadingSource {
 
   async verifyClaims(tenant: Tenant, claims: readonly Claim[]): Promise<readonly boolean[]> {
     const { orders } = this.state(tenant);
+    const catalog = this.options.catalog ?? [];
+    const product = (productId: string) => catalog.find((p) => p.productId === productId && p.restricted !== true);
+    const hours = this.options.storeHours ?? null;
     return claims.map((claim) => {
+      if (claim.type === "unit_price") return product(claim.productId)?.price === claim.price;
+      if (claim.type === "availability") return (product(claim.productId)?.availability ?? "no_se") === claim.availability;
+      if (claim.type === "store_hours") return hours !== null && storeHoursKey(hours) === storeHoursKey(claim.hours);
       if (claim.type !== "order_state" && claim.type !== "order_total") return false;
       const order = orders.get(claim.orderId)?.order;
       if (order === undefined || order.version !== claim.version) return false;
@@ -278,12 +297,16 @@ class BurstApplier {
   private nameGiven = false;
   private handoff: EngineOutcome | null = null;
   private embedded = false;
+  /** The first question answered from records in this burst (#47). */
+  private answer: EngineOutcome | null = null;
+  private offTopic = false;
 
   constructor(
     private readonly state: StoreState,
     private readonly context: CustomerContext,
     private readonly catalog: readonly PretendProduct[],
     private readonly matches: readonly LineMatch[],
+    private readonly storeHours: StoreHours | null,
   ) {
     this.stored = openOrderOf(state, context.customerId);
     this.before = this.stored?.order ?? null;
@@ -332,8 +355,7 @@ class BurstApplier {
         this.nameGiven = true;
         return;
       case "question":
-        if (observation.topic === "order_status") this.statusAsked = true;
-        else this.handoff = { type: "handoff" };
+        this.question(observation, index);
         return;
       case "stop":
         this.handoff = { type: "stopped", deleteRequested: observation.deleteRequested };
@@ -368,6 +390,9 @@ class BurstApplier {
         const order = this.stored === null ? null : { ...this.stored.order, queuePosition: queuePosition(state, this.stored.order.orderId) };
         return { type: "order_status", order };
       }
+      // A question answered from records comes before asking the name: it's what they asked.
+      if (this.answer !== null) return this.answer;
+      if (this.offTopic) return { type: "out_of_scope" };
       if (this.stored === null && askName) return { type: "ask", question: "customer_name", line: null, order: null };
       if (this.embedded) return { type: "ask", question: "embedded_instructions", line: null, order: null };
       if (this.stored === null && !this.nameGiven) return { type: "out_of_scope" };
@@ -397,6 +422,36 @@ class BurstApplier {
     const order: OrderView = { ...this.stored!.order, state: orderState };
     this.save(order);
     return { type: "ask", question, line, order };
+  }
+
+  /**
+   * A customer question (#47). Price and stock come only from the catalog the code matched; a
+   * product nobody matched is unknown. Off-topic questions get the short redirect; the balance
+   * isn't pretended and goes to the store.
+   */
+  private question(observation: Extract<Observation, { kind: "question" }>, index: number): void {
+    switch (observation.topic) {
+      case "order_status":
+        this.statusAsked = true;
+        return;
+      case "price":
+      case "availability":
+        this.answer ??= {
+          type: "answer",
+          topic: observation.topic,
+          facts: observation.products.map((asked, n) => answerFact(asked, this.matchOf(index, n))),
+        };
+        return;
+      case "store_hours":
+        this.answer ??= { type: "store_hours", hours: this.storeHours };
+        return;
+      case "other":
+        this.offTopic = true;
+        return;
+      case "balance":
+        this.handoff = { type: "handoff" };
+        return;
+    }
   }
 
   private matchOf(observation: number, line: number): PretendProduct | null {
@@ -483,6 +538,18 @@ class BurstApplier {
     this.state.drafts.set(order.orderId, this.draft);
     this.stored = stored;
   }
+}
+
+/** What the records say about one product asked for: confirmed price and evidence only. */
+function answerFact(asked: string, product: PretendProduct | null): AnswerFact {
+  const restricted = product?.restricted === true;
+  return {
+    asked,
+    productId: product?.productId ?? null,
+    unitPrice: product === null || restricted ? null : product.price,
+    availability: product === null || restricted ? "no_se" : (product.availability ?? "no_se"),
+    restricted,
+  };
 }
 
 function lineView(lineId: string, line: ItemLine, product: PretendProduct | null): OrderLineView {

@@ -20,7 +20,7 @@ import type { CatalogProduct } from "../../application/perception/matching";
 import type { Commit, Tenant } from "../../application/ports";
 import type { ActionEnvelope, ConsoleAction, CustomerAction } from "../../domain/contract/actions";
 import type { BurstReading, PerceptionContext } from "../../domain/contract/observation";
-import type { Claim, PreparationCard } from "../../domain/contract/outcomes";
+import type { Claim, PreparationCard, StoreHours } from "../../domain/contract/outcomes";
 import { MemoryEngine, type PretendProduct, type PretendStoreSnapshot } from "./memory-engine";
 
 /** The pretend engine's snapshot moved on since it was read: the batch saved nothing; run it again. */
@@ -34,6 +34,8 @@ export class PretendStateMovedError extends Error {
 export interface D1PretendEngineOptions {
   /** The products and prices the readback uses. No orders are seeded. */
   readonly catalog?: readonly PretendProduct[];
+  /** Store hours as settings would hold them (#40); absent or null means unset ("te confirmo"). */
+  readonly storeHours?: StoreHours | null;
 }
 
 interface Loaded {
@@ -91,7 +93,10 @@ export class D1PretendEngine implements Engine, OrderReadingSource {
       .prepare(`SELECT version, state_json FROM pretend_engine_state WHERE business_id = ?`)
       .bind(tenant.businessId)
       .first<{ version: number; state_json: string }>();
-    const engine = new MemoryEngine(() => [], this.options.catalog === undefined ? {} : { catalog: this.options.catalog });
+    const engine = new MemoryEngine(() => [], {
+      ...(this.options.catalog === undefined ? {} : { catalog: this.options.catalog }),
+      ...(this.options.storeHours === undefined ? {} : { storeHours: this.options.storeHours }),
+    });
     if (row !== null) engine.importStore(tenant, JSON.parse(row.state_json) as PretendStoreSnapshot);
     return { engine, version: row?.version ?? null, json: JSON.stringify(engine.exportStore(tenant)) };
   }

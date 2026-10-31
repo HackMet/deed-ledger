@@ -74,6 +74,20 @@ export interface AnswerFact {
   readonly restricted: boolean;
 }
 
+/**
+ * Proposed (#47), not agreed: the store's opening hours, from store settings (#40). One entry per
+ * group of days with the same hours. Days are ISO weekdays, 1 is Monday and 7 is Sunday; times are
+ * 24-hour "HH:MM" in the store's local time. A day in no entry is closed. Unset is null, never a
+ * default schedule.
+ */
+export interface StoreHoursEntry {
+  readonly days: readonly number[];
+  readonly opens: string;
+  readonly closes: string;
+}
+
+export type StoreHours = readonly StoreHoursEntry[];
+
 export type EngineOutcome =
   | { readonly type: "ask"; readonly question: QuestionCode; readonly line: number | null; readonly order: OrderView | null }
   | { readonly type: "readback"; readonly order: OrderView }
@@ -86,6 +100,8 @@ export type EngineOutcome =
   | { readonly type: "order_cancelled"; readonly order: OrderView }
   | { readonly type: "order_status"; readonly order: OrderView | null }
   | { readonly type: "answer"; readonly topic: "price" | "availability"; readonly facts: readonly AnswerFact[] }
+  /** Proposed (#47): "¿a qué hora abren?". Null when the store hasn't set its hours. */
+  | { readonly type: "store_hours"; readonly hours: StoreHours | null }
   | { readonly type: "balance"; readonly balance: Centavos | null }
   /** A receipt was saved as a claim. Only the owner's tap makes it a payment. */
   | { readonly type: "payment_claimed"; readonly paymentClaimId: string }
@@ -127,4 +143,6 @@ export type Claim =
   | { readonly type: "unit_price"; readonly productId: string; readonly price: Centavos }
   | { readonly type: "availability"; readonly productId: string; readonly availability: "hay" | "se_acabo" }
   | { readonly type: "payment_confirmed"; readonly paymentClaimId: string; readonly amount: Centavos }
-  | { readonly type: "balance"; readonly customerId: string; readonly balance: Centavos };
+  | { readonly type: "balance"; readonly customerId: string; readonly balance: Centavos }
+  /** Proposed (#47): the store's hours are exactly these now (same entries, same order). */
+  | { readonly type: "store_hours"; readonly hours: StoreHours };

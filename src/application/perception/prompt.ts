@@ -11,7 +11,7 @@ import type { BurstMessage, ReadingContext } from "../../domain/perception/burst
 import type { Audience } from "../../domain/perception/wire";
 import type { ModelContentPart } from "../ports";
 
-export const PROMPT_VERSION: Record<Audience, string> = { customer: "order-v1", console: "console-v1" };
+export const PROMPT_VERSION: Record<Audience, string> = { customer: "order-v2", console: "console-v1" };
 
 const SHARED = `Respondes SOLO con el JSON del esquema; sin texto extra.
 
@@ -52,7 +52,7 @@ Observaciones (una por cada cosa que dijo, en el orden en que la dijo; "agregale
 - order_cancel: cancela el pedido.
 - fulfillment: como lo recibe. mode pickup ("lo paso a traer", "lo recojo"), delivery ("me lo manda", "a domicilio"), unknown si no lo dijo. place_text: el lugar en palabras ("donde la iglesia, casa verde") o null. same_as_before: true si dice "al mismo lugar de siempre". Una ubicacion compartida ya la tiene la app.
 - payment_receipt: foto de comprobante de pago: monto en centavos, banco, fecha y referencia tal cual impresos (sin reformatear), cada uno con su evidencia; null lo que no se lee.
-- question: pregunta. topic order_status ("a que hora esta", "ya esta"), price, availability ("hay"), balance ("cuanto debo"), store_hours, other. products: los productos que nombra, en sus palabras.
+- question: pregunta. topic order_status sobre SU pedido ("a que hora esta", "ya esta"), price ("a cuanto", "cuanto vale"), availability ("hay", "tienen"), balance ("cuanto debo"), store_hours sobre la tienda ("a que hora abren", "hasta que hora atienden", "abren el domingo"), other (algo que no es de la tienda). products: los productos que nombra, en sus palabras; vacio si no nombra ninguno.
 - handoff: quiere hablar con una persona.
 - stop: dice ALTO o pide que borren sus datos (delete_requested true en ese caso).
 - clarification: responde la PREGUNTA PENDIENTE del contexto ("de litro", "si", "Carla"). answer tal cual.
