@@ -1,5 +1,5 @@
 -- Orders: the order header, its immutable versions and lines, the operations table that anchors
--- idempotency, and the audit trail. Conventions: see 0001_tenancy.sql and 0003_ledger.sql.
+-- idempotency, and the audit trail. Conventions: see 0001_tenancy.sql and 0004_ledger.sql.
 -- A version is never updated: a change writes a new order_versions row. An unknown quantity or
 -- price is NULL, never 0 (non-negotiable 2).
 
