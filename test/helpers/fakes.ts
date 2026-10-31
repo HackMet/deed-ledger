@@ -7,6 +7,7 @@ import type {
   MediaBytes,
   MediaSource,
   MessagingChannel,
+  OutgoingButtons,
   OutgoingText,
   SendResult,
 } from "../../src/application/ports";
@@ -48,6 +49,8 @@ export class FakeDoorbell implements Doorbell {
 
 export interface Sent extends OutgoingText {
   readonly providerMessageId: string;
+  /** Set only when the message went out with reply buttons. */
+  readonly buttons?: OutgoingButtons["buttons"];
 }
 
 export class FakeChannel implements MessagingChannel {
@@ -66,6 +69,10 @@ export class FakeChannel implements MessagingChannel {
     this.sent.push({ ...message, providerMessageId });
     await this.onSend?.(message, providerMessageId);
     return { ok: true, providerMessageId };
+  }
+
+  async sendButtons(message: OutgoingButtons): Promise<SendResult> {
+    return this.sendText(message);
   }
 }
 

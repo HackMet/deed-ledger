@@ -230,8 +230,10 @@ async function storeMedia(deps: Deps, lease: Lease, job: Job, assetId: string): 
 function toOutbox(deps: Deps, job: Job, replies: readonly ReplyDraft[]): OutboxDraft[] {
   const now = deps.clock.now();
   const maxChars = Math.min(deps.channel.maxTextChars, OUTBOX_BODY_MAX_CHARS);
-  return replies.flatMap((reply, n) =>
-    splitText(reply.body, maxChars).map((body, part) => ({
+  return replies.flatMap((reply, n) => {
+    const parts = splitText(reply.body, maxChars);
+    // Every part carries the reply's claims; only the last carries its buttons.
+    return parts.map((body, part) => ({
       id: deps.ids.newId(),
       kind: "reply",
       body,
@@ -239,8 +241,10 @@ function toOutbox(deps: Deps, job: Job, replies: readonly ReplyDraft[]): OutboxD
       replyIndex: n,
       partIndex: part,
       expiresAtMs: now + reply.ttlMs,
-    })),
-  );
+      ...(reply.claims === undefined ? {} : { claims: reply.claims }),
+      ...(reply.buttons === undefined || part !== parts.length - 1 ? {} : { buttons: reply.buttons }),
+    }));
+  });
 }
 
 function failureReply(deps: Deps, job: Job, body: string): OutboxDraft[] {

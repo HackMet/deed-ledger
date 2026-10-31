@@ -234,6 +234,27 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
   settles claims that ran out, stops groups, marks closed windows, ends notices pending for over 15 minutes, deletes
   old unknown-sender records and early statuses, then sends up to 50 rows.
 
+### Replies and the claim check
+
+- `src/domain/replies.ts` renders every engine outcome and customer notice from a fixed Spanish template
+  (`OUTCOME_TEMPLATES`, `NOTICE_TEMPLATES`: a new kind fails typecheck until it has one). Numbers, names, prices
+  and states come from the outcome; customer words quoted back are flattened and capped at 60 characters.
+- Each reply carries its claims as `ClaimCheck`s: a check holds when any of its alternatives does ("ya está en la
+  lista" holds while the version is confirmado, preparando or listo). Order-line prices are pinned by the version
+  claim; there is no per-line price claim in the contract yet.
+- First pass (`src/application/replies.ts`), before the save: claims are read back from the outcome; an order
+  total counts only when it equals the sum of its lines (gap j proposal: per line, half up; unknown makes the
+  total unknown; unavailable and restricted lines left out; the delivery fee shown apart).
+- Second pass (`dispatch.ts`), right before the send, through `Deps.claimVerifier` (the engine's `verifyClaims`).
+  A check that fails, or no engine wired, sends the safe fixed reply instead, sets `claims_blocked_at_ms` on the
+  row, fails the reply's later parts and raises a Pendientes item. An engine error retries the row later. Claims
+  and buttons live on the row (migration 0006); a stored value that can't be read never holds.
+- Pendientes from outside the engine (gap c) go through the `Pendientes` port; today it only logs.
+- Reply buttons: up to three, IDs are operation keys (`confirm:<order>:v<version>`, `correct:…`, `cancel:…`,
+  `substitute:<order>:v<version>:<line>`, `remove:…`). `WhatsAppCloudChannel.sendButtons` sends Meta's
+  interactive reply-button shape, or plain text when the buttons don't fit; the body always carries
+  "Respondé Confirmar, Corregir o Cancelar". Typed words map to the same keys (`typedDecision`).
+
 ### The engine boundary and the console (dev only)
 
 - The contract between perception, the engine and the console is `src/domain/contract/` with the `Engine` interface

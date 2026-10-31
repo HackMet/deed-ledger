@@ -28,6 +28,7 @@ interface StoreState {
 
 const ON_THE_LIST: readonly OrderView["state"][] = ["confirmado", "preparando", "listo"];
 const PACKING: readonly OrderView["state"][] = ["confirmado", "preparando"];
+const OPEN: readonly OrderView["state"][] = ["armando", "por_confirmar", "confirmado", "preparando", "listo"];
 
 export class MemoryEngine implements Engine {
   private readonly stores = new Map<string, StoreState>();
@@ -39,8 +40,46 @@ export class MemoryEngine implements Engine {
     return result({ type: "nothing" });
   }
 
-  async onCustomerAction(_context: CustomerContext, _action: ActionEnvelope<CustomerAction>): Promise<EngineResult> {
-    return result({ type: "nothing" });
+  /**
+   * Confirmar and Cancelar on the customer's own order, with the contract's key and version rules.
+   * Corregir and the substitute answers aren't pretended yet: nothing.
+   */
+  async onCustomerAction(context: CustomerContext, envelope: ActionEnvelope<CustomerAction>): Promise<EngineResult> {
+    const state = this.state(context);
+    const { action } = envelope;
+    // Authorize before answering a repeated key: button keys are predictable, so another customer
+    // replaying one must never get the first customer's outcome back.
+    if (envelope.actor.type !== "customer" || envelope.actor.customerId !== context.customerId) {
+      return result({ type: "rejected", reason: "not_allowed", order: null });
+    }
+    const stored = state.orders.get(action.orderId);
+    // Someone else's order is as good as missing.
+    if (stored === undefined || stored.customerId !== context.customerId) {
+      return result({ type: "rejected", reason: "not_found", order: null });
+    }
+    const operationKey = customerOperationKey(context.customerId, envelope.operationKey);
+    const first = state.operations.get(operationKey);
+    if (first !== undefined) return result({ type: "duplicate", first });
+
+    if (action.version !== stored.order.version) {
+      return result({ type: "rejected", reason: "stale_version", order: stored.order });
+    }
+    let outcome: EngineOutcome;
+    if (action.type === "confirm_order" && stored.order.state === "por_confirmar") {
+      const order: OrderView = { ...stored.order, state: "confirmado" };
+      state.orders.set(order.orderId, { ...stored, order, confirmedAtMs: context.nowMs });
+      outcome = { type: "order_confirmed", order };
+    } else if (action.type === "cancel_order" && OPEN.includes(stored.order.state)) {
+      const order: OrderView = { ...stored.order, state: "cancelado", queuePosition: null };
+      state.orders.set(order.orderId, { ...stored, order });
+      outcome = { type: "order_cancelled", order };
+    } else if (action.type === "confirm_order" || action.type === "cancel_order") {
+      return result({ type: "rejected", reason: "invalid_state", order: stored.order });
+    } else {
+      return result({ type: "nothing" });
+    }
+    state.operations.set(operationKey, outcome);
+    return result(outcome);
   }
 
   async onConsoleAction(context: MemberContext, envelope: ActionEnvelope<ConsoleAction>): Promise<EngineResult> {
@@ -92,6 +131,11 @@ export class MemoryEngine implements Engine {
     }
     return state;
   }
+}
+
+/** Customer keys are kept per customer, apart from the console's. */
+function customerOperationKey(customerId: string, operationKey: string): string {
+  return `customer:${customerId}:${operationKey}`;
 }
 
 function result(outcome: EngineOutcome): EngineResult {

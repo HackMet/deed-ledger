@@ -335,8 +335,8 @@ export class D1JobRepository implements JobRepository {
       .prepare(
         `INSERT INTO outbound_messages
            (id, business_id, channel_account_id, conversation_id, seq, job_id, reply_index, part_index, kind,
-            body_text, dedupe_key, status, expires_at_ms, created_at_ms, updated_at_ms)
-         SELECT ?, c.business_id, c.channel_account_id, c.id, ${NEXT_OUTBOX_SEQ}, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?
+            body_text, dedupe_key, status, expires_at_ms, created_at_ms, updated_at_ms, claims_json, buttons_json)
+         SELECT ?, c.business_id, c.channel_account_id, c.id, ${NEXT_OUTBOX_SEQ}, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?
          FROM conversations c WHERE c.business_id = ? AND c.id = ?
            ${onlyIfLastOpenJob ? `AND ${NO_OTHER_OPEN_JOB}` : ""}
          ON CONFLICT (dedupe_key) DO NOTHING`,
@@ -352,6 +352,8 @@ export class D1JobRepository implements JobRepository {
         reply.expiresAtMs,
         nowMs,
         nowMs,
+        reply.claims === undefined || reply.claims.length === 0 ? null : JSON.stringify(reply.claims),
+        reply.buttons === undefined || reply.buttons.length === 0 ? null : JSON.stringify(reply.buttons),
         conversation.businessId,
         conversation.conversationId,
         ...(onlyIfLastOpenJob ? [jobId] : []),

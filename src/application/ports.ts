@@ -2,8 +2,10 @@
  * What the application layer needs from the outside world. Infrastructure and integrations
  * implement these; tests swap in fakes for providers and use the real D1 repositories.
  */
+import type { Claim } from "../domain/contract/outcomes";
 import type { ProviderStatus } from "../domain/outbox";
 import type { MessageKind } from "../domain/processing";
+import type { ClaimCheck, ReplyButton } from "../domain/replies";
 
 // ---------------------------------------------------------------------------------------------
 // Context
@@ -122,12 +124,23 @@ export type SendResult =
   | { readonly ok: true; readonly providerMessageId: string }
   | { readonly ok: false; readonly disposition: "retry" | "permanent" | "unknown"; readonly errorCode: string };
 
+/** A text with reply buttons (Confirmar / Corregir / Cancelar). The body carries the typed fallback. */
+export interface OutgoingButtons extends OutgoingText {
+  readonly buttons: readonly ReplyButton[];
+}
+
 export interface MessagingChannel {
   /** False when credentials are missing: nothing is sent and the outbox keeps the message. */
   readonly configured: boolean;
   /** The longest text body the channel accepts, in UTF-16 code units. */
   readonly maxTextChars: number;
   sendText(message: OutgoingText): Promise<SendResult>;
+  /**
+   * Sends the body with reply buttons. Buttons the channel can't carry (too many, too long, a body
+   * over the interactive limit) are dropped and the body goes as plain text. A channel without
+   * this method gets plain text.
+   */
+  sendButtons?(message: OutgoingButtons): Promise<SendResult>;
 }
 
 export interface MediaBytes {
@@ -194,6 +207,13 @@ export interface ReplyDraft {
    * job answers instead). Other jobs' replies are not affected.
    */
   readonly closesBurst?: boolean;
+  /**
+   * What the reply claims, checked again right before it's sent: a reply with a claim that no
+   * longer holds is not sent, the safe fixed reply goes instead. Absent or empty: claims nothing.
+   */
+  readonly claims?: readonly ClaimCheck[];
+  /** Reply buttons; only the reply's last part carries them. */
+  readonly buttons?: readonly ReplyButton[];
 }
 
 /** A precondition checked inside a batch: `holdsSql` is 1 when it holds, NULL otherwise. */
@@ -334,6 +354,9 @@ export interface OutboxDraft {
   readonly replyIndex: number;
   readonly partIndex: number;
   readonly expiresAtMs: number;
+  /** Every part of a reply carries the reply's claims. */
+  readonly claims?: readonly ClaimCheck[];
+  readonly buttons?: readonly ReplyButton[];
 }
 
 export type LeaseClaim = "claimed" | "busy" | "missing";
@@ -404,6 +427,9 @@ export interface OutboxMessage {
   /** Attempts reserved so far, including the current claim's. */
   readonly attempts: number;
   readonly expiresAtMs: number;
+  /** Checked right before the send. A stored value that can't be read never holds. */
+  readonly claims?: readonly ClaimCheck[];
+  readonly buttons?: readonly ReplyButton[];
 }
 
 export interface OutboxMaintenance {
@@ -457,6 +483,11 @@ export interface OutboxRepository {
   markUnknownDelivery(tenant: Tenant, outboxId: string, claimId: string, errorCode: string, nowMs: number): Promise<boolean>;
   /** Not sent: back to pending, or failed when final. */
   release(tenant: Tenant, outboxId: string, claimId: string, errorCode: string, final: boolean, nowMs: number): Promise<boolean>;
+  /**
+   * The row's claims didn't hold right before the send: records it on the row (the safe reply goes
+   * instead) and fails the reply's later parts, so none of them goes out. Guarded by the claim.
+   */
+  markClaimsBlocked(tenant: Tenant, outboxId: string, claimId: string, nowMs: number): Promise<boolean>;
   /** Sweep housekeeping: expiries, stale sends, stopped groups, closed windows, old notices, retention. */
   maintain(nowMs: number): Promise<OutboxMaintenance>;
 }
@@ -501,6 +532,33 @@ export interface ConsoleAuthRepository {
 }
 
 // ---------------------------------------------------------------------------------------------
+// The claim check and Pendientes
+
+/** The second claim check: `Engine.verifyClaims` satisfies it. One answer per claim, in order. */
+export interface ClaimVerifier {
+  verifyClaims(tenant: Tenant, claims: readonly Claim[]): Promise<readonly boolean[]>;
+}
+
+/** Something a person must look at, raised from outside the engine. IDs only, never content. */
+export interface PendienteItem {
+  readonly kind: "claim_blocked";
+  /** Which check blocked it: before the save, or right before sending. */
+  readonly stage: "before_save" | "before_send";
+  readonly conversationId: string | null;
+  readonly outboxId: string | null;
+  /** The reply's template name. */
+  readonly template: string | null;
+}
+
+/**
+ * Raises one Pendientes item. Contract gap (c) isn't agreed: this narrow port stands in until it is
+ * (the proposal there returns a Commit for the caller's own batch instead). Never throws.
+ */
+export interface Pendientes {
+  raise(tenant: Tenant, item: PendienteItem): Promise<void>;
+}
+
+// ---------------------------------------------------------------------------------------------
 
 export interface Deps {
   readonly clock: Clock;
@@ -518,4 +576,7 @@ export interface Deps {
   readonly mediaSource: MediaSource;
   readonly mediaStore: MediaStore;
   readonly jobHandler: JobHandler;
+  /** Null until an engine is wired in: a reply with claims then sends the safe reply instead. */
+  readonly claimVerifier: ClaimVerifier | null;
+  readonly pendientes: Pendientes;
 }

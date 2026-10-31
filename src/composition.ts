@@ -5,7 +5,7 @@
  */
 import type { Engine } from "./application/engine";
 import { placeholderHandler } from "./application/placeholder-handler";
-import type { Deps } from "./application/ports";
+import type { Deps, Pendientes } from "./application/ports";
 import { type Config, readConfig } from "./infrastructure/config";
 import { D1ConsoleAuthRepository } from "./infrastructure/d1/console-auth-repository";
 import { D1IntakeRepository } from "./infrastructure/d1/intake-repository";
@@ -13,6 +13,7 @@ import { D1JobRepository } from "./infrastructure/d1/job-repository";
 import { D1OutboxRepository } from "./infrastructure/d1/outbox-repository";
 import { D1TenancyRepository } from "./infrastructure/d1/tenancy-repository";
 import { HmacKeyedHasher } from "./infrastructure/keyed-hasher";
+import { LoggingPendientes } from "./infrastructure/logging-pendientes";
 import { demoOrders } from "./infrastructure/memory/demo-orders";
 import { MemoryEngine } from "./infrastructure/memory/memory-engine";
 import { QueueDoorbell } from "./infrastructure/queue-doorbell";
@@ -37,7 +38,7 @@ export type RuntimeOverrides = Partial<
     Deps,
     "clock" | "ids" | "log" | "sleep" | "hasher" | "doorbell" | "channel" | "mediaSource" | "mediaStore" | "jobHandler"
   >
-> & { readonly db?: D1Database; readonly engine?: Engine };
+> & { readonly db?: D1Database; readonly engine?: Engine; readonly pendientes?: Pendientes };
 
 export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtime {
   const config = readConfig(env);
@@ -68,6 +69,9 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
       mediaSource: overrides.mediaSource ?? unavailableMediaSource,
       mediaStore: overrides.mediaStore ?? new R2MediaStore(env.MEDIA),
       jobHandler: overrides.jobHandler ?? placeholderHandler,
+      // The second claim check reads the records through the engine; none wired, no claim holds.
+      claimVerifier: overrides.engine ?? (config.devConsole ? devEngine : null),
+      pendientes: overrides.pendientes ?? new LoggingPendientes(overrides.log ?? consoleLogger),
     },
   };
 }
