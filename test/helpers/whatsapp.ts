@@ -44,6 +44,17 @@ export function audioMessage(spec: MessageSpec & { readonly mediaId: string }) {
   };
 }
 
+/** A tap on a reply button (Meta's interactive button_reply). */
+export function buttonReply(spec: MessageSpec & { readonly replyId: string; readonly title: string }) {
+  return {
+    from: spec.from,
+    id: spec.id,
+    timestamp: String(spec.timestampS),
+    type: "interactive",
+    interactive: { type: "button_reply", button_reply: { id: spec.replyId, title: spec.title } },
+  };
+}
+
 export function statusUpdate(spec: { readonly id: string; readonly status: string; readonly timestampS: number }) {
   return { id: spec.id, status: spec.status, timestamp: String(spec.timestampS), recipient_id: "50400000999" };
 }

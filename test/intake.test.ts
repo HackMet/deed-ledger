@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
-import { UNKNOWN_SENDER_NOTICE } from "../src/domain/copy";
-import { failingBatchDb, recordingDb } from "./helpers/fakes";
+import { RECEIVED_PLACEHOLDER, UNKNOWN_SENDER_NOTICE } from "../src/domain/copy";
+import { failingBatchDb } from "./helpers/fakes";
 import { harness, rows } from "./helpers/harness";
 import { newPhone, newPhoneNumberId, seedStore } from "./helpers/seed";
 import { imageMessage, statusUpdate, textMessage, wamid, webhook } from "./helpers/whatsapp";
@@ -118,92 +118,96 @@ describe("member messages", () => {
   });
 });
 
-describe("numbers that aren't members", () => {
-  it("get exactly one fixed reply, and nothing of the store is read", async () => {
+describe("anyone writing to the store's number", () => {
+  it("becomes the store's customer in the intake batch: stored, rung, and answered, never with the old notice", async () => {
     const { store } = await storeWithOwner();
     const stranger = newPhone();
-    const id = wamid();
-    const recorder = recordingDb(env.DB);
-    const h = harness({ db: recorder.db });
+    const h = harness();
 
     const response = await h.post(
       webhook(store.phoneNumberId, {
-        messages: [imageMessage({ from: stranger, id, timestampS: T0, mediaId: "media-stranger", caption: "Mi pedido" })],
+        messages: [imageMessage({ from: stranger, id: wamid(), timestampS: T0, mediaId: "media-new", caption: "Mi pedido" })],
       }),
     );
     expect(response.status).toBe(200);
 
-    // One reply, the fixed text, to the sender, from the store's number.
-    expect(h.channel.sent).toEqual([
-      { fromPhoneNumberId: store.phoneNumberId, toPhone: stranger, body: UNKNOWN_SENDER_NOTICE, providerMessageId: expect.any(String) },
-    ]);
-    // No job, no conversation, no media, no doorbell, no download.
-    expect(h.doorbell.rings).toEqual([]);
-    expect(h.mediaSource).toMatchObject({ fetched: [] });
-    expect(await rows(`SELECT id FROM inbound_messages WHERE business_id = ?1`, store.businessId)).toHaveLength(0);
-    expect(await rows(`SELECT id FROM conversations WHERE business_id = ?1`, store.businessId)).toHaveLength(0);
-    expect(await rows(`SELECT id FROM media_assets WHERE business_id = ?1`, store.businessId)).toHaveLength(0);
-
-    // Every statement touched only the number mapping, memberships, and the hashed records, plus the
-    // send's claim guard (batch_guards holds no data: each guard row is deleted in its own batch).
-    const allowed = new Set([
-      "channel_accounts",
-      "memberships",
-      "users",
-      "unknown_inbound_messages",
-      "outbound_messages",
-      "batch_guards",
-    ]);
-    const touched = new Set(
-      recorder.statements.flatMap((sql) => [...sql.matchAll(/\b(?:FROM|JOIN|INTO|UPDATE)\s+([a-z_]+)/gi)].map((m) => m[1]!)),
+    const customers = await rows<{ id: string; phone: string; name: string | null }>(
+      `SELECT id, phone, name FROM customers WHERE business_id = ?1`,
+      store.businessId,
     );
-    expect([...touched].filter((table) => !allowed.has(table))).toEqual([]);
-    expect(await rows(`SELECT guard_id FROM batch_guards`)).toEqual([]);
+    expect(customers).toEqual([{ id: expect.any(String), phone: stranger, name: null }]);
+    const conversations = await rows<{ id: string; customer_id: string }>(
+      `SELECT id, customer_id FROM conversations WHERE business_id = ?1`,
+      store.businessId,
+    );
+    expect(conversations).toEqual([{ id: expect.any(String), customer_id: customers[0]!.id }]);
+    expect(await rows(`SELECT job_state FROM inbound_messages WHERE business_id = ?1`, store.businessId)).toEqual([
+      { job_state: "pending" },
+    ]);
+    expect(h.doorbell.rings).toEqual([
+      { conversation: { businessId: store.businessId, conversationId: conversations[0]!.id }, delaySeconds: 0 },
+    ]);
+    // The unknown-sender path is retired: no hashed record, no notice.
+    expect(await rows(`SELECT 1 FROM unknown_inbound_messages WHERE business_id = ?1`, store.businessId)).toEqual([]);
+    expect(h.channel.sent).toEqual([]);
 
-    // Only keyed hashes are kept: no phone number, no message ID (it embeds the phone), no content.
-    const kept = await rows(`SELECT * FROM unknown_inbound_messages WHERE business_id = ?1`, store.businessId);
-    const outbox = await rows(`SELECT * FROM outbound_messages WHERE business_id = ?1`, store.businessId);
-    const stored = JSON.stringify([kept, outbox]);
-    expect(kept).toHaveLength(1);
-    expect(outbox).toHaveLength(1);
-    expect(stored).not.toContain(stranger);
-    expect(stored).not.toContain(id);
-    expect(stored).not.toContain("Mi pedido");
-    expect(outbox[0]).toMatchObject({ status: "sent", provider_message_id: null, conversation_id: null });
+    h.clock.advance(5_000);
+    await h.deliver();
+    expect(h.sentTo(stranger)).toEqual([RECEIVED_PLACEHOLDER]);
+    expect(h.sentTo(stranger)).not.toContain(UNKNOWN_SENDER_NOTICE);
   });
 
-  it("get the notice at most once per 24 hours", async () => {
+  it("is recognized when they write again, days later: the same customer and conversation", async () => {
     const { store } = await storeWithOwner();
-    const stranger = newPhone();
+    const customer = newPhone();
     const h = harness();
     const say = (body: string) =>
       h.post(
         webhook(store.phoneNumberId, {
-          messages: [textMessage({ from: stranger, id: wamid(), timestampS: Math.floor(h.clock.now() / 1000), body })],
+          messages: [textMessage({ from: customer, id: wamid(), timestampS: Math.floor(h.clock.now() / 1000), body })],
         }),
       );
 
     await say("Hola");
-    h.clock.advance(60_000);
-    await say("¿Hay alguien?");
-    h.clock.advance(23 * 60 * 60 * 1000);
+    h.clock.advance(3 * 24 * 60 * 60 * 1000);
     await say("Hola otra vez");
-    expect(h.channel.sent).toHaveLength(1);
-
-    h.clock.advance(60 * 60 * 1000 + 1);
-    await say("Buenas");
-    expect(h.channel.sent).toHaveLength(2);
-    expect(await rows(`SELECT 1 FROM unknown_inbound_messages WHERE business_id = ?1`, store.businessId)).toHaveLength(4);
+    expect(await rows(`SELECT 1 FROM customers WHERE business_id = ?1`, store.businessId)).toHaveLength(1);
+    expect(await rows(`SELECT 1 FROM conversations WHERE business_id = ?1`, store.businessId)).toHaveLength(1);
+    expect(
+      await rows(
+        `SELECT DISTINCT conversation_id FROM inbound_messages WHERE business_id = ?1`,
+        store.businessId,
+      ),
+    ).toHaveLength(1);
   });
 
-  it("don't get a second notice when Meta redelivers the same message", async () => {
+  it("is one customer per store: the same phone writing to two stores is two customers", async () => {
+    const phone = newPhone();
+    const a = await seedStore({ name: "Tienda A", members: [] });
+    const b = await seedStore({ name: "Tienda B", members: [] });
+    const h = harness();
+    for (const store of [a, b]) {
+      await h.post(webhook(store.phoneNumberId, { messages: [textMessage({ from: phone, id: wamid(), timestampS: T0, body: "Hola" })] }));
+    }
+    const customersOf = (businessId: string) =>
+      rows<{ id: string }>(`SELECT id FROM customers WHERE business_id = ?1 AND phone = ?2`, businessId, phone);
+    const [inA] = await customersOf(a.businessId);
+    const [inB] = await customersOf(b.businessId);
+    expect(inA).toBeDefined();
+    expect(inB).toBeDefined();
+    expect(inA!.id).not.toBe(inB!.id);
+  });
+
+  it("creates nothing new when Meta redelivers the same message", async () => {
     const { store } = await storeWithOwner();
     const body = webhook(store.phoneNumberId, { messages: [textMessage({ from: newPhone(), id: wamid(), timestampS: T0, body: "Hola" })] });
     const h = harness();
     await h.post(body);
     h.clock.advance(25 * 60 * 60 * 1000); // retries can come days later
     await h.post(body);
-    expect(h.channel.sent).toHaveLength(1);
+    expect(await rows(`SELECT 1 FROM customers WHERE business_id = ?1`, store.businessId)).toHaveLength(1);
+    expect(await rows(`SELECT 1 FROM inbound_messages WHERE business_id = ?1`, store.businessId)).toHaveLength(1);
+    expect(h.doorbell.rings).toHaveLength(1);
   });
 
   it("logs no phone numbers, message IDs or content", async () => {

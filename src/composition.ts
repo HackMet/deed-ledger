@@ -4,10 +4,12 @@
  * D1 repositories.
  */
 import type { Engine } from "./application/engine";
+import { createOrderHandler } from "./application/order-handler";
 import { placeholderHandler } from "./application/placeholder-handler";
 import type { Deps } from "./application/ports";
 import { type Config, readConfig } from "./infrastructure/config";
 import { D1ConsoleAuthRepository } from "./infrastructure/d1/console-auth-repository";
+import { D1CustomerRepository } from "./infrastructure/d1/customer-repository";
 import { D1IntakeRepository } from "./infrastructure/d1/intake-repository";
 import { D1JobRepository } from "./infrastructure/d1/job-repository";
 import { D1OutboxRepository } from "./infrastructure/d1/outbox-repository";
@@ -42,9 +44,16 @@ export type RuntimeOverrides = Partial<
 export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtime {
   const config = readConfig(env);
   const db = overrides.db ?? env.DB;
+  const engine = overrides.engine ?? (config.devConsole ? devEngine : null);
+  const clock = overrides.clock ?? systemClock;
+  const log = overrides.log ?? consoleLogger;
+  const jobs = new D1JobRepository(db);
+  const customers = new D1CustomerRepository(db);
+  // Customers' messages go to the order handler once an engine is wired in (#13 plugs the real one in here).
+  const orderHandler = engine === null ? null : createOrderHandler({ engine, jobs, customers, clock, log });
   return {
     config,
-    engine: overrides.engine ?? (config.devConsole ? devEngine : null),
+    engine,
     deps: {
       clock: overrides.clock ?? systemClock,
       ids: overrides.ids ?? randomIds,
@@ -53,9 +62,10 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
       hasher: overrides.hasher ?? new HmacKeyedHasher(config.senderHashSalt),
       tenancy: new D1TenancyRepository(db),
       intake: new D1IntakeRepository(db),
-      jobs: new D1JobRepository(db),
+      jobs,
       outbox: new D1OutboxRepository(db),
       consoleAuth: new D1ConsoleAuthRepository(db),
+      customers,
       doorbell: overrides.doorbell ?? new QueueDoorbell(env.JOBS),
       channel:
         overrides.channel ??
@@ -67,7 +77,7 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
         }),
       mediaSource: overrides.mediaSource ?? unavailableMediaSource,
       mediaStore: overrides.mediaStore ?? new R2MediaStore(env.MEDIA),
-      jobHandler: overrides.jobHandler ?? placeholderHandler,
+      jobHandler: overrides.jobHandler ?? orderHandler ?? placeholderHandler,
     },
   };
 }

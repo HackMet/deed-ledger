@@ -5,7 +5,7 @@
 //   npm run simulate -- --text "Vinieron 2 cajas de leche"
 //   npm run simulate -- --image            (a photo; media download is a stub for now)
 //   npm run simulate -- --audio            (a voice note)
-//   npm run simulate -- --text "Hola" --from 50400000099     (a number that isn't a member)
+//   npm run simulate -- --text "Hola" --from 50400000099     (another customer)
 //   npm run simulate -- --sweep            (also run the cron sweep once)
 // Options: --to <phone_number_id>, --url <base URL>, --wait <seconds> (default 6)
 import { createHmac, randomUUID } from "node:crypto";
@@ -65,7 +65,7 @@ await new Promise((resolve) => setTimeout(resolve, waitSeconds * 1000));
 
 const outbox = queryLocal(
   `SELECT o.created_at_ms, o.kind, o.status, o.body_text,
-          CASE WHEN o.conversation_id IS NULL THEN 'not a member' ELSE 'member' END AS recipient
+          CASE WHEN o.conversation_id IS NULL THEN 'old notice' ELSE 'customer' END AS recipient
    FROM outbound_messages o ORDER BY o.created_at_ms DESC LIMIT 10`,
 );
 console.log("Outbox (newest first; nothing is sent to WhatsApp in the simulator):");

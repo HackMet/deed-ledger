@@ -1,8 +1,8 @@
 import { PermanentWriteError } from "../../application/errors";
 import type {
+  CustomerMessageInput,
+  CustomerMessageOutcome,
   IntakeRepository,
-  MemberMessageInput,
-  MemberMessageOutcome,
   StatusEvent,
   Tenant,
   UnknownMessageInput,
@@ -14,8 +14,9 @@ import { NEXT_OUTBOX_SEQ } from "./outbox-repository";
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 
-/** The sender is still an active member of the store: checked by each write, inside the batch. */
-const ACTIVE_MEMBERSHIP = `EXISTS (SELECT 1 FROM memberships m WHERE m.business_id = ? AND m.user_id = ? AND m.active = 1)`;
+/** The conversation of this store number and the sender's customer record in this store. */
+const SENDER_CONVERSATION = `c.business_id = ? AND c.channel_account_id = ?
+  AND c.customer_id = (SELECT cu.id FROM customers cu WHERE cu.business_id = ? AND cu.phone = ?)`;
 
 /**
  * Intake writes. Duplicates are absorbed with targeted `ON CONFLICT (...) DO NOTHING`, never
@@ -25,41 +26,44 @@ const ACTIVE_MEMBERSHIP = `EXISTS (SELECT 1 FROM memberships m WHERE m.business_
 export class D1IntakeRepository implements IntakeRepository {
   constructor(private readonly db: D1Database) {}
 
-  async recordMemberMessage(
+  async recordCustomerMessage(
     tenant: Tenant,
-    input: MemberMessageInput,
-  ): Promise<{ conversationId: string | null; outcome: MemberMessageOutcome }> {
+    input: CustomerMessageInput,
+  ): Promise<{ conversationId: string; customerId: string; outcome: CustomerMessageOutcome }> {
     const { event } = input;
     const b = tenant.businessId;
-    // Admission, checked by the media and message inserts themselves: the sender is still an active
-    // member, the message isn't stored yet, and the conversation is under its hourly cap. Both
-    // inserts see the same answer (one batch is one transaction), so a message that isn't admitted
-    // leaves no media asset behind either.
-    const admitted = `c.business_id = ? AND c.channel_account_id = ? AND c.user_id = ?
-      AND ${ACTIVE_MEMBERSHIP}
+    const phone = event.senderPhone;
+    const conversationParams = [b, input.channelAccountId, b, phone];
+    // Admission, checked by the media and message inserts themselves: the message isn't stored yet,
+    // and the conversation is under its hourly cap. Both inserts see the same answer (one batch is
+    // one transaction), so a message that isn't admitted leaves no media asset behind either.
+    const admitted = `${SENDER_CONVERSATION}
       AND NOT EXISTS (SELECT 1 FROM inbound_messages d
                       WHERE d.business_id = c.business_id AND d.provider = 'whatsapp' AND d.provider_message_id = ?)
       AND (SELECT COUNT(*) FROM inbound_messages r
            WHERE r.business_id = c.business_id AND r.conversation_id = c.id AND r.received_at_ms > ?) < ?`;
     const admittedParams = [
-      b,
-      input.channelAccountId,
-      input.userId,
-      b,
-      input.userId,
+      ...conversationParams,
       event.providerMessageId,
       input.receivedAtMs - HOUR_MS,
       input.hourlyCap,
     ];
 
     const statements: D1PreparedStatement[] = [
+      // Whoever writes to the store's number is its customer: one record per store and phone.
       this.db
         .prepare(
-          `INSERT INTO conversations (id, business_id, channel_account_id, user_id, created_at_ms)
-           SELECT ?, ?, ?, ?, ? WHERE ${ACTIVE_MEMBERSHIP}
-           ON CONFLICT (business_id, channel_account_id, user_id) DO NOTHING`,
+          `INSERT INTO customers (id, business_id, phone, created_at_ms) VALUES (?, ?, ?, ?)
+           ON CONFLICT (business_id, phone) DO NOTHING`,
         )
-        .bind(input.newConversationId, b, input.channelAccountId, input.userId, input.receivedAtMs, b, input.userId),
+        .bind(input.newCustomerId, b, phone, input.receivedAtMs),
+      this.db
+        .prepare(
+          `INSERT INTO conversations (id, business_id, channel_account_id, customer_id, created_at_ms)
+           SELECT ?, cu.business_id, ?, cu.id, ? FROM customers cu WHERE cu.business_id = ? AND cu.phone = ?
+           ON CONFLICT (business_id, channel_account_id, customer_id) DO NOTHING`,
+        )
+        .bind(input.newConversationId, input.channelAccountId, input.receivedAtMs, b, phone),
     ];
     if (event.media !== null) {
       statements.push(
@@ -113,32 +117,29 @@ export class D1IntakeRepository implements IntakeRepository {
       // The 24-hour window runs from our receive time of a new message; a redelivery can't move it.
       this.db
         .prepare(
-          `UPDATE conversations SET last_inbound_at_ms = MAX(COALESCE(last_inbound_at_ms, 0), ?)
-           WHERE business_id = ? AND channel_account_id = ? AND user_id = ?
+          `UPDATE conversations AS c SET last_inbound_at_ms = MAX(COALESCE(c.last_inbound_at_ms, 0), ?)
+           WHERE ${SENDER_CONVERSATION}
              AND EXISTS (SELECT 1 FROM inbound_messages WHERE business_id = ? AND id = ?)`,
         )
-        .bind(input.receivedAtMs, b, input.channelAccountId, input.userId, b, input.newInboundId),
+        .bind(input.receivedAtMs, ...conversationParams, b, input.newInboundId),
       this.db
         .prepare(
-          `SELECT ${ACTIVE_MEMBERSHIP} AS active,
-                  (SELECT c.id FROM conversations c
-                   WHERE c.business_id = ? AND c.channel_account_id = ? AND c.user_id = ?) AS conversation_id,
+          `SELECT c.id AS conversation_id, c.customer_id,
                   (SELECT i.id FROM inbound_messages i
-                   WHERE i.business_id = ? AND i.provider = 'whatsapp' AND i.provider_message_id = ?) AS inbound_id`,
+                   WHERE i.business_id = ? AND i.provider = 'whatsapp' AND i.provider_message_id = ?) AS inbound_id
+           FROM conversations c WHERE ${SENDER_CONVERSATION}`,
         )
-        .bind(b, input.userId, b, input.channelAccountId, input.userId, b, event.providerMessageId),
+        .bind(b, event.providerMessageId, ...conversationParams),
     );
 
-    const results = await this.batch<{ active: number; conversation_id: string | null; inbound_id: string | null }>(
+    const results = await this.batch<{ conversation_id: string; customer_id: string; inbound_id: string | null }>(
       statements,
     );
     const row = results.at(-1)?.results[0];
-    if (row === undefined) throw new Error("no result from the intake batch");
-    if (row.active !== 1) return { conversationId: row.conversation_id, outcome: "not_member" };
-    if (row.conversation_id === null) throw new Error("conversation missing after intake batch");
-    const outcome: MemberMessageOutcome =
+    if (row === undefined) throw new Error("conversation missing after intake batch");
+    const outcome: CustomerMessageOutcome =
       row.inbound_id === input.newInboundId ? "new" : row.inbound_id === null ? "capped" : "duplicate";
-    return { conversationId: row.conversation_id, outcome };
+    return { conversationId: row.conversation_id, customerId: row.customer_id, outcome };
   }
 
   async recordUnknownMessage(

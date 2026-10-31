@@ -159,16 +159,15 @@ export class D1OutboxRepository implements OutboxRepository {
     return row?.at ?? null;
   }
 
-  async memberPhone(tenant: Tenant, conversationId: string): Promise<string | null> {
+  async customerPhone(tenant: Tenant, conversationId: string): Promise<string | null> {
     const row = await this.db
       .prepare(
-        `SELECT u.phone FROM conversations c
-         JOIN memberships m ON m.business_id = c.business_id AND m.user_id = c.user_id
-         JOIN users u ON u.id = c.user_id
-         WHERE c.business_id = ? AND c.id = ? AND m.active = 1`,
+        `SELECT cu.phone FROM conversations c
+         JOIN customers cu ON cu.business_id = c.business_id AND cu.id = c.customer_id
+         WHERE c.business_id = ? AND c.id = ?`,
       )
       .bind(tenant.businessId, conversationId)
-      .first<{ phone: string }>();
+      .first<{ phone: string | null }>();
     return row?.phone ?? null;
   }
 

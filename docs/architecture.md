@@ -18,7 +18,7 @@ transcription (A1), and D1 commits atomically only inside a single batch (rule 6
 WhatsApp Cloud API
   │ webhook
   ▼
-Worker (Hono): check signature → sender → membership (unknown: fixed reply, no data) → dedup message ID
+Worker (Hono): check signature → store from the receiving number → sender becomes the store's customer → dedup message ID
                → save media to R2 under the store's prefix → queue a job → 200
   │
   ▼
@@ -142,20 +142,20 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
   dropped and only its type is logged.
 - Every event is saved before the 200. A transient failure answers 500, so Meta retries; a constraint violation
   answers 200 with an ID-only log.
-- A member's message is one batch: the conversation (one per store number and member), a pending media asset, the
-  inbound message (which is also its job) and `last_inbound_at_ms`. Every insert checks admission itself: the
-  membership is still active, the provider message ID isn't stored yet in this store, and the conversation has fewer
-  than 300 messages in the last hour. A message that isn't admitted leaves no row. A member deactivated before the
-  batch gets the unknown-sender path.
+- Anyone writing to the store's number is that store's customer (0004); memberships only matter for the console. A
+  message is one batch: the customer (one per store and phone, so the same phone in two stores is two customers),
+  the conversation (one per store number and customer), a pending media asset, the inbound message (which is also
+  its job) and `last_inbound_at_ms`. Every message and media insert checks admission itself: the provider message ID
+  isn't stored yet in this store, and the conversation has fewer than 300 messages in the last hour. A message that
+  isn't admitted leaves no message or media row. The phone is kept on the customer only to send replies, and never
+  logged.
 - Ordering uses the provider timestamp clamped to [received − 7 days, received + 5 minutes]. The 24-hour window uses
   our own receive time of a new message; a redelivery doesn't move it.
 - After the 200, each conversation with a new message gets a doorbell: a Queue message with only the store and
   conversation IDs. D1 holds the work, and the cron sweep re-rings what a lost doorbell left.
-- A number that isn't a member gets one fixed reply and nothing of the store is read. Only keyed hashes
-  (`SENDER_HASH_SALT`) of its phone number and message ID are kept, at most 20 per sender, store and day, deleted
-  after 7 days. The notice is sent from the request, which alone holds the phone number, with up to 3 tries. Only a
-  notice that is being sent, was sent, or has an unknown outcome holds the sender's 24-hour slot; a later message
-  retries one that failed.
+- The unknown-sender path (one fixed reply, keyed hashes only) is retired: intake no longer calls it. Its tables,
+  repository method and the notice dispatch stay until the team agrees to remove them; the sweep still expires and
+  prunes rows written before 0004.
 - Delivery statuses only move a sent row's status forward. One that arrives before the send result is stored is
   kept for up to an hour under a hash of the message ID, and applied when the result is stored.
 
@@ -181,8 +181,24 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
   an immutable key. D1 records the key only through a fenced write. The download is still a stub, so every photo and
   voice note ends with "No pude descargar…" after its retries.
 - **Handler.** `JobHandler` (`src/application/ports.ts`) is where the engine plugs in: it gets the job and
-  `isNewestOfBurst`, and returns replies already rendered plus optional `commits`. Today `placeholderHandler`
-  acknowledges a burst with one reply from its newest message.
+  `isNewestOfBurst`, and returns replies already rendered plus optional `commits`. With an engine wired in, the order
+  handler (`src/application/order-handler.ts`) runs; without one, `placeholderHandler` acknowledges a burst with one
+  reply from its newest message.
+- **Readback answers.** A reply button's ID is the operation key `confirm:<order>:v<version>` (or `correct`,
+  `cancel`; at most 256 characters), untrusted, and resolved by the engine only among the customer's own orders. The
+  same word typed alone ("confirmar", any case, with or without accents) answers the readback last queued to the
+  conversation (`conversations.last_readback_*`), only if it arrived after that readback was queued, and shares the
+  button's key, so the second of the two is a duplicate. An answer is its own step: it goes to `Engine.onCustomerAction` at its own job, after every earlier save.
+- **Burst reads.** Other messages are read together at the burst's newest job, or at the last job before an answer.
+  Earlier jobs complete with no reply. The reading's job loads the conversation's unread messages (`burst_reads`,
+  0005: done jobs, or itself; failed ones never; the last hour; all of them, or a loud failure above 300) and saves which ones it used in the same
+  batch as the engine's commits, guarded so a message is never used twice. A crash or lost lease before the save
+  leaves them unread for the retry; a message arriving during handling waits for its own reading. A readback is
+  remembered (and the name marked asked) only when its reply is written, so a typed word never answers a readback the
+  customer didn't get.
+- **Customers.** `CustomerRepository` builds the channel-side commits the handler adds to the job's batch: the name
+  (saved once, first answer wins), that the name was asked (once), and the readback shown. Business records are the
+  engine's.
 - **Commits.** A `Commit` is the engine's guards and statements. `completeJob` runs them in the batch that completes
   the job, after the lease and job guards, so a stale writer gets `StaleWriteError` first. The facts, the job's
   completion and its replies save together or not at all; commits save even when a closing reply is withheld. A

@@ -57,7 +57,8 @@ describe("job transitions check the job inside the batch (F1)", () => {
       await h.post(webhook(store.phoneNumberId, { messages: [textMessage({ from, id: wamid(), timestampS: nowS(h), body: from })] }));
     }
     const conversations = await rows<{ id: string; phone: string }>(
-      `SELECT c.id, u.phone FROM conversations c JOIN users u ON u.id = c.user_id WHERE c.business_id = ?`,
+      `SELECT c.id, cu.phone FROM conversations c JOIN customers cu ON cu.business_id = c.business_id AND cu.id = c.customer_id
+       WHERE c.business_id = ?`,
       store.businessId,
     );
     const ownerConversation = conversations.find((c) => c.phone === owner)!.id;

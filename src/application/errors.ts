@@ -64,3 +64,33 @@ export function describeError(error: unknown): string {
   if (error.message.startsWith("D1_")) return `${error.name}: ${error.message.slice(0, 200)}`;
   return error.name;
 }
+
+/**
+ * A reading's save refused because a message it used was used by another reading already. Nothing
+ * was saved; a retry reads the burst again without that message.
+ */
+export class BurstAlreadyReadError extends Error {
+  override readonly name = "BurstAlreadyReadError";
+
+  constructor() {
+    super("a message of this burst was already read");
+  }
+}
+
+/** A burst with more unread messages than one reading may take. Nothing is read or dropped. */
+export class BurstTooLargeError extends Error {
+  override readonly name = "BurstTooLargeError";
+
+  constructor() {
+    super("too many unread messages for one reading");
+  }
+}
+
+/** A customer commit refused because the customer isn't the store's. Nothing was saved. */
+export class CustomerNotFoundError extends Error {
+  override readonly name = "CustomerNotFoundError";
+
+  constructor() {
+    super("no such customer in this store");
+  }
+}

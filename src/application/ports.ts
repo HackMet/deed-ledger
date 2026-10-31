@@ -252,22 +252,21 @@ export interface TenancyRepository {
   findActiveMember(tenant: Tenant, phone: string): Promise<Member | null>;
 }
 
-export interface MemberMessageInput {
+export interface CustomerMessageInput {
   readonly channelAccountId: string;
-  readonly userId: string;
   readonly event: InboundMessageEvent;
   readonly receivedAtMs: number;
   /** The provider timestamp clamped around receivedAtMs; used only for ordering. */
   readonly orderTsS: number;
-  /** Used only if the conversation, message or media asset doesn't exist yet. */
+  /** Used only if the customer, conversation, message or media asset doesn't exist yet. */
+  readonly newCustomerId: string;
   readonly newConversationId: string;
   readonly newInboundId: string;
   readonly newMediaAssetId: string;
   readonly hourlyCap: number;
 }
 
-/** not_member: the membership stopped being active before the write; nothing was stored. */
-export type MemberMessageOutcome = "new" | "duplicate" | "capped" | "not_member";
+export type CustomerMessageOutcome = "new" | "duplicate" | "capped";
 
 export interface UnknownMessageInput {
   readonly channelAccountId: string;
@@ -285,15 +284,15 @@ export interface UnknownMessageInput {
 /** Thrown as PermanentWriteError for constraint violations; other errors are transient. */
 export interface IntakeRepository {
   /**
-   * One batch: conversation, media asset, the message with its pending job, last-inbound time.
-   * Every write in it checks admission itself: the membership is still active, the message isn't
-   * stored yet, the conversation is under its hourly cap. A message that isn't admitted leaves no
-   * row at all (no media asset either). conversationId is null only for not_member.
+   * One batch: the customer (anyone writing to the store's number is the store's customer), the
+   * conversation, media asset, the message with its pending job, last-inbound time. Every write
+   * checks admission itself: the message isn't stored yet and the conversation is under its hourly
+   * cap. A message that isn't admitted leaves no message or media row.
    */
-  recordMemberMessage(
+  recordCustomerMessage(
     tenant: Tenant,
-    input: MemberMessageInput,
-  ): Promise<{ readonly conversationId: string | null; readonly outcome: MemberMessageOutcome }>;
+    input: CustomerMessageInput,
+  ): Promise<{ readonly conversationId: string; readonly customerId: string; readonly outcome: CustomerMessageOutcome }>;
   /**
    * One batch: the hashed record (unless over the daily cap) and the sender's notice. A notice is
    * created or re-opened unless one was sent in the last 24 hours. Returns the notice to send now.
@@ -391,6 +390,21 @@ export interface JobRepository {
   abandonJob(lease: Lease, jobId: string, errorCode: string, nowMs: number, replies: readonly OutboxDraft[]): Promise<void>;
   /** System sweep: conversations with due open jobs older than the cutoff and no live lease. */
   findStrandedConversations(cutoffMs: number, nowMs: number, limit: number): Promise<ConversationRef[]>;
+  /**
+   * The burst a reading uses: the conversation's messages no reading has used yet, received at or
+   * after `sinceMs`, in order, through `throughJobId` (which must be running under this lease).
+   * Earlier messages qualify once their job is done; failed ones never do (they got their reply).
+   * Every one of them, or BurstTooLargeError: never part of a burst.
+   */
+  unreadBurst(lease: Lease, throughJobId: string, sinceMs: number): Promise<Job[]>;
+  /** The conversation's next open job after this one, in order; null when none is open. */
+  nextOpenJob(lease: Lease, afterJobId: string): Promise<Job | null>;
+  /**
+   * A commit for the completion batch of `readerJobId`: these messages were used by its reading.
+   * Fails loudly (BurstAlreadyReadError) when any of them was used already, so no line is applied
+   * twice; a crash before the batch leaves them unread, so none is lost.
+   */
+  markReadCommit(lease: Lease, readerJobId: string, messageIds: readonly string[], nowMs: number): Commit;
 }
 
 export interface OutboxMessage {
@@ -439,8 +453,8 @@ export interface OutboxRepository {
   confirmClaim(tenant: Tenant, outboxId: string, claimId: string, ttlMs: number): Promise<boolean>;
   /** Our receive time of the recipient's newest message to this store, for the 24-hour window. */
   lastInboundAtMs(message: OutboxMessage): Promise<number | null>;
-  /** The member's phone, or null when the membership is no longer active. */
-  memberPhone(tenant: Tenant, conversationId: string): Promise<string | null>;
+  /** The phone of the conversation's customer, or null when there is none to send to. */
+  customerPhone(tenant: Tenant, conversationId: string): Promise<string | null>;
   /** Stores the result; then, and only then, applies any delivery status kept early under statusHash. */
   markSent(
     tenant: Tenant,
@@ -501,6 +515,59 @@ export interface ConsoleAuthRepository {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Customers. Customers and conversations are channel records owned by this side; business
+// records (orders, payments, fiado) are the engine's.
+
+export interface Customer {
+  readonly id: string;
+  /** As the customer gave it; null until they do. */
+  readonly name: string | null;
+  /** When the assistant asked for the name; it is asked once. */
+  readonly nameAskedAtMs: number | null;
+}
+
+/** The order and version of the readback last queued to a conversation: what a typed "confirmar" answers. */
+export interface ReadbackRef {
+  readonly orderId: string;
+  readonly version: number;
+}
+
+export interface ConversationCustomer extends Customer {
+  /** With when it was queued (our clock): a typed word answers it only if it arrived after that. */
+  readonly lastReadback: (ReadbackRef & { readonly queuedAtMs: number }) | null;
+}
+
+/**
+ * Customer records. Reads take the store from the lease; writes are commits for the job's
+ * completion batch (`JobOutcome.commits`), never saved on their own.
+ */
+export interface CustomerRepository {
+  /** The customer of a conversation in this store; null when the conversation isn't the store's. */
+  ofConversation(conversation: ConversationRef): Promise<ConversationCustomer | null>;
+  /**
+   * Saves the name unless one is saved already: the first answer wins, so a name is saved once.
+   * Fails loudly when the customer isn't this store's.
+   */
+  saveNameCommit(tenant: Tenant, customerId: string, name: string, nowMs: number): Commit;
+  /**
+   * Records that the name was asked, the first time only. With `closingJobId`, only when the
+   * burst-closing reply carrying the question is written (see rememberReadbackCommit).
+   */
+  markNameAskedCommit(tenant: Tenant, customerId: string, nowMs: number, closingJobId: string | null): Commit;
+  /**
+   * Remembers the readback just queued, so typed words answer that version. With `closingJobId`
+   * (the reply closes the burst and is withheld when another job is open), it is remembered only
+   * when the reply is written: never a readback the customer won't see.
+   */
+  rememberReadbackCommit(
+    conversation: ConversationRef,
+    readback: ReadbackRef,
+    nowMs: number,
+    closingJobId: string | null,
+  ): Commit;
+}
+
+// ---------------------------------------------------------------------------------------------
 
 export interface Deps {
   readonly clock: Clock;
@@ -513,6 +580,7 @@ export interface Deps {
   readonly jobs: JobRepository;
   readonly outbox: OutboxRepository;
   readonly consoleAuth: ConsoleAuthRepository;
+  readonly customers: CustomerRepository;
   readonly doorbell: Doorbell;
   readonly channel: MessagingChannel;
   readonly mediaSource: MediaSource;
