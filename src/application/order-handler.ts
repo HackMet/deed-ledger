@@ -22,7 +22,7 @@ import { ANSWER_NEW_READBACK, WHAT_TO_CORRECT } from "../domain/order-copy";
 import { FAILURE_REPLY_TTL_MS, PLACEHOLDER_TTL_MS } from "../domain/outbox";
 import { attemptsExhausted } from "../domain/processing";
 import type { SavedPlace } from "../domain/place";
-import { actionFromButtonId, safeReply } from "../domain/replies";
+import { actionFromButtonId, safeReply, unansweredCount } from "../domain/replies";
 import { type CustomerGateDeps, gateCustomerJob } from "./customer-gate";
 import type { CustomerContext, Engine, EngineResult, LineMatch } from "./engine";
 import { BurstMediaUnreadableError } from "./errors";
@@ -349,6 +349,7 @@ async function complete(
   const shownAsRendered = replies.length > 0 && replies[0]!.body !== safeReply().body;
   if (shownAsRendered) {
     commits.push(...channelCommits(deps, lease, job, customer, result.outcome, closesBurst, nowMs));
+    await raiseUnanswered(deps, lease, job, customer, result.outcome);
   }
   // Notices for other customers (staff actions) don't arise from a customer's own message here.
   if (result.notices.length > 0) {
@@ -413,6 +414,31 @@ function readbackShown(outcome: EngineOutcome): OrderView | null {
     default:
       return null;
   }
+}
+
+/**
+ * "Te lo anoto y te confirmo" is only honest if someone sees it: each answer that promised one
+ * raises a Pendientes item. Raised before the save, like a handoff: a retried job can raise it
+ * twice, never zero times.
+ */
+async function raiseUnanswered(
+  deps: OrderHandlerDeps,
+  lease: Lease,
+  job: Job,
+  customer: ConversationCustomer,
+  outcome: EngineOutcome,
+): Promise<void> {
+  const unknown = unansweredCount(outcome);
+  if (unknown === 0) return;
+  const topic = outcome.type === "answer" ? outcome.topic : "store_hours";
+  await deps.pendientes.raise(lease, {
+    kind: "customer_question",
+    conversationId: lease.conversationId,
+    customerId: customer.id,
+    inboundId: job.id,
+    topic,
+    unknown,
+  });
 }
 
 /** What the reply shows, remembered with it: the readback version and that the name was asked. */

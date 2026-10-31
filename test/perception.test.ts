@@ -110,7 +110,7 @@ describe("reading the contract fixtures from recorded responses", () => {
       expect(observationsOf(outcome)).toEqual(contract.allReadings[name].observations);
       if (!outcome.ok) return;
       expect(outcome.reading.calls).toEqual([
-        { model: "muse-spark-1.3", promptVersion: "order-v1", latencyMs: expect.any(Number), inputTokens: 3950, outputTokens: 1500 },
+        { model: "muse-spark-1.3", promptVersion: "order-v2", latencyMs: expect.any(Number), inputTokens: 3950, outputTokens: 1500 },
       ]);
     });
   }

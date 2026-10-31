@@ -17,7 +17,9 @@ Last updated: Sat Oct 31, 2026, morning Honduras time, by Claude Code (Angel's s
   - media download, voice notes decoded and transcribed, both read in orders (#27);
   - first message, ALTO, handoff and deletion, a privacy page (#30); the two-minute message (#31);
   - delivery to a saved place (#29): pins from the webhook, saved places offered with Sí / Otro lugar (migration
-    0017; contract additions proposed in [contract.md](contract.md) "Proposed (#29)").
+    0017; contract additions proposed in [contract.md](contract.md) "Proposed (#29)");
+  - customer questions: price, availability, store hours (#47); contract additions proposed in contract.md
+    "Proposed (#47)".
 - kercmari's engine is PR #62. A local trial ran this branch's full path on it: orders save once under our customer
   IDs, but no order reply goes out until `verifyClaims` exists (#12); the list and staff taps need #12 too.
 - Contract gaps (a)–(p) and 16 questions from the build have proposed answers in [contract.md](contract.md); not
