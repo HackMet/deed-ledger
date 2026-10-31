@@ -7,6 +7,7 @@ import {
   UNKNOWN_NOTICE_INLINE_RETRY_DELAYS_MS,
 } from "../domain/outbox";
 import { COPY, flattenClaims, secondCheckHolds } from "../domain/replies";
+import { isStoppedRecipient } from "./customer-gate";
 import { describeError } from "./errors";
 import type { ConversationRef, Deps, OutboxMessage, SendResult, Tenant } from "./ports";
 
@@ -98,6 +99,15 @@ async function sendOne(
   const message = await deps.outbox.claim(tenant, candidate.id, claimId, SEND_CLAIM_MS, deps.clock.now());
   if (message === null) return "skipped";
   const fields = { businessId: tenant.businessId, outboxId: message.id };
+
+  // A customer who typed ALTO gets only the direct answers to their control words (#30).
+  if (await isStoppedRecipient(deps, tenant, message)) {
+    if (!(await deps.outbox.release(tenant, message.id, claimId, "customer_stopped", true, deps.clock.now()))) {
+      return claimLost(deps, fields, "not_sent");
+    }
+    deps.log.info("outbox_skipped_stopped", fields);
+    return "failed";
+  }
 
   // Every read first.
   const lastInboundAtMs = await deps.outbox.lastInboundAtMs(message);

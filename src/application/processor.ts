@@ -235,7 +235,7 @@ function toOutbox(deps: Deps, job: Job, replies: readonly ReplyDraft[]): OutboxD
     // Every part carries the reply's claims; only the last carries its buttons.
     return parts.map((body, part) => ({
       id: deps.ids.newId(),
-      kind: "reply",
+      kind: reply.kind ?? "reply",
       body,
       dedupeKey: `reply:${job.id}:${n}:${part}`,
       replyIndex: n,

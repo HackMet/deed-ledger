@@ -18,6 +18,7 @@ import { RECEIVED_PLACEHOLDER } from "../domain/copy";
 import { ANSWER_NEW_READBACK, WHAT_TO_CORRECT } from "../domain/order-copy";
 import { PLACEHOLDER_TTL_MS } from "../domain/outbox";
 import { safeReply } from "../domain/replies";
+import { type CustomerGateDeps, gateCustomerJob } from "./customer-gate";
 import type { CustomerContext, Engine, EngineResult, LineMatch } from "./engine";
 import { CUSTOMER_REPLY_TTL_MS, replyForOutcome } from "./replies";
 import type {
@@ -81,6 +82,8 @@ export interface OrderHandlerDeps {
   /** Where a reply blocked by the claim check's first pass is raised. */
   readonly pendientes: Pendientes;
   readonly reader?: BurstReader | null;
+  /** ALTO, SEGUIR, handoff, deletion and the first message (#30); none in tests that don't need it. */
+  readonly gate?: CustomerGateDeps | null;
 }
 
 const ACTION_TYPES = {
@@ -90,7 +93,7 @@ const ACTION_TYPES = {
 } as const satisfies Record<ReadbackAnswer["word"], CustomerAction["type"]>;
 
 export function createOrderHandler(deps: OrderHandlerDeps): JobHandler {
-  return { handle: (input) => handleJob(deps, input) };
+  return { handle: (input) => gateCustomerJob(deps.gate, input, () => handleJob(deps, input)) };
 }
 
 async function handleJob(deps: OrderHandlerDeps, { lease, job, isNewestOfBurst }: JobInput): Promise<JobOutcome> {

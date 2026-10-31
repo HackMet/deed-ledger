@@ -8,8 +8,11 @@ import { type BurstReader as OrderBurstReader, createOrderHandler } from "./appl
 import { type BurstMediaResolver, createOrderReading, readingSourceOf, unresolvedMedia } from "./application/order-reading";
 import { placeholderHandler } from "./application/placeholder-handler";
 import type { Deps, Pendientes } from "./application/ports";
+import type { MediaEraser } from "./application/ports";
+import { PRIVACY_PATH } from "./domain/customer-controls";
 import { type Config, readConfig } from "./infrastructure/config";
 import { D1ConsoleAuthRepository } from "./infrastructure/d1/console-auth-repository";
+import { D1CustomerControlRepository } from "./infrastructure/d1/customer-control-repository";
 import { D1CustomerRepository } from "./infrastructure/d1/customer-repository";
 import { D1IntakeRepository } from "./infrastructure/d1/intake-repository";
 import { D1JobRepository } from "./infrastructure/d1/job-repository";
@@ -20,6 +23,7 @@ import { LoggingPendientes } from "./infrastructure/logging-pendientes";
 import { demoOrders } from "./infrastructure/memory/demo-orders";
 import { MemoryEngine } from "./infrastructure/memory/memory-engine";
 import { QueueDoorbell } from "./infrastructure/queue-doorbell";
+import { R2MediaEraser } from "./infrastructure/r2-media-eraser";
 import { R2MediaStore } from "./infrastructure/r2-media-store";
 import { consoleLogger, randomIds, realSleep, systemClock } from "./infrastructure/runtime";
 import { WhatsAppCloudChannel } from "./integrations/whatsapp/client";
@@ -59,6 +63,7 @@ export type RuntimeOverrides = Partial<
   readonly burstMedia?: BurstMediaResolver;
   // Tests pass a reader whose provider answers with recorded responses.
   readonly burstReader?: BurstReader;
+  readonly mediaEraser?: MediaEraser;
 } & Partial<Pick<Deps, "audioDecoder" | "transcriber">>;
 
 export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtime {
@@ -69,10 +74,20 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
   const log = overrides.log ?? consoleLogger;
   const jobs = new D1JobRepository(db);
   const customers = new D1CustomerRepository(db);
+  const customerControls = new D1CustomerControlRepository(db);
   const pendientes = overrides.pendientes ?? new LoggingPendientes(log);
+  // ALTO, SEGUIR, handoff, deletion and the first message, ahead of the order handler (#30).
+  const gate = {
+    controls: customerControls,
+    jobs,
+    pendientes,
+    clock,
+    log,
+    privacyUrl: config.publicBaseUrl === "" ? null : `${config.publicBaseUrl}${PRIVACY_PATH}`,
+  };
   // Customers' messages go to the order handler once an engine is wired in (#13 plugs the real one in here).
   const reader = engine === null ? null : buildOrderReading(env, engine, { clock, log }, { db, ...readingOverrides(overrides) });
-  const orderHandler = engine === null ? null : createOrderHandler({ engine, jobs, customers, clock, log, pendientes, reader });
+  const orderHandler = engine === null ? null : createOrderHandler({ engine, jobs, customers, clock, log, pendientes, reader, gate });
   return {
     config,
     engine,
@@ -115,6 +130,8 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
       audioDecoder: overrides.audioDecoder ?? new OpusAudioDecoder(),
       transcriber:
         overrides.transcriber ?? new MuseVoiceTranscriber({ apiKey: config.modelApiKey, fetch: (input, init) => fetch(input, init) }),
+      customerControls,
+      mediaEraser: overrides.mediaEraser ?? new R2MediaEraser(env.MEDIA),
     },
   };
 }

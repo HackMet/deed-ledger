@@ -7,6 +7,7 @@ interface __BaseEnv_Env {
 	JOBS: Queue;
 	WHATSAPP_GRAPH_API_VERSION: "v26.0";
 	DEV_CONSOLE: "";
+	PUBLIC_BASE_URL: string;
 	WHATSAPP_APP_SECRET: string;
 	WHATSAPP_VERIFY_TOKEN: string;
 	WHATSAPP_TOKEN: string;
@@ -25,7 +26,7 @@ type StringifyValues<EnvType extends Record<string, unknown>> = {
 	[Binding in keyof EnvType]: EnvType[Binding] extends string ? EnvType[Binding] : string;
 };
 declare namespace NodeJS {
-	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "WHATSAPP_GRAPH_API_VERSION" | "DEV_CONSOLE" | "WHATSAPP_APP_SECRET" | "WHATSAPP_VERIFY_TOKEN" | "WHATSAPP_TOKEN" | "SENDER_HASH_SALT" | "LINK_SIGNING_SECRET" | "MODEL_API_KEY">> {}
+	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "WHATSAPP_GRAPH_API_VERSION" | "DEV_CONSOLE" | "PUBLIC_BASE_URL" | "WHATSAPP_APP_SECRET" | "WHATSAPP_VERIFY_TOKEN" | "WHATSAPP_TOKEN" | "SENDER_HASH_SALT" | "LINK_SIGNING_SECRET" | "MODEL_API_KEY">> {}
 }
 declare module "*.txt" {
 	const value: string;

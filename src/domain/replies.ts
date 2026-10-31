@@ -120,8 +120,10 @@ export const COPY = {
   balanceZero: "No tenés saldo pendiente con la tienda.",
   paymentClaimed: "Recibí tu comprobante. Te aviso cuando la tienda confirme el pago.",
   handoff: "Le paso tu mensaje a la tienda. Te atienden en un momento.",
-  stopped: "Listo, no te vamos a mandar más mensajes. Si querés volver a pedir, escribinos cuando querás.",
-  stoppedDelete: "Listo, no te vamos a mandar más mensajes. Recibimos tu pedido de borrar tus datos.",
+  // Typed ALTO and deletion requests are decided by code before the engine (customer-gate.ts). This
+  // outcome only comes from a model reading, which stops nothing: point to the exact words instead.
+  stopped: "Si no querés recibir más mensajes, escribí solo la palabra ALTO.",
+  stoppedDelete: "Si querés que borremos tus datos, escribí: borren mis datos.",
   outOfScope: "Solo te puedo ayudar con pedidos, precios y tu cuenta de la tienda. ¿Qué te mando?",
   refusedTap: "Ese botón ya no aplica. Si necesitás algo con tu pedido, escribime.",
   whichProduct: "¿De qué producto me preguntás?",

@@ -15,7 +15,10 @@
   "vars": {
     "WHATSAPP_GRAPH_API_VERSION": "v26.0",
     // "1" opens the console without login, on an in-memory pretend engine. Only the simulator sets it.
-    "DEV_CONSOLE": ""
+    "DEV_CONSOLE": "",
+    // The Worker's public origin (https://…, no trailing slash), for the privacy link in the first
+    // message. Blank: the link is left out. Set it before customers write.
+    "PUBLIC_BASE_URL": ""
   },
 
   // Values come from `wrangler secret put` when deployed, and from .dev.vars locally.

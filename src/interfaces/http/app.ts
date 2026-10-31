@@ -2,11 +2,13 @@ import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { dispatchUnknownNotice } from "../../application/dispatch";
 import { describeError } from "../../application/errors";
+import { PRIVACY_PATH } from "../../domain/customer-controls";
 import { acceptEvents, type IntakeOutcome } from "../../application/intake";
 import type { Deps } from "../../application/ports";
 import type { Runtime } from "../../composition";
 import { consoleRoutes } from "./console";
 import type { HttpEnv } from "./env";
+import { privacyRoutes } from "./privacy";
 import { parseWebhookPayload } from "../../integrations/whatsapp/payload";
 import { verifyTokenMatches, verifyWebhookSignature } from "../../integrations/whatsapp/signature";
 
@@ -80,6 +82,7 @@ export function createHttpApp(makeRuntime: (env: Env) => Runtime) {
   });
 
   app.route("/console", consoleRoutes());
+  app.route(PRIVACY_PATH, privacyRoutes());
 
   app.notFound((c) => c.text("Not found", 404));
 

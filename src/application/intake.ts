@@ -1,4 +1,5 @@
 import { MEMBER_MESSAGES_PER_HOUR, orderingTimestampS } from "../domain/processing";
+import { refusedAfterDeletion } from "./customer-deletion";
 import { describeError, PermanentWriteError } from "./errors";
 import type { ChannelAccount, ChannelEvent, ConversationRef, Deps, InboundMessageEvent, Tenant } from "./ports";
 
@@ -67,6 +68,8 @@ async function recordCustomerMessage(
   channel: ChannelAccount,
   event: InboundMessageEvent,
 ): Promise<ConversationRef | null> {
+  // A late or retried delivery for a customer deleted since must not create them again (#30).
+  if (await refusedAfterDeletion(deps, tenant, event)) return null;
   const receivedAtMs = deps.clock.now();
   const recorded = await deps.intake.recordCustomerMessage(tenant, {
     channelAccountId: channel.id,

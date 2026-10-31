@@ -130,6 +130,9 @@ secrets. The expected names (T1 confirms them):
 | `SENDER_HASH_SALT` | Key for the HMAC that replaces phone numbers and message IDs of numbers that aren't members (message IDs embed the sender's phone number) |
 | `LINK_SIGNING_SECRET` | Signs the console's CSRF values; required, or the console answers 503 |
 
+Plain vars in `wrangler.jsonc`: `PUBLIC_BASE_URL` is the Worker's public origin, used for the privacy link in a
+customer's first message (blank: the link is left out).
+
 ## Part 1 as built
 
 The WhatsApp foundation: messages come in, are worked through in order per conversation, and are answered through an
@@ -298,6 +301,27 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
   `substitute:<order>:v<version>:<line>`, `remove:…`). `WhatsAppCloudChannel.sendButtons` sends Meta's
   interactive reply-button shape, or plain text when the buttons don't fit; the body always carries
   "Respondé Confirmar, Corregir o Cancelar". Typed words map to the same keys (`typedDecision`).
+
+### Customer controls: first message, ALTO, handoff, deletion (#30)
+
+- `src/application/customer-gate.ts` runs ahead of the order handler (`OrderHandlerDeps.gate`, one call in
+  `createOrderHandler`). Control words come from the typed text only, matched against the whole message in any
+  case or accent (`src/domain/customer-controls.ts`); a model's `stop` or `handoff` reading decides nothing.
+- First message: the introduction (store's assistant, not the owner or a person; `PUBLIC_BASE_URL/privacidad`;
+  ALTO; how to reach the owner) goes before the customer's first reply; `customers.introduced_at_ms` is set in
+  the same batch, and only if the reply is written. The notice is `GET /privacidad` (`interfaces/http/privacy.ts`).
+- ALTO sets `customers.stopped_at_ms` and marks the message and every unread one before it read. Dispatch fails
+  any row for a stopped customer unless its kind is `customer_control` (the direct answers to control words);
+  while stopped, a message gets one reminder per stop and nothing else. Only SEGUIR resumes.
+- "Quiero hablar con …" raises a `customer_handoff` Pendientes item and sends one fixed line, stopped or not.
+- Deletion, only on an explicit request ("borren mis datos"; never a question, never inferred): stops the
+  customer and sets `deletion_requested_at_ms`. The cron purge (`customer-deletion.ts`) runs after the
+  confirmation is sent (or 2 hours later): R2 objects under the customer's media prefixes first, then one D1 batch
+  that clears phone, name, message text, provider IDs, media references and sent bodies, fails unsent rows, sets
+  `deleted_at_ms` and writes `customer_tombstones (business_id, HMAC of the phone)`. A failure leaves D1 as it
+  was and the next minute retries. The customer row stays, empty, for sale and fiado history. Intake drops a
+  message from a tombstoned sender sent at or before the purge (Meta's provider timestamp, covered by the
+  signature); a later message starts a new customer.
 
 ### The engine boundary and the console (dev only)
 

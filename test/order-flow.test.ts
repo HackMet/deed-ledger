@@ -66,6 +66,8 @@ async function customerOnMemoryEngine() {
   const h = harness({ engine });
   await h.post(webhook(store.phoneNumberId, { messages: [textMessage({ from: phone, id: wamid(), timestampS: nowS(h), body: "Hola" })] }));
   const [customer] = await rows<{ id: string }>(`SELECT id FROM customers WHERE business_id = ?`, store.businessId);
+  // The first message's introduction (#30) is covered in customer-controls.test.ts; these tests count replies.
+  await env.DB.prepare(`UPDATE customers SET introduced_at_ms = 1 WHERE id = ?`).bind(customer!.id).run();
   const conversation = await conversationOf(store.businessId);
   const tenant = { businessId: store.businessId };
 
@@ -622,7 +624,10 @@ describe("the first order, from reading to reply", () => {
     ]);
     await t.burst(t.text("¿ya está?"));
 
-    expect(t.h.sentTo(t.phone)).toEqual([
+    const sent = t.h.sentTo(t.phone);
+    // A new customer's first reply opens with the introduction (#30); its wording is tested there.
+    expect(sent[0]).toContain("asistente automático");
+    expect(sent.slice(1)).toEqual([
       "¿A nombre de quién lo anoto?",
       "¿De qué tamaño querés 1 aceite clover?",
       "¿Lo recogés en la tienda o te lo llevamos?",

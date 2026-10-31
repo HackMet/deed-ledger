@@ -14,6 +14,8 @@ export interface Config {
   readonly devConsole: boolean;
   /** The Meta Model API key. Blank: model calls fail closed. */
   readonly modelApiKey: string;
+  /** The Worker's public origin (https://…), for links customers get. Blank: links are left out. */
+  readonly publicBaseUrl: string;
 }
 
 export function readConfig(env: Env): Config {
@@ -26,5 +28,6 @@ export function readConfig(env: Env): Config {
     linkSigningSecret: env.LINK_SIGNING_SECRET ?? "",
     devConsole: String(env.DEV_CONSOLE ?? "") === "1",
     modelApiKey: env.MODEL_API_KEY ?? "",
+    publicBaseUrl: String(env.PUBLIC_BASE_URL ?? "").replace(/\/+$/u, ""),
   };
 }
