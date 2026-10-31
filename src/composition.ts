@@ -34,6 +34,8 @@ export interface Runtime {
   readonly deps: Deps;
   /** Null until the real engine is wired in, except for the dev console's pretend engine. */
   readonly engine: Engine | null;
+  /** The burst reader the console's Anotar screen uses (#26). */
+  readonly burstReader: BurstReader;
 }
 
 /** One pretend engine per Worker isolate, so the dev console's taps last between requests. */
@@ -44,7 +46,9 @@ export type RuntimeOverrides = Partial<
     Deps,
     "clock" | "ids" | "log" | "sleep" | "hasher" | "doorbell" | "channel" | "mediaSource" | "mediaStore" | "jobHandler"
   >
-> & { readonly db?: D1Database; readonly engine?: Engine; readonly pendientes?: Pendientes };
+> & { readonly db?: D1Database; readonly engine?: Engine; readonly pendientes?: Pendientes }
+  // Tests pass a reader whose provider answers with recorded responses.
+  & { readonly burstReader?: BurstReader };
 
 export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtime {
   const config = readConfig(env);
@@ -59,6 +63,7 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
   return {
     config,
     engine,
+    burstReader: overrides.burstReader ?? buildBurstReader(env, { clock, log }, { db }),
     deps: {
       clock: overrides.clock ?? systemClock,
       ids: overrides.ids ?? randomIds,

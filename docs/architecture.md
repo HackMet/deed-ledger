@@ -301,6 +301,14 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
   reactivates them with fiado off.
 - **Voice-note notice** (`bienvenida.ts`, migration 0008): until a member taps "Entendido", logging in shows that voice
   notes are kept as the store's records.
+- **Console reader** (`src/application/console-reader.ts`, #26): `readConsoleInput(deps, member, { purpose, inputs })`
+  reads up to three pieces (typed text, a transcript, photos) as one burst. `report` uses the console prompt and
+  kinds; `order` (Pedido a mano) uses the order prompt with no open order and keeps only `customer_order`,
+  `fulfillment`, `customer_name` and `other`. The store is the member's. Photos (at most 5 MB, JPEG/PNG/GIF/WebP by
+  their bytes) are stored at `stores/<business>/console/<sha256>` before the call; text is capped at 2,000
+  characters; audio answers "not yet" until #27. It returns the reading, matches and stored media for display and
+  saves no observation. **Anotar** (`anotar.ts`, owner and staff) is its screen; its body limit runs before the
+  CSRF check reads the body.
 
 ### Known limits
 
