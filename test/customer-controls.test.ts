@@ -37,7 +37,7 @@ async function storeWithOwner(name = "Punto de prueba"): Promise<SeededStore> {
 function gatedHarness(jobHandler?: JobHandler) {
   return harness({
     engine: new MemoryEngine(() => []),
-    env: testEnv({ PUBLIC_BASE_URL: BASE_URL }),
+    env: testEnv({ PUBLIC_BASE_URL: BASE_URL } as unknown as Partial<Env>),
     ...(jobHandler === undefined ? {} : { jobHandler }),
   });
 }
@@ -278,7 +278,7 @@ describe("ALTO", () => {
 });
 
 describe("without an engine (the placeholder answers)", () => {
-  const plainHarness = () => harness({ env: testEnv({ PUBLIC_BASE_URL: BASE_URL }) });
+  const plainHarness = () => harness({ env: testEnv({ PUBLIC_BASE_URL: BASE_URL } as unknown as Partial<Env>) });
 
   it("introduces, stops on ALTO, reminds once and resumes on SEGUIR", async () => {
     const store = await storeWithOwner();
@@ -567,7 +567,7 @@ describe("deletion", () => {
       },
       Number.POSITIVE_INFINITY,
     );
-    h = harness({ db, engine: new MemoryEngine(() => []), env: testEnv({ PUBLIC_BASE_URL: BASE_URL }) });
+    h = harness({ db, engine: new MemoryEngine(() => []), env: testEnv({ PUBLIC_BASE_URL: BASE_URL } as unknown as Partial<Env>) });
     const a = customerOf(h, store);
     const oldId = wamid();
     const oldTimestamp = nowS(h) + 1;
