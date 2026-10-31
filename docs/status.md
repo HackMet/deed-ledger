@@ -3,7 +3,7 @@
 Shared state for every agent: what's true now, what's next, what's open, what bit us. Keep it short. Anything a
 command can tell you (git log, test results, CI) doesn't belong here. Decisions go in [decisions.md](decisions.md).
 
-Last updated: Fri Oct 30, 2026, afternoon Honduras time, by Claude Code (fact ledger onto the contract).
+Last updated: Fri Oct 30, 2026, evening Honduras time, by Claude Code (E7: docs for the order engine chain, no code).
 
 ## Now
 
@@ -27,6 +27,17 @@ Last updated: Fri Oct 30, 2026, afternoon Honduras time, by Claude Code (fact le
   `FactCommit` in `domain/facts.ts`, `D1FactLedger.statementsFor` turning one into a `Commit` (D-41), post-guards that
   the fence now runs inside the batch, cancellation as compensating movements, and the dependency gate G4. On local D1
   only, **not deployed**. The chain's trace records T1 to T5 as PASS.
+- The order engine (issue #11) is built on local D1 only, **not deployed and not wired** into the composition root or
+  the job handler. Its E1 to E3 trace lines (E1, E1b, E2, E2b, E3, e3-engine-orders-fix1, e3-engine-orders-fix2) are
+  all PASS. What it does: a burst becomes one versioned order (`onBurst`); each saved decision is anchored by an
+  operation key derived from the customer's own order and action (D-44); every decision reads first (D-42); the
+  customer can confirm, cancel and remove a line, and a re-confirm after a change returns to the state the change
+  interrupted (D-43). One open order per customer (D-39) holds. What it does not do: `preparationList`,
+  `verifyClaims` and the console taps (issue #12, out of this cut); `correct_order`, `accept_saved_place`,
+  `accept_substitute`, `payment_receipt`, `stop`, `clarification` and `customer_name` return nothing and save nothing;
+  it asks no perception questions (ambiguous size, missing fulfillment); unit prices are always null, so totals are
+  null, and availability is always `no_se`. Verified by 238 tests on local D1 (26 files). `npm run dev:sim` and
+  `npm run simulate` were **not run**, so the order flow is "tests on local D1", not end to end.
 - Every guard now has a read before it that answers the owner, with the guard left as the backstop
   for a race (D-42): a used operation key reads as `duplicate`, a stale draft revision as
   `rejected`/`stale_version`, a cancelled dependency as a rejection carrying the dead ids. A guard
@@ -46,7 +57,7 @@ Last updated: Fri Oct 30, 2026, afternoon Honduras time, by Claude Code (fact le
 |---|---|---|---|
 | 1 | Spec meeting: agree contract v1 and its open questions | Both | [contract.md](contract.md#open-for-the-meeting) |
 | 2 | PR `claude/base-layer` into `main` on the team repo | Angel | Merge commit, not squash |
-| 3 | Engine on the contract, saving through `JobOutcome.commits` | Teammate | Replaces the pretend engine |
+| 3 | Engine on the contract, saving through `JobOutcome.commits` | Teammate | Order engine built on local D1 but not wired; the console still runs the pretend engine |
 | 4 | Console login (invite QR, sessions, roles), then a deploy | Angel (Claude Code) | PR #61; the deploy needs `LINK_SIGNING_SECRET` set first |
 | 5 | Replies and the claim check; perception for customer orders | Angel (Claude Code) | Against the contract fixtures |
 | 6 | The two-minute "te respondemos en un momento" fallback | Angel (Claude Code) | Specified, not built |
@@ -66,6 +77,13 @@ staff use the preparation list on their own phones. If the console can't pass, i
 | Decisions made since Oct 28 aren't in [decisions.md](decisions.md) yet | Angel → Claude Code | Oct 28 |
 | Product and team name: "Johan AI" is a working title | Team | Oct 27 |
 | D-41 (fact memory under `Commit`) and D-42 (read before every guard) are Proposed and need Angel's acceptance | Angel | Oct 30 |
+| D-43 (customer cancel refused once preparando; re-confirm returns to the interrupted state) and D-44 (operation keys derived from the customer's own order and action) are Proposed and need Angel's acceptance | Angel | Oct 30 |
+| Issue #12: `preparationList`, `verifyClaims` and the console taps are not built | Teammate | Oct 30 |
+| Order engine not wired into the composition root or the job handler; `dev:sim` and `simulate` not run | Teammate | Oct 30 |
+| Perception questions (ambiguous size, missing fulfillment) not asked; unit prices null, so totals null | Teammate, with Angel's perception | Oct 30 |
+| Order tables lack some guards: no FK between order tables, no version-immutability trigger, no partial UNIQUE for one open order, `facts.operation_key` has no FK to `operations` | Teammate | Oct 30 |
+| `operations` rows do not store `customer_id`; ownership is checked through the order instead | Teammate | Oct 30 |
+| Trace shas for T1 to T5 and T7 (e.g. `137ec35`, `6c92127`) are on `claude/fact-memory`, not on `claude/fact-ledger`; the same work is committed here under other shas | Team | Oct 30 |
 
 ## Traps
 
