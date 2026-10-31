@@ -871,6 +871,8 @@ export interface ModelRequest {
   readonly user: readonly ModelContentPart[];
   readonly schemaName: string;
   readonly schema: { readonly [key: string]: unknown };
+  /** Caps reasoning plus visible output tokens; the spend reservation counts on it. */
+  readonly maxOutputTokens: number;
 }
 
 /**

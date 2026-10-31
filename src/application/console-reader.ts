@@ -11,7 +11,7 @@
  * - Text and photos are data, never instructions (the reader's fixed prompt and checks).
  * - Every call goes through the reader's daily spend cap.
  */
-import type { BurstReading, Observation, ObservationKind } from "../domain/contract/observation";
+import type { BurstReading, Evidence, ItemLine, Observation, ObservationKind } from "../domain/contract/observation";
 import { looksLikeAudio, sniffImageType } from "../domain/image-type";
 import { storePrefix } from "../domain/media";
 import type { BurstMessage } from "../domain/perception/burst";
@@ -99,7 +99,14 @@ export async function readConsoleInput(
     return { ok: false as const, reason, media };
   };
 
-  const inputs = request.inputs.filter((input) => !(isText(input) && input.text.trim() === ""));
+  // Blank notes aren't sent. `positions[i]` is the caller's position of the i-th message sent, so
+  // evidence can point back at the caller's inputs.
+  const positions: number[] = [];
+  const inputs = request.inputs.filter((input, position) => {
+    const blank = isText(input) && input.text.trim() === "";
+    if (!blank) positions.push(position);
+    return !blank;
+  });
   if (inputs.length === 0) return refuse("empty");
   if (inputs.length > MAX_PARTS) return refuse("too_many");
 
@@ -139,13 +146,54 @@ export async function readConsoleInput(
   });
   if (!outcome.ok) return refuse(outcome.reason, media);
 
-  const result = request.purpose === "order" ? keepOrderKinds(outcome) : outcome;
+  const placed = toCallerPositions(outcome, positions);
+  const result = request.purpose === "order" ? keepOrderKinds(placed) : placed;
   deps.log.info("console_reader.read", {
     businessId: tenant.businessId,
     count: result.reading.observations.length,
     outcome: request.purpose,
   });
   return { ok: true, purpose: request.purpose, reading: result.reading, matches: result.matches, labelMatches: result.labelMatches, media };
+}
+
+/** Evidence from the reader points at messages sent; the caller's evidence points at its inputs. */
+function toCallerPositions(outcome: Extract<ReadOutcome, { ok: true }>, positions: readonly number[]): Extract<ReadOutcome, { ok: true }> {
+  const at = <E extends Evidence | null>(evidence: E): E => {
+    if (evidence === null) return evidence;
+    const position = positions[evidence.message];
+    // The reader only returns evidence inside the burst it was given.
+    if (position === undefined) throw new Error("evidence outside the burst");
+    return { ...evidence, message: position };
+  };
+  const line = <L extends ItemLine>(item: L): L => ({ ...item, evidence: at(item.evidence) });
+  const observations = outcome.reading.observations.map((observation): Observation => {
+    const issues = observation.issues.map((issue) => ({ ...issue, evidence: at(issue.evidence) }));
+    switch (observation.kind) {
+      case "customer_order":
+        return { ...observation, lines: observation.lines.map(line), issues };
+      case "sale_report":
+      case "fiado_report":
+        return { ...observation, lines: observation.lines.map(line), issues };
+      case "supplier_invoice":
+        return { ...observation, lines: observation.lines.map(line), issues };
+      case "order_change":
+        return {
+          ...observation,
+          edits: observation.edits.map((edit) => (edit.op === "add" ? { ...edit, line: line(edit.line) } : { ...edit, evidence: at(edit.evidence) })),
+          issues,
+        };
+      case "payment_receipt": {
+        const { amount, bank, date, reference } = observation.evidence;
+        return { ...observation, evidence: { amount: at(amount), bank: at(bank), date: at(date), reference: at(reference) }, issues };
+      }
+      case "clarification":
+      case "customer_name":
+        return { ...observation, evidence: at(observation.evidence), issues };
+      default:
+        return { ...observation, issues };
+    }
+  });
+  return { ...outcome, reading: { ...outcome.reading, observations } };
 }
 
 function isText(input: ConsoleInput): input is Extract<ConsoleInput, { type: "text" | "transcript" }> {

@@ -1,7 +1,7 @@
 /**
  * Catalog matching, by code, inside one store's catalog: barcode, exact name, known alias. A match
- * needs exactly one product; two candidates are no match (the engine asks, or staff use
- * match_line). The model never supplies an ID: at most it picks one of the labels code put in the
+ * needs exactly one product; two candidates at any step are no match, and no weaker step is tried
+ * (the engine asks, or staff use match_line). The model never supplies an ID: at most it picks one of the labels code put in the
  * prompt ("la de marca Mazola" -> "P3"), and code maps that label back.
  */
 import type { LineMatch } from "../engine";
@@ -86,25 +86,27 @@ function linesOf(observation: Observation): readonly (ItemLine | null)[] {
   }
 }
 
+/**
+ * Barcode, then exact name, then known alias. A step with several candidates ends the search
+ * unresolved: a later, weaker step never breaks a tie the stronger one couldn't.
+ */
 function matchName(
   said: string,
   products: readonly CatalogProduct[],
 ): { productId: string; how: LineMatch["how"] } | null {
   const name = normalize(said);
   if (name === "") return null;
-  if (/^\d{8,14}$/.test(name)) {
-    const byCode = unique(products.filter((product) => product.barcode === name));
-    if (byCode) return { productId: byCode.productId, how: "barcode" };
+  const steps: [LineMatch["how"], (product: CatalogProduct) => boolean][] = [
+    ["exact_name", (product) => product.names.some((n) => normalize(n) === name)],
+    ["known_alias", (product) => product.aliases.some((a) => normalize(a) === name)],
+  ];
+  if (/^\d{8,14}$/.test(name)) steps.unshift(["barcode", (product) => product.barcode === name]);
+  for (const [how, fits] of steps) {
+    const [first, ...more] = products.filter(fits);
+    if (more.length > 0) return null;
+    if (first) return { productId: first.productId, how };
   }
-  const exact = unique(products.filter((product) => product.names.some((n) => normalize(n) === name)));
-  if (exact) return { productId: exact.productId, how: "exact_name" };
-  const alias = unique(products.filter((product) => product.aliases.some((a) => normalize(a) === name)));
-  if (alias) return { productId: alias.productId, how: "known_alias" };
   return null;
-}
-
-function unique<T>(items: readonly T[]): T | null {
-  return items.length === 1 ? (items[0] ?? null) : null;
 }
 
 /** Lowercase, no accents, single spaces. */

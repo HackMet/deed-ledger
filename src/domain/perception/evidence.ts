@@ -1,7 +1,8 @@
 /**
  * Turns the model's evidence (a message number plus the exact words, or a photo box) into the
  * contract's Evidence, checked against the burst. Code finds the span; a quote that isn't in the
- * message, a box outside the photo or a message outside the burst is "invalid", never repaired.
+ * message, a box outside the photo, a box on a photo the model never saw, or a message outside the
+ * burst is "invalid", never repaired.
  */
 import type { Evidence } from "../contract/observation";
 import type { BurstMessage } from "./burst";
@@ -22,6 +23,8 @@ export function resolveEvidence(wire: WireEvidence, messages: readonly BurstMess
       return span ? { source: message.type, message: index, start: span.start, end: span.end } : "invalid";
     }
     case "image": {
+      // A photo sent as "no disponible" (not fetched, unsupported format): the model never saw it.
+      if (message.bytes === null) return "invalid";
       const box = wire.box;
       if (!isBox(box)) return "invalid";
       return { source: "image", message: index, box: [box[0], box[1], box[2], box[3]] };
@@ -56,6 +59,29 @@ export function findQuote(text: string, quote: string): { start: number; end: nu
   const start = folded.starts[at];
   const end = folded.ends[at + target.length - 1];
   return start === undefined || end === undefined ? null : { start, end };
+}
+
+/**
+ * The span's own text, for checking a verbatim field against it. Null for a box: a photo has no
+ * text code can compare.
+ */
+export function spanText(evidence: Evidence, messages: readonly BurstMessage[]): string | null {
+  if (evidence.source === "image") return null;
+  const message = messages[evidence.message];
+  return message && (message.type === "text" || message.type === "transcript") ? message.text.slice(evidence.start, evidence.end) : null;
+}
+
+/**
+ * True when `said` appears in `source` as whole words, ignoring case, accents, punctuation and
+ * spacing: "Carla" is in "soy Carla.", "de medio" is not in "de litro", "si" is not in "sin".
+ */
+export function saysWords(source: string, said: string): boolean {
+  const wanted = words(said);
+  return wanted !== "" && ` ${words(source)} `.includes(` ${wanted} `);
+}
+
+function words(value: string): string {
+  return value.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 }
 
 /** Lowercased, accents removed, with each folded unit's start and end in the original text. */
