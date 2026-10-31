@@ -41,12 +41,12 @@ Last updated: Fri Oct 30, 2026, evening Honduras time, by Claude Code (E7: docs 
 - T6b (Oct 31): a WhatsApp text job now reaches the order engine through the default `jobHandler` in
   `composition.ts`, and the engine's commits save in the job's own completion batch (D-37). The handler is
   `src/application/engine/fixture-perception-handler.ts`: fixture perception adapter: replaced by the teammate's
-  perception when it lands (D-37). It reads only a few Spanish words in a text message (a pedido, a change, "confirmar",
+  perception when it lands (D-37). It reads only a few Spanish words in a text message (a pedido, "confirmar",
   "cancelar") and maps them to the contract fixtures; `customerId` is the conversation id until a customers table
   exists. Anything else (photo, voice note, unreadable text) falls through to the placeholder. Verified by
   `test/wire-engine.test.ts` on local D1: a failing commit guard leaves no order, no engine reply and a job that is
   not done; order -> readback -> "confirmar" saves one order and one confirmation reply, and a repeated "confirmar"
-  adds nothing. Suite: 27 files / 249 tests (was 26 / 241). Not deployed.
+  adds nothing. Suite: 27 files / 255 tests. Not deployed.
   **The Saturday 8:00 PM Honduras gate is NOT met without real perception.** Missing:
   - real perception for photo -> draft (the fixture adapter reads words, not photos or voice)
   - `dev:sim` / `simulate` not run for this flow

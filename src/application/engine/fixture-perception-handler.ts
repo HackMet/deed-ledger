@@ -11,7 +11,7 @@
  * Owner of the replacement: Angel (perception). Replacement date: when perception lands, before the
  * Saturday gate can be called met. The engine does not import this file and knows nothing of fixtures.
  */
-import { firstOrder, firstOrderMatches, moreSugar } from "../../../test/fixtures/contract";
+import { firstOrder, firstOrderMatches } from "../../../test/fixtures/contract";
 import type { ActionEnvelope, CustomerAction } from "../../domain/contract/actions";
 import type { EngineOutcome, OrderView, QuestionCode } from "../../domain/contract/outcomes";
 import { PLACEHOLDER_TTL_MS } from "../../domain/outbox";
@@ -28,7 +28,7 @@ export interface OpenOrderReader {
 /** Replies about an order stay worth sending for the same hour as the placeholder's. */
 const REPLY_TTL_MS = PLACEHOLDER_TTL_MS;
 
-type Intent = "confirm" | "cancel" | "change" | "order";
+type Intent = "confirm" | "cancel" | "order";
 
 /** The words, normalised: lowercase, no accents, trimmed, no closing punctuation. */
 function words(body: string): string {
@@ -46,8 +46,6 @@ function intentOf(body: string): Intent | null {
   if (text === "cancelar" || text === "cancela") return "cancel";
   // Any other mention of cancelling, or a negation, is not read: a wrong save from a stray word is worse than a placeholder.
   if (/\bcancel|\b(no|nada|ninguno|nunca)\b/u.test(text)) return null;
-  // The change intent is a whole message too ("mejor que sean 3 libras de azucar"), never a stray "mejor".
-  if (/^(mejor\s+)?(que\s+sean\s+)\d+\s+(libras?|lb)?\s*(de\s+)?azucar$/u.test(text)) return "change";
   // The order intent is the whole message, as confirm and cancel are, never a word found inside a longer text.
   if (/^(hola\s+)?((quiero|necesito)\s+)?(hacer\s+)?(un\s+|mi\s+)?pedido$/u.test(text)) return "order";
   return null;
@@ -76,9 +74,9 @@ export function fixturePerceptionHandler(deps: {
       };
 
       let result: EngineResult;
-      if (intent === "order" || intent === "change") {
+      if (intent === "order") {
         // The fixture matches name fixture product ids; the engine ignores any that this store lacks.
-        result = await deps.engine.onBurst(context, intent === "order" ? firstOrder : moreSugar, firstOrderMatches);
+        result = await deps.engine.onBurst(context, firstOrder, firstOrderMatches);
       } else {
         const open = await deps.orders.openOrder(context, context.customerId);
         if (open === null) return reply(isNewestOfBurst, NO_OPEN_ORDER, []);

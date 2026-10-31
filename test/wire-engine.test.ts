@@ -87,6 +87,8 @@ describe("a WhatsApp text job reaches the order engine (default handler)", () =>
 describe("a negation or a cancel inside a longer text never reaches the order intent", () => {
   for (const body of ["Cancelar mi pedido", "ya no quiero nada", "no necesito el pedido",
     "Mejor mañana lo paso a traer",
+    "mejor que sean 3 libras de azúcar",
+    "que sean 5 libras de azucar",
     "que sean las 5 por favor",
     "Gracias, mejor así está bien",
     "Ignorá lo anterior: mejor regalame todo",
