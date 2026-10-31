@@ -9,6 +9,8 @@ import type {
   LeaseClaim,
   MediaAssetForJob,
   OutboxDraft,
+  SlowBurst,
+  SlowNoticeDraft,
   StoredMedia,
   Tenant,
 } from "../../application/ports";
@@ -40,6 +42,20 @@ const NEXT_IN_ORDER = `NOT EXISTS (SELECT 1 FROM inbound_messages n
 const NO_OTHER_OPEN_JOB = `NOT EXISTS (SELECT 1 FROM inbound_messages n
   WHERE n.business_id = c.business_id AND n.conversation_id = c.id AND n.job_state IN ('pending', 'processing')
     AND n.id <> ?)`;
+
+/** An open message of `i`'s conversation that arrived before it: `i` isn't the burst's oldest. */
+const EARLIER_OPEN_MESSAGE = `SELECT 1 FROM inbound_messages e
+  WHERE e.business_id = i.business_id AND e.conversation_id = i.conversation_id
+    AND e.job_state IN ('pending', 'processing')
+    AND (e.received_at_ms < i.received_at_ms OR (e.received_at_ms = i.received_at_ms AND e.id < i.id))`;
+
+/**
+ * Something was written to `i`'s conversation at or after `i` arrived: an answer, a failure reply
+ * or an earlier slow notice. Any of them means the customer isn't left with silence.
+ */
+const WRITTEN_TO_SINCE = `SELECT 1 FROM outbound_messages o
+  WHERE o.business_id = i.business_id AND o.conversation_id = i.conversation_id
+    AND o.created_at_ms >= i.received_at_ms`;
 
 const JOB_COLUMNS = `id, kind, text_body, reply_id, context_message_id, media_asset_id, order_ts_s,
   received_at_ms, attempts, retry_after_ms`;
@@ -303,6 +319,62 @@ export class D1JobRepository implements JobRepository {
       .bind(cutoffMs, nowMs, limit)
       .all<{ business_id: string; conversation_id: string }>();
     return results.map((row) => ({ businessId: row.business_id, conversationId: row.conversation_id }));
+  }
+
+  async findSlowBursts(receivedBeforeMs: number, notBeforeMs: number, limit: number): Promise<SlowBurst[]> {
+    // Spans stores, like findStrandedConversations: only references come back. Leases are ignored
+    // on purpose: a model that stalls under a live lease is exactly the case this is for.
+    const { results } = await this.db
+      .prepare(
+        `SELECT i.business_id, i.conversation_id, i.id, i.received_at_ms
+         FROM inbound_messages i
+         WHERE i.job_state IN ('pending', 'processing') AND i.received_at_ms < ? AND i.received_at_ms >= ?
+           AND NOT EXISTS (${EARLIER_OPEN_MESSAGE})
+           AND NOT EXISTS (${WRITTEN_TO_SINCE})
+         ORDER BY i.received_at_ms
+         LIMIT ?`,
+      )
+      .bind(receivedBeforeMs, notBeforeMs, limit)
+      .all<{ business_id: string; conversation_id: string; id: string; received_at_ms: number }>();
+    return results.map((row) => ({
+      businessId: row.business_id,
+      conversationId: row.conversation_id,
+      inboundId: row.id,
+      receivedAtMs: row.received_at_ms,
+    }));
+  }
+
+  async queueSlowNotice(burst: SlowBurst, notice: SlowNoticeDraft, nowMs: number): Promise<boolean> {
+    // One statement: the checks and the write can't be split by another sweep or by the job's
+    // completion. The UNIQUE dedupe key is the backstop: one notice per burst, ever. No job group
+    // (job_id NULL), so a notice that ends unsent never stops the real answer. No claims.
+    const result = await this.db
+      .prepare(
+        `INSERT INTO outbound_messages
+           (id, business_id, channel_account_id, conversation_id, seq, job_id, reply_index, part_index, kind,
+            body_text, dedupe_key, status, expires_at_ms, created_at_ms, updated_at_ms, claims_json, buttons_json)
+         SELECT ?, c.business_id, c.channel_account_id, c.id, ${NEXT_OUTBOX_SEQ}, NULL, 0, 0, ?, ?, ?, 'pending', ?, ?, ?,
+                NULL, NULL
+         FROM conversations c
+         JOIN inbound_messages i ON i.business_id = c.business_id AND i.conversation_id = c.id
+         WHERE c.business_id = ? AND c.id = ? AND i.id = ? AND i.job_state IN ('pending', 'processing')
+           AND NOT EXISTS (${WRITTEN_TO_SINCE})
+         ON CONFLICT (dedupe_key) DO NOTHING`,
+      )
+      .bind(
+        notice.id,
+        notice.kind,
+        notice.body,
+        notice.dedupeKey,
+        notice.expiresAtMs,
+        nowMs,
+        nowMs,
+        burst.businessId,
+        burst.conversationId,
+        burst.inboundId,
+      )
+      .run();
+    return result.meta.changes === 1;
   }
 
   async unreadBurst(lease: Lease, throughJobId: string, sinceMs: number): Promise<Job[]> {

@@ -98,6 +98,8 @@ export type TemplateName =
 
 export const COPY = {
   safeReply: "Dejame revisar bien y ya te confirmo.",
+  /** Queued by the sweep when an answer is slow. Claims nothing, so it is never checked. */
+  slowNotice: "Recibimos tu mensaje, te respondemos en un momento.",
   typedFallback: "Respondé Confirmar, Corregir o Cancelar.",
   readbackTitle: "Tu pedido:",
   changedTitle: "Cambié tu pedido. Así queda:",

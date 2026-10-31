@@ -7,7 +7,7 @@ import {
 } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import type { Engine } from "../../src/application/engine";
-import type { Deps, JobHandler, MediaSource } from "../../src/application/ports";
+import type { Deps, JobHandler, MediaSource, Pendientes } from "../../src/application/ports";
 import { buildRuntime } from "../../src/composition";
 import { createWorker } from "../../src/index";
 import type { DoorbellMessage } from "../../src/infrastructure/queue-doorbell";
@@ -44,6 +44,7 @@ export interface HarnessOptions {
   readonly db?: D1Database;
   readonly env?: Env;
   readonly engine?: Engine;
+  readonly pendientes?: Pendientes;
 }
 
 /** The real Worker (routes, D1 repositories, R2) with fake providers and a controllable clock. */
@@ -69,6 +70,7 @@ export function harness(options: HarnessOptions = {}) {
       ...(options.jobHandler === undefined ? {} : { jobHandler: options.jobHandler }),
       ...(options.db === undefined ? {} : { db: options.db }),
       ...(options.engine === undefined ? {} : { engine: options.engine }),
+      ...(options.pendientes === undefined ? {} : { pendientes: options.pendientes }),
     });
   const worker = createWorker(makeRuntime);
   const deps: Deps = makeRuntime(workerEnv).deps;
