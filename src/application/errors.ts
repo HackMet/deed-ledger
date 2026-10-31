@@ -116,3 +116,36 @@ export class NoticeConversationMissingError extends Error {
     super("the notice's conversation is not in this store");
   }
 }
+
+/**
+ * A photo or voice note that can never be read as sent: audio too long, too large, not Ogg Opus or
+ * cut off; a photo in a format the model doesn't take. Retrying reads the same bytes and fails the
+ * same way. The audio decoder's errors extend this one.
+ */
+export class UnreadableMediaError extends Error {
+  override name = "UnreadableMediaError";
+}
+
+/** One photo or voice note of a burst that couldn't be turned into something the reader can use. */
+export interface UnreadableMedia {
+  /** The burst message (job) it came with. */
+  readonly jobId: string;
+  readonly kind: "image" | "audio";
+  /** A content-free code for logs. */
+  readonly reason: string;
+  /** True when retrying can't help (a broken or over-long voice note, a photo format we can't send). */
+  readonly permanent: boolean;
+}
+
+/**
+ * Some of a burst's photos or voice notes couldn't be read or transcribed. Nothing was read or
+ * saved. The order handler retries it like a failed reading, and gives up early when every failure
+ * is permanent.
+ */
+export class BurstMediaUnreadableError extends Error {
+  override readonly name = "BurstMediaUnreadableError";
+
+  constructor(readonly failures: readonly UnreadableMedia[]) {
+    super(`${failures.length} burst media message(s) could not be read`);
+  }
+}

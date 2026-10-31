@@ -6,6 +6,15 @@ export type JobState = "pending" | "processing" | "done" | "failed";
 /** How long a consumer's lease on a conversation lasts, by the database's clock. Extended per job. */
 export const LEASE_TTL_MS = 60_000;
 
+/**
+ * The longest a voice note's transcription may run: the transcriber's own timeout. Before each one
+ * the lease is extended to cover it plus a normal lease (see the order reading).
+ */
+export const TRANSCRIBE_MAX_MS = 90_000;
+
+/** The longest one reading's model call may run: Muse Spark's own timeout. Covered the same way. */
+export const READING_MAX_MS = 60_000;
+
 /** Only messages at least this old are processed, and only when nothing newer is waiting: bursts merge. */
 export const SETTLE_MS = 3_000;
 

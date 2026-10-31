@@ -8,6 +8,7 @@
 // (the injected module and the @eshaz/web-worker alias) depend on its internals.
 
 import { OpusDecoder } from "opus-decoder";
+import { UnreadableMediaError } from "../../application/errors";
 
 import { opusPacketSamples48k, readOggOpus } from "./ogg";
 import { allocateWav, finishWav } from "./wav";
@@ -29,11 +30,11 @@ export interface DecodedWav {
   packets: number;
 }
 
-export class AudioTooLongError extends Error {
+export class AudioTooLongError extends UnreadableMediaError {
   override name = "AudioTooLongError";
 }
 
-export class AudioDecodeError extends Error {
+export class AudioDecodeError extends UnreadableMediaError {
   override name = "AudioDecodeError";
 }
 

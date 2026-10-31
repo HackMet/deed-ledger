@@ -5,7 +5,7 @@
  */
 import type { Engine } from "./application/engine";
 import { type BurstReader as OrderBurstReader, createOrderHandler } from "./application/order-handler";
-import { type BurstMediaResolver, createOrderReading, readingSourceOf, unresolvedMedia } from "./application/order-reading";
+import { type BurstMediaResolver, createOrderReading, readingSourceOf, storedMediaResolver } from "./application/order-reading";
 import { placeholderHandler } from "./application/placeholder-handler";
 import type { Deps, Pendientes } from "./application/ports";
 import type { MediaEraser } from "./application/ports";
@@ -32,7 +32,7 @@ import { OpusAudioDecoder } from "./integrations/audio";
 import { MuseVoiceTranscriber } from "./integrations/meta/transcribe";
 import { SEND_TIMEOUT_MS } from "./domain/outbox";
 import { BurstReader } from "./application/perception/reader";
-import type { Clock, Logger, ModelProvider } from "./application/ports";
+import type { AudioDecoder, Clock, Logger, MediaStore, ModelProvider, Transcriber } from "./application/ports";
 import { D1SpendLedger } from "./infrastructure/d1/spend-repository";
 import { MuseSparkProvider } from "./integrations/meta/spark";
 
@@ -59,7 +59,7 @@ export type RuntimeOverrides = Partial<
   readonly pendientes?: Pendientes;
   /** Stands in for Muse Spark (tests answer with recorded readings). */
   readonly modelProvider?: ModelProvider;
-  /** Photos and voice notes for the reader (#26, #27); unresolved until they land. */
+  /** Photos and voice notes for the reader; by default read back from R2 and transcribed. */
   readonly burstMedia?: BurstMediaResolver;
   // Tests pass a reader whose provider answers with recorded responses.
   readonly burstReader?: BurstReader;
@@ -85,8 +85,14 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
     log,
     privacyUrl: config.publicBaseUrl === "" ? null : `${config.publicBaseUrl}${PRIVACY_PATH}`,
   };
+  const mediaStore = overrides.mediaStore ?? new R2MediaStore(env.MEDIA);
+  const audioDecoder = overrides.audioDecoder ?? new OpusAudioDecoder();
+  const transcriber = overrides.transcriber ?? museTranscriber(config);
   // Customers' messages go to the order handler once an engine is wired in (#13 plugs the real one in here).
-  const reader = engine === null ? null : buildOrderReading(env, engine, { clock, log }, { db, ...readingOverrides(overrides) });
+  const reader =
+    engine === null
+      ? null
+      : buildOrderReading(env, engine, { clock, log }, { db, jobs, mediaStore, audioDecoder, transcriber, ...readingOverrides(overrides) });
   const orderHandler = engine === null ? null : createOrderHandler({ engine, jobs, customers, clock, log, pendientes, reader, gate });
   return {
     config,
@@ -122,14 +128,13 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
           apiVersion: config.graphApiVersion,
           fetch: (input, init) => fetch(input, init),
         }),
-      mediaStore: overrides.mediaStore ?? new R2MediaStore(env.MEDIA),
+      mediaStore,
       jobHandler: overrides.jobHandler ?? orderHandler ?? placeholderHandler,
       // The second claim check reads the records through the engine; none wired, no claim holds.
       claimVerifier: engine,
       pendientes,
-      audioDecoder: overrides.audioDecoder ?? new OpusAudioDecoder(),
-      transcriber:
-        overrides.transcriber ?? new MuseVoiceTranscriber({ apiKey: config.modelApiKey, fetch: (input, init) => fetch(input, init) }),
+      audioDecoder,
+      transcriber,
       customerControls,
       mediaEraser: overrides.mediaEraser ?? new R2MediaEraser(env.MEDIA),
     },
@@ -173,20 +178,43 @@ export function buildOrderReading(
   env: Env,
   engine: Engine,
   deps: { readonly clock: Clock; readonly log: Logger },
-  overrides: { readonly db?: D1Database; readonly provider?: ModelProvider; readonly media?: BurstMediaResolver } = {},
+  overrides: {
+    readonly db?: D1Database;
+    readonly provider?: ModelProvider;
+    readonly media?: BurstMediaResolver;
+    readonly jobs?: D1JobRepository;
+    readonly mediaStore?: MediaStore;
+    readonly audioDecoder?: AudioDecoder;
+    readonly transcriber?: Transcriber;
+  } = {},
 ): OrderBurstReader | null {
   const source = readingSourceOf(engine);
   if (source === null) return null;
   if (overrides.provider === undefined && (env.MODEL_API_KEY ?? "") === "") return null;
+  const jobs = overrides.jobs ?? new D1JobRepository(overrides.db ?? env.DB);
+  const media =
+    overrides.media ??
+    storedMediaResolver({
+      jobs,
+      mediaStore: overrides.mediaStore ?? new R2MediaStore(env.MEDIA),
+      audioDecoder: overrides.audioDecoder ?? new OpusAudioDecoder(),
+      transcriber: overrides.transcriber ?? museTranscriber(readConfig(env)),
+      log: deps.log,
+    });
   return createOrderReading({
     reader: buildBurstReader(env, deps, {
       ...(overrides.db === undefined ? {} : { db: overrides.db }),
       ...(overrides.provider === undefined ? {} : { provider: overrides.provider }),
     }),
     source,
-    media: overrides.media ?? unresolvedMedia,
+    media,
+    leases: jobs,
     log: deps.log,
   });
+}
+
+function museTranscriber(config: Config): Transcriber {
+  return new MuseVoiceTranscriber({ apiKey: config.modelApiKey, fetch: (input, init) => fetch(input, init) });
 }
 
 function readingOverrides(overrides: RuntimeOverrides): { provider?: ModelProvider; media?: BurstMediaResolver } {

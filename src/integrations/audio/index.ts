@@ -1,5 +1,6 @@
 // WhatsApp voice notes (OGG/Opus) to mono 16-bit PCM WAV at 16 kHz for Muse Voice Transcribe,
 // decoded inside the queue consumer (A1, accepted Oct 28).
+import { UnreadableMediaError } from "../../application/errors";
 import type { AudioDecoder, MediaBytes, TranscriberAudio } from "../../application/ports";
 // Written by scripts/extract-opus-wasm.mjs (wrangler's build command; vitest.config.ts for tests).
 import opusModule from "../../../dist/opus-decoder.wasm";
@@ -13,7 +14,7 @@ export const MAX_VOICE_NOTE_MS = 10 * 60 * 1000;
 /** WhatsApp's own cap for audio is 16 MB; a 10-minute voice note is far smaller. */
 export const MAX_VOICE_NOTE_BYTES = 16 * 1024 * 1024;
 
-export class AudioTooLargeError extends Error {
+export class AudioTooLargeError extends UnreadableMediaError {
   override name = "AudioTooLargeError";
 }
 

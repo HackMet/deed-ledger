@@ -3,7 +3,9 @@
 // Moved from spikes/audio-decode (A1). Unlike the spike, a cut-off file is rejected: transcribing
 // part of a voice note could drop the words that matter.
 
-export class OggOpusError extends Error {
+import { UnreadableMediaError } from "../../application/errors";
+
+export class OggOpusError extends UnreadableMediaError {
   override name = "OggOpusError";
 }
 

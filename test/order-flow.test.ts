@@ -13,7 +13,9 @@ import { conversationOf, expireLease, type Harness, harness, rows } from "./help
 import { newPhone, seedStore } from "./helpers/seed";
 import { audioMessage, buttonReply, imageMessage, textMessage, wamid, webhook } from "./helpers/whatsapp";
 import type { BurstMediaResolver } from "../src/application/order-reading";
-import type { ModelProvider, ModelRequest } from "../src/application/ports";
+import type { MediaBytes, ModelProvider, ModelRequest, Transcriber, TranscriberAudio, Transcript } from "../src/application/ports";
+import { toneOgg } from "./fixtures/audio";
+import { FakeMediaSource } from "./helpers/fakes";
 import { buildOrderReading } from "../src/composition";
 import { renderNotice } from "../src/domain/replies";
 import type { CustomerNotice } from "../src/domain/contract/outcomes";
@@ -731,5 +733,207 @@ describe("the first order, from reading to reply", () => {
     const provider = new RecordedProvider([]);
     expect(buildOrderReading(testEnv(), engine, deps, { provider })).not.toBeNull();
     expect(buildOrderReading(testEnv(), new LedgerEngine(), deps, { provider })).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Photos and voice notes read for real: bytes downloaded (fake source) into R2, read back for the
+// reader; voice notes decoded (real Opus decoder) and transcribed (fake transcriber). No network.
+
+const PHOTO = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46]);
+const ogg = (bytes: Uint8Array): MediaBytes => ({ bytes: bytes.slice().buffer as ArrayBuffer, contentType: "audio/ogg; codecs=opus" });
+
+/** The photo's list and the voice note's addition, each line pointing at its own message. */
+const PHOTO_AND_VOICE = {
+  observations: [
+    {
+      kind: "customer_order",
+      lines: [
+        line("3 lb arroz", "arroz", "3", "libra", box(0, [0.08, 0.22, 0.6, 0.3])),
+        line("dos libras de azúcar", "azúcar", "2", "libra", quote(1, "dos libras de azúcar")),
+      ],
+      issues: [],
+    },
+  ],
+};
+
+/** Muse Voice Transcribe's place. `during` runs inside a call, as if the call took that long. */
+class FakeTranscriber implements Transcriber {
+  calls = 0;
+  failures = 0;
+  during: ((call: number) => Promise<void>) | null = null;
+
+  async transcribe(audio: TranscriberAudio): Promise<Transcript> {
+    this.calls++;
+    await this.during?.(this.calls);
+    if (this.failures > 0) {
+      this.failures--;
+      throw new Error("transcriber unavailable");
+    }
+    return { text: TRANSCRIPT, audioDurationMs: audio.durationMs };
+  }
+}
+
+async function mediaTrip(readings: unknown[]) {
+  const store = await seedStore({ members: [] });
+  const phone = newPhone();
+  // A returning customer, already introduced (#30): these tests count replies to media.
+  await env.DB.prepare(`INSERT INTO customers (id, business_id, phone, created_at_ms, introduced_at_ms) VALUES (?, ?, ?, 0, 1)`)
+    .bind(crypto.randomUUID(), store.businessId, phone)
+    .run();
+  const engine = new MemoryEngine(() => [], { catalog: CATALOG });
+  const provider = new RecordedProvider(readings);
+  const transcriber = new FakeTranscriber();
+  const mediaSource = new FakeMediaSource();
+  mediaSource.respond = async (id) => {
+    if (id.startsWith("voice")) return ogg(toneOgg());
+    if (id.startsWith("broken")) return ogg(new TextEncoder().encode("not a voice note"));
+    if (id.startsWith("heic")) return { bytes: PHOTO.slice().buffer, contentType: "image/heic" };
+    return { bytes: PHOTO.slice().buffer, contentType: "image/jpeg" };
+  };
+  const h = harness({ engine, modelProvider: provider, mediaSource, transcriber });
+  const at = () => ({ from: phone, id: wamid(), timestampS: nowS(h) });
+  const photoMsg = (mediaId = "photo-1") => imageMessage({ ...at(), mediaId });
+  const voiceMsg = (mediaId = "voice-1") => audioMessage({ ...at(), mediaId });
+  const deliver = () => h.deliver(h.takeRingsFor(store.businessId));
+  const burst = async (...messages: readonly unknown[]) => {
+    h.clock.advance(1_000);
+    for (const message of messages) {
+      h.clock.advance(200);
+      await h.post(webhook(store.phoneNumberId, { messages: [message] }));
+    }
+    h.clock.advance(SETTLED_MS);
+    await deliver();
+  };
+  /** Lets every retry come due and run. */
+  const retries = async (n: number) => {
+    for (let i = 0; i < n; i++) {
+      h.clock.advance(30_000);
+      await deliver();
+    }
+  };
+  const reads = () =>
+    rows<{ inbound_message_id: string; read_by_job_id: string }>(
+      `SELECT inbound_message_id, read_by_job_id FROM burst_reads WHERE business_id = ?`,
+      store.businessId,
+    );
+  return { h, store, phone, engine, provider, transcriber, burst, deliver, retries, reads, photoMsg, voiceMsg };
+}
+
+/** D1's clock can't be moved, so time passing for a lease is the lease's end moving back. */
+async function leaseTimePasses(conversationId: string, ms: number): Promise<void> {
+  await env.DB.prepare(`UPDATE conversations SET lease_until_ms = lease_until_ms - ? WHERE id = ? AND lease_id IS NOT NULL`)
+    .bind(ms, conversationId)
+    .run();
+}
+
+describe("photos and voice notes in an order", () => {
+  it("a photo and a voice note: one model call with both, one reading, one reply", async () => {
+    const t = await mediaTrip([PHOTO_AND_VOICE]);
+    await t.burst(t.photoMsg(), t.voiceMsg());
+
+    expect(t.transcriber.calls).toBe(1);
+    expect(t.provider.requests).toHaveLength(1);
+    const images = t.provider.requests[0]!.user.filter((part) => part.type === "image");
+    expect(images).toHaveLength(1);
+    expect(images[0]).toMatchObject({ mimeType: "image/jpeg" });
+    expect(new Uint8Array((images[0] as { bytes: ArrayBuffer }).bytes)).toEqual(PHOTO);
+    expect(t.provider.textOf(0)).toContain("[0] foto:");
+    expect(t.provider.textOf(0)).toContain(`[1] nota de voz (transcripcion): ${JSON.stringify(TRANSCRIPT)}`);
+
+    // One reading saved both messages, and the one reply went out once.
+    const reads = await t.reads();
+    expect(reads).toHaveLength(2);
+    expect(new Set(reads.map((read) => read.read_by_job_id)).size).toBe(1);
+    expect(t.h.sentTo(t.phone)).toEqual([ASK_NAME]);
+    expect(await rows(`SELECT 1 FROM outbound_messages WHERE business_id = ?`, t.store.businessId)).toHaveLength(1);
+    // The voice note's line came from its transcript, the photo's from the photo.
+    const [customer] = await rows<{ id: string }>(`SELECT id FROM customers WHERE business_id = ?`, t.store.businessId);
+    const context = { businessId: t.store.businessId, customerId: customer!.id, conversationId: "", jobId: "", nowMs: 0 };
+    expect((await t.engine.perceptionContext(context)).openOrder?.lines).toHaveLength(2);
+    // Logs carry IDs, never the transcript or a media URL.
+    expect(t.h.log.lines.join("\n")).not.toMatch(/azúcar|agregale|https?:/i);
+  });
+
+  it("a 70-second transcription finishes once: the lease outlasts it, and a second consumer finds it busy", async () => {
+    const t = await mediaTrip([PHOTO_AND_VOICE]);
+    t.transcriber.during = async (call) => {
+      if (call !== 1) return;
+      const conversation = await conversationOf(t.store.businessId);
+      t.h.clock.advance(70_000);
+      await leaseTimePasses(conversation.conversationId, 70_000);
+      // Another doorbell for the conversation arrives mid-transcription.
+      await t.h.deliver([{ conversation, delaySeconds: 0 }]);
+    };
+    await t.burst(t.photoMsg(), t.voiceMsg());
+    await t.deliver(); // the busy consumer's re-ring: nothing left to do
+
+    expect(t.transcriber.calls).toBe(1);
+    expect(t.provider.requests).toHaveLength(1);
+    expect(t.h.sentTo(t.phone)).toEqual([ASK_NAME]);
+    expect(await t.reads()).toHaveLength(2);
+    expect(t.h.log.events()).not.toContain("stale_write_refused");
+    expect(await rows(`SELECT 1 FROM inbound_messages WHERE business_id = ? AND job_state <> 'done'`, t.store.businessId)).toEqual([]);
+  });
+
+  it("a lease lost during a transcription still stops the stale consumer: one reading, one reply", async () => {
+    const t = await mediaTrip([PHOTO_AND_VOICE]);
+    t.transcriber.during = async (call) => {
+      if (call !== 1) return;
+      const conversation = await conversationOf(t.store.businessId);
+      await expireLease(conversation.conversationId); // stalled past even the longer lease
+      await t.h.deliver([{ conversation, delaySeconds: 0 }]); // a new consumer takes over and finishes
+    };
+    await t.burst(t.photoMsg(), t.voiceMsg());
+
+    expect(t.transcriber.calls).toBe(2);
+    // The stale consumer stopped before its (paid) model call; the new one read the burst once.
+    expect(t.provider.requests).toHaveLength(1);
+    expect(t.h.sentTo(t.phone)).toEqual([ASK_NAME]);
+    expect(await t.reads()).toHaveLength(2);
+    expect(t.h.log.fields("stale_write_refused").map((fields) => fields.reason)).toEqual(["lease_lost"]);
+  });
+
+  it("a voice note that can't be transcribed gets the honest reply after the retries; resent, it isn't read twice", async () => {
+    const t = await mediaTrip([PHOTO_AND_VOICE]);
+    t.transcriber.failures = 3;
+    await t.burst(t.photoMsg(), t.voiceMsg("voice-1"));
+    await t.retries(3);
+
+    expect(t.transcriber.calls).toBe(3);
+    expect(t.provider.requests).toHaveLength(0);
+    expect(t.h.sentTo(t.phone)).toEqual(["Perdón, no pude escuchar tu nota de voz. ¿Me la mandás otra vez?"]);
+    // Only the voice note counts as read: the photo waits for the customer's next message.
+    expect(await t.reads()).toHaveLength(1);
+
+    await t.burst(t.voiceMsg("voice-2"));
+    expect(t.transcriber.calls).toBe(4); // the new note only
+    expect(t.provider.requests).toHaveLength(1);
+    expect(t.provider.requests[0]!.user.filter((part) => part.type === "image")).toHaveLength(1);
+    expect(t.provider.textOf(0)).toContain("MENSAJES (2;");
+    expect(t.h.sentTo(t.phone)).toEqual(["Perdón, no pude escuchar tu nota de voz. ¿Me la mandás otra vez?", ASK_NAME]);
+    expect(await t.reads()).toHaveLength(3);
+  });
+
+  it("a broken voice note isn't retried: the honest reply comes at once, with no transcription", async () => {
+    const t = await mediaTrip([]);
+    await t.burst(t.voiceMsg("broken-1"));
+
+    expect(t.transcriber.calls).toBe(0);
+    expect(t.provider.requests).toHaveLength(0);
+    expect(t.h.sentTo(t.phone)).toEqual(["Perdón, no pude escuchar tu nota de voz. ¿Me la mandás otra vez?"]);
+    expect(t.h.log.fields("burst_media_unreadable")).toEqual([
+      expect.objectContaining({ reason: "OggOpusError", outcome: "permanent" }),
+    ]);
+    expect(t.h.log.events()).not.toContain("job_deferred");
+  });
+
+  it("a photo the model can't take gets the matching reply", async () => {
+    const t = await mediaTrip([]);
+    await t.burst(t.photoMsg("heic-1"));
+
+    expect(t.provider.requests).toHaveLength(0);
+    expect(t.h.sentTo(t.phone)).toEqual(["Perdón, no pude leer tu foto. ¿Me la mandás otra vez?"]);
+    expect(t.h.log.events()).not.toContain("job_deferred");
   });
 });

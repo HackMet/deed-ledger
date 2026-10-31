@@ -11,11 +11,12 @@
  * Never called by the default test run: tests pass a fake fetch or a fake Transcriber.
  */
 import type { Transcriber, TranscriberAudio, Transcript } from "../../application/ports";
+import { TRANSCRIBE_MAX_MS } from "../../domain/processing";
 
 export const TRANSCRIBE_URL = "https://api.meta.ai/v1/asr/transcribe";
 export const TRANSCRIBE_MODEL = "muse-voice-transcribe-1.0";
-/** As in the E4 experiment. */
-export const TRANSCRIBE_TIMEOUT_MS = 90_000;
+/** As in the E4 experiment. The order reading sizes the conversation lease from the same number. */
+export const TRANSCRIBE_TIMEOUT_MS = TRANSCRIBE_MAX_MS;
 /** The endpoint's body limit. */
 const MAX_BODY_BYTES = 32 * 1000 * 1000;
 
