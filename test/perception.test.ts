@@ -1,16 +1,18 @@
 import { env } from "cloudflare:workers";
 import { beforeAll, describe, expect, it } from "vitest";
-import { BurstReader, type ReadOutcome } from "../src/application/perception/reader";
+import { matchLines, type CatalogProduct } from "../src/application/perception/matching";
+import { BurstReader, MAX_OUTPUT_TOKENS, type ReadOutcome } from "../src/application/perception/reader";
 import { SYSTEM_PROMPT } from "../src/application/perception/prompt";
 import { buildBurstReader } from "../src/composition";
 import { isCustomerKind, type Observation } from "../src/domain/contract/observation";
+import type { BurstMessage } from "../src/domain/perception/burst";
 import { findQuote } from "../src/domain/perception/evidence";
 import { D1SpendLedger, storeDay } from "../src/infrastructure/d1/spend-repository";
 import { ContributorModelError, MuseSparkProvider } from "../src/integrations/meta/spark";
 import * as contract from "./fixtures/contract";
 import { cleanSugar, contractBursts, e1Cases, hijackedToSale, smuggledId } from "./fixtures/model/authored";
 import { liveInjection, liveOrder } from "./fixtures/model/live";
-import { authored, box, catalog, edit, line, quote, text, type Recorded } from "./fixtures/model/recorded";
+import { authored, box, catalog, edit, line, photo, quote, text, type Recorded } from "./fixtures/model/recorded";
 import { FakeClock, RecordingLogger } from "./helpers/fakes";
 import { seedStore } from "./helpers/seed";
 
@@ -21,6 +23,7 @@ interface Captured {
   headers: Headers;
   body: {
     model: string;
+    max_tokens: number;
     messages: { role: string; content: unknown }[];
     response_format: { type: string; json_schema: { name: string; strict: boolean; schema: unknown } };
   };
@@ -76,6 +79,26 @@ async function readRecorded(recorded: Recorded, tenant = { businessId }): Promis
 function observationsOf(outcome: ReadOutcome): readonly Observation[] {
   if (!outcome.ok) throw new Error(`expected a reading, got ${outcome.reason}`);
   return outcome.reading.observations;
+}
+
+/** The request the reader sends for a recorded burst. */
+async function capturedRequest(recorded: Recorded): Promise<Captured> {
+  const { requests } = await readRecorded(recorded);
+  return requests[0]!;
+}
+
+/** The input-token upper bound of a request as sent, rebuilt from its body. */
+function inputBound(request: Captured): number {
+  const bytes = (value: string) => new TextEncoder().encode(value).byteLength;
+  const system = request.body.messages[0]!.content as string;
+  const parts = request.body.messages[1]!.content as { type: string; text?: string }[];
+  const { name, schema } = request.body.response_format.json_schema;
+  return 1_024 + bytes(system) + bytes(name) + bytes(JSON.stringify(schema)) + parts.reduce((sum, part) => sum + (part.type === "text" ? bytes(part.text!) : 4_096), 0);
+}
+
+/** Micro-dollars: the input bound plus the full output cap. */
+function upperBound(request: Captured): number {
+  return Math.ceil(inputBound(request) * 1.25 + request.body.max_tokens * 4.25);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -332,9 +355,95 @@ describe("contract rules on a response that fits the schema", () => {
     expect(observationsOf((await readRecorded(authored("customer", [text("hola")], []))).outcome)).toEqual([{ kind: "other", issues: [] }]);
   });
 
+  it("a photo the model never saw backs nothing: its box is invalid and the line becomes an issue", async () => {
+    const unfetched: BurstMessage = { type: "image", mimeType: "image/jpeg", bytes: null };
+    const heic: BurstMessage = { type: "image", mimeType: "image/heic", bytes: new Uint8Array([0, 0, 0, 0x18]).buffer };
+    for (const missing of [unfetched, heic]) {
+      const recorded = authored("customer", [missing], order([line("arroz", "arroz", "2", "libra", box(0, [0.1, 0.1, 0.5, 0.2]))]));
+      const { outcome, requests } = await readRecorded(recorded);
+      expect(JSON.stringify(requests[0]!.body.messages[1]!.content)).toContain("(no disponible)");
+      expect(observationsOf(outcome)[0]).toEqual({ kind: "customer_order", lines: [], issues: [{ code: "illegible", line: null, evidence: null }] });
+    }
+    // The same box on a photo that was sent is kept.
+    const seen = authored("customer", [photo()], order([line("arroz", "arroz", "2", "libra", box(0, [0.1, 0.1, 0.5, 0.2]))]));
+    expect(observationsOf((await readRecorded(seen)).outcome)[0]).toMatchObject({ lines: [{ evidence: { source: "image", message: 0 } }], issues: [] });
+  });
+
+  it("a clarification answer that isn't what its quote says is not an answer", async () => {
+    const recorded = authored("customer", [text("de litro")], [{ kind: "clarification", answer: "de medio", evidence: quote(0, "de litro"), issues: [] }]);
+    expect(observationsOf((await readRecorded(recorded)).outcome)).toEqual([{ kind: "other", issues: [{ code: "illegible", line: null, evidence: null }] }]);
+  });
+
+  it("a name must be in its quote as whole words; case, accents and punctuation don't matter", async () => {
+    const said = (name: string, words: string) => authored("customer", [text("hola, soy Carla Martínez.")], [{ kind: "customer_name", name, evidence: quote(0, words), issues: [] }]);
+    expect(observationsOf((await readRecorded(said("carla martinez", "soy Carla Martínez."))).outcome)[0]).toMatchObject({ kind: "customer_name", name: "carla martinez" });
+    expect(observationsOf((await readRecorded(said("Carla", "Carla"))).outcome)[0]).toMatchObject({ kind: "customer_name", name: "Carla" });
+    expect(observationsOf((await readRecorded(said("Carl", "soy Carla"))).outcome)[0]).toEqual({ kind: "other", issues: [{ code: "illegible", line: null, evidence: null }] });
+    expect(observationsOf((await readRecorded(said("Rosa", "soy Carla"))).outcome)[0]).toEqual({ kind: "other", issues: [{ code: "illegible", line: null, evidence: null }] });
+    // A box has no words to check the name against.
+    const onPhoto = authored("customer", [photo()], [{ kind: "customer_name", name: "Carla", evidence: box(0, [0.1, 0.1, 0.5, 0.2]), issues: [] }]);
+    expect(observationsOf((await readRecorded(onPhoto)).outcome)[0]).toEqual({ kind: "other", issues: [{ code: "illegible", line: null, evidence: null }] });
+  });
+
+  it("a payment field whose evidence isn't in the burst is cleared, with an issue; the others stay", async () => {
+    const recorded = authored("customer", [text("le mandé 500 por BAC, ref 12345")], [
+      {
+        kind: "payment_receipt",
+        amount_centavos: 50_000,
+        bank: "BAC",
+        date_text: "30/10",
+        reference: "12345",
+        amount_evidence: quote(3, "500"),
+        bank_evidence: quote(0, "BAC"),
+        date_evidence: { message: null, quote: null, box: null },
+        reference_evidence: quote(0, "12345"),
+        issues: [],
+      },
+    ]);
+    expect(observationsOf((await readRecorded(recorded)).outcome)[0]).toEqual({
+      kind: "payment_receipt",
+      amount: null,
+      bank: "BAC",
+      dateText: null,
+      reference: "12345",
+      evidence: {
+        amount: null,
+        bank: { source: "text", message: 0, start: 17, end: 20 },
+        date: null,
+        reference: { source: "text", message: 0, start: 26, end: 31 },
+      },
+      issues: [
+        { code: "illegible", line: null, evidence: null },
+        { code: "illegible", line: null, evidence: null },
+      ],
+    });
+  });
+
   it("a clarification whose words aren't in the burst is not an answer", async () => {
     const recorded = authored("customer", [text("de litro")], [{ kind: "clarification", answer: "de medio", evidence: quote(0, "de medio"), issues: [] }]);
     expect(observationsOf((await readRecorded(recorded)).outcome)).toEqual([{ kind: "other", issues: [{ code: "illegible", line: null, evidence: null }] }]);
+  });
+});
+
+describe("matching by code", () => {
+  const ordered = (name: string): Observation[] => [
+    { kind: "customer_order", lines: [{ text: name, name, quantity: "1", unit: null, restrictedCategory: false, evidence: { source: "text", message: 0, start: 0, end: name.length } }], issues: [] },
+  ];
+  const product = (productId: string, names: string[], aliases: string[] = [], barcode: string | null = null): CatalogProduct => ({ productId, names, aliases, barcode });
+
+  it("two exact names are unresolved; a third product's alias never breaks the tie", () => {
+    const products = [product("a", ["Aceite"]), product("b", ["aceite"]), product("c", ["Aceite Mazola"], ["aceite"])];
+    expect(matchLines(ordered("aceite"), products)).toEqual([]);
+    // With one exact name, that one wins over the alias.
+    expect(matchLines(ordered("aceite"), products.slice(1))).toEqual([{ observation: 0, line: 0, productId: "b", how: "exact_name" }]);
+    // With no exact name, a single alias matches.
+    expect(matchLines(ordered("aceite"), products.slice(2))).toEqual([{ observation: 0, line: 0, productId: "c", how: "known_alias" }]);
+  });
+
+  it("two products with one barcode are unresolved; names and aliases are not tried", () => {
+    const products = [product("a", ["Uno"], [], "7401000000011"), product("b", ["Dos"], [], "7401000000011"), product("c", ["7401000000011"])];
+    expect(matchLines(ordered("7401000000011"), products)).toEqual([]);
+    expect(matchLines(ordered("7401000000011"), products.slice(1))).toEqual([{ observation: 0, line: 0, productId: "b", how: "barcode" }]);
   });
 });
 
@@ -434,16 +543,74 @@ describe("the daily spend cap in D1", () => {
 
   it("the reader reserves before calling, settles to the usage, and stops calling at the cap", async () => {
     const { businessId: store } = await seedStore({ members: [] });
-    // Each call reserves about $0.023 and settles to about $0.013: the cap fits two calls, not three.
-    const { reader, requests, ledger, clock, log } = setup(() => completion(liveOrder), { cap: 40_000 });
+    const settled = Math.ceil(3956 * 1.25 + 1815 * 4.25);
+    const bound = upperBound(await capturedRequest(liveOrder));
+    // Room for the first call's usage plus a second call's bound, not for a third bound.
+    const { reader, requests, ledger, clock, log } = setup(() => completion(liveOrder), { cap: settled + bound + settled - 1 });
     const read = () => reader.read({ businessId: store }, { audience: "customer", messages: liveOrder.messages, context: liveOrder.context, catalog });
     expect((await read()).ok).toBe(true);
     // 3956 input and 1815 output tokens at $1.25 and $4.25 per million.
-    expect(await ledger.spentMicroUsd({ businessId: store }, clock.now())).toBe(Math.ceil(3956 * 1.25 + 1815 * 4.25));
+    expect(await ledger.spentMicroUsd({ businessId: store }, clock.now())).toBe(settled);
     expect((await read()).ok).toBe(true);
     expect(await read()).toEqual({ ok: false, reason: "spend_cap", calls: [] });
     expect(requests).toHaveLength(2);
     expect(log.fields("perception.spend_cap")).toEqual([expect.objectContaining({ businessId: store, reason: "spend_cap" })]);
+  });
+
+  it("reserves the request's upper bound: every byte sent, each photo, and the whole output cap", async () => {
+    const { businessId: store } = await seedStore({ members: [] });
+    // A timeout: the spend is unknown, so the reservation stays as it was.
+    const { reader, requests, ledger, clock } = setup(() => new Response("slow", { status: 503 }));
+    await reader.read({ businessId: store }, { audience: "customer", messages: [text("dos libras de azúcar"), photo()], context: contract.packingContext, catalog });
+    const [request] = requests;
+    expect(request!.body.max_tokens).toBe(MAX_OUTPUT_TOKENS);
+    const sent = request!.body.messages[1]!.content as { type: string; text?: string }[];
+    const bytes = (value: string) => new TextEncoder().encode(value).byteLength;
+    const input =
+      1_024 +
+      bytes(SYSTEM_PROMPT.customer) +
+      bytes("BurstReading") +
+      bytes(JSON.stringify(request!.body.response_format.json_schema.schema)) +
+      sent.reduce((sum, part) => sum + (part.type === "text" ? bytes(part.text!) : 4_096), 0);
+    expect(sent.filter((part) => part.type === "image_url")).toHaveLength(1);
+    expect(await ledger.spentMicroUsd({ businessId: store }, clock.now())).toBe(Math.ceil(input * 1.25 + MAX_OUTPUT_TOKENS * 4.25));
+    expect(upperBound(request!)).toBe(Math.ceil(input * 1.25 + MAX_OUTPUT_TOKENS * 4.25));
+  });
+
+  it("the bound covers the live call's real input, with room for the reasoning it used", async () => {
+    const request = await capturedRequest(liveOrder);
+    // Billed 3,956 input tokens for this request; the bound counts one token per byte sent.
+    expect(inputBound(request)).toBeGreaterThan(3956);
+    // Reasoning counts against max_tokens: the live calls used 1,287-1,620 of 1,400-1,815 in all.
+    expect(MAX_OUTPUT_TOKENS).toBeGreaterThanOrEqual(4 * 1815);
+  });
+
+  it("a call that spends its whole output cap still settles within its reservation", async () => {
+    const { businessId: store } = await seedStore({ members: [] });
+    const cutOff = () =>
+      Response.json({
+        choices: [{ index: 0, finish_reason: "length", message: { role: "assistant", content: '{"observations":[' } }],
+        usage: { prompt_tokens: 3_956, completion_tokens: MAX_OUTPUT_TOKENS },
+      });
+    const { reader, requests, ledger, clock, log } = setup(cutOff);
+    const outcome = await reader.read({ businessId: store }, { audience: "customer", messages: liveOrder.messages, context: liveOrder.context, catalog });
+    // A cut-off answer is never read as data.
+    expect(outcome).toMatchObject({ ok: false, reason: "invalid_output" });
+    const spent = await ledger.spentMicroUsd({ businessId: store }, clock.now());
+    expect(spent).toBe(Math.ceil(3_956 * 1.25 + MAX_OUTPUT_TOKENS * 4.25));
+    expect(spent).toBeLessThanOrEqual(upperBound(requests[0]!));
+    expect(log.fields("perception.spend_over_bound")).toEqual([]);
+  });
+
+  it("usage past the bound is recorded as spent and logged, never hidden", async () => {
+    const { businessId: store } = await seedStore({ members: [] });
+    const { reader, requests, ledger, clock, log } = setup(() => completion({ ...liveOrder, usage: { prompt_tokens: 3_956, completion_tokens: 50_000 } }));
+    await reader.read({ businessId: store }, { audience: "customer", messages: liveOrder.messages, context: liveOrder.context, catalog });
+    const actual = Math.ceil(3_956 * 1.25 + 50_000 * 4.25);
+    expect(await ledger.spentMicroUsd({ businessId: store }, clock.now())).toBe(actual);
+    expect(log.fields("perception.spend_over_bound")).toEqual([
+      expect.objectContaining({ businessId: store, reason: "over_bound", count: actual - upperBound(requests[0]!) }),
+    ]);
   });
 
   it("a refused request gives its reservation back", async () => {

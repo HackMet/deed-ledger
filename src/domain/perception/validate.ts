@@ -22,7 +22,7 @@ import {
   type SupplierInvoice,
 } from "../contract/observation";
 import type { BurstMessage, ReadingContext } from "./burst";
-import { resolveEvidence } from "./evidence";
+import { resolveEvidence, saysWords, spanText } from "./evidence";
 import { schemaMismatch } from "./schema-check";
 import {
   readingSchema,
@@ -113,20 +113,7 @@ class ObservationReader {
           issues: this.issues(wire.issues, null),
         };
       case "payment_receipt":
-        return {
-          kind: "payment_receipt",
-          amount: centavos(wire.amount_centavos),
-          bank: text(wire.bank),
-          dateText: text(wire.date_text),
-          reference: text(wire.reference),
-          evidence: {
-            amount: this.evidence(wire.amount_evidence),
-            bank: this.evidence(wire.bank_evidence),
-            date: this.evidence(wire.date_evidence),
-            reference: this.evidence(wire.reference_evidence),
-          },
-          issues: this.issues(wire.issues, null),
-        };
+        return this.paymentReceipt(wire);
       case "question":
         return {
           kind: "question",
@@ -142,7 +129,9 @@ class ObservationReader {
       case "customer_name": {
         const evidence = this.evidence(wire.evidence);
         const said = (wire.kind === "clarification" ? wire.answer : wire.name).trim();
-        if (!evidence || said === "") return { kind: "other", issues: [UNPLACED] };
+        // "As written or said": the words must be in the span the evidence points at.
+        const source = evidence ? spanText(evidence, this.messages) : null;
+        if (!evidence || source === null || !saysWords(source, said)) return { kind: "other", issues: [UNPLACED] };
         const issues = this.issues(wire.issues, null);
         return wire.kind === "clarification"
           ? { kind: "clarification", answer: said, evidence, issues }
@@ -184,6 +173,37 @@ class ObservationReader {
         };
       }
     }
+  }
+
+  /**
+   * Each field needs its own evidence inside the burst. A value whose evidence is missing or
+   * invalid is cleared (with its evidence) and an issue takes its place, so the engine asks.
+   */
+  private paymentReceipt(wire: Extract<WireObservation, { kind: "payment_receipt" }>): Observation {
+    const added: ObservationIssue[] = [];
+    const field = <T>(value: T | null, wireEvidence: WireEvidence): { value: T | null; evidence: Evidence | null } => {
+      const evidence = this.evidence(wireEvidence);
+      if (value !== null && evidence === null) {
+        added.push(UNPLACED);
+        return { value: null, evidence: null };
+      }
+      return { value, evidence };
+    };
+    const paid = money(wire.amount_centavos);
+    if (paid.bad) added.push(UNPLACED);
+    const amount = field(paid.value, wire.amount_evidence);
+    const bank = field(text(wire.bank), wire.bank_evidence);
+    const date = field(text(wire.date_text), wire.date_evidence);
+    const reference = field(text(wire.reference), wire.reference_evidence);
+    return {
+      kind: "payment_receipt",
+      amount: amount.value,
+      bank: bank.value,
+      dateText: date.value,
+      reference: reference.value,
+      evidence: { amount: amount.evidence, bank: bank.evidence, date: date.evidence, reference: reference.evidence },
+      issues: [...this.issues(wire.issues, null), ...added],
+    };
   }
 
   // -------------------------------------------------------------------------------------------

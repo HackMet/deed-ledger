@@ -160,6 +160,37 @@ describe("readConsoleInput: console kinds", () => {
   });
 });
 
+describe("readConsoleInput: evidence positions", () => {
+  it("points at the caller's inputs even when a blank note before them wasn't sent", async () => {
+    const { deps, requests } = setup(saleByText);
+    const outcome = await readConsoleInput(deps, member(), {
+      purpose: "report",
+      inputs: [
+        { type: "text", text: "   " },
+        { type: "transcript", text: SALE_TEXT },
+      ],
+    });
+    if (!outcome.ok) throw new Error(outcome.reason);
+    // The model saw one message, at position 0.
+    expect(JSON.stringify(requests[0]!.messages[1]!.content)).not.toContain("[1]");
+    const start = SALE_TEXT.indexOf("tres refrescos");
+    expect(outcome.reading.observations[0]).toMatchObject({ lines: [{ evidence: { source: "transcript", message: 1, start, end: start + 14 } }] });
+  });
+
+  it("issue evidence moves too", async () => {
+    const { deps } = setup(pedidoNotAnOrder);
+    const outcome = await readConsoleInput(deps, member(), {
+      purpose: "order",
+      inputs: [
+        { type: "text", text: "" },
+        { type: "text", text: PEDIDO_NOT_AN_ORDER_TEXT },
+      ],
+    });
+    if (!outcome.ok) throw new Error(outcome.reason);
+    expect(outcome.reading.observations[1]).toMatchObject({ issues: [{ code: "embedded_instructions", evidence: { source: "text", message: 1 } }] });
+  });
+});
+
 describe("readConsoleInput: Pedido a mano", () => {
   it("reads an order taken by hand like a customer's first message, with the order prompt", async () => {
     const { deps, requests } = setup(pedidoAMano);

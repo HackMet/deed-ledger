@@ -59,6 +59,8 @@ export class MuseSparkProvider implements ModelProvider {
         { role: "system", content: request.system },
         { role: "user", content: request.user.map(toChatPart) },
       ],
+      // Chat Completions' output cap: reasoning plus visible tokens (Meta docs, reasoning).
+      max_tokens: request.maxOutputTokens,
       response_format: {
         type: "json_schema",
         json_schema: { name: request.schemaName, schema: request.schema, strict: true },
@@ -116,10 +118,13 @@ function base64(bytes: ArrayBuffer): string {
   return btoa(binary);
 }
 
+/** Null when there is no content, or when it was cut off at max_tokens: a partial answer isn't one. */
 function contentOf(payload: unknown): string | null {
   const choices = (payload as { choices?: unknown } | null)?.choices;
   if (!Array.isArray(choices)) return null;
-  const content = (choices[0] as { message?: { content?: unknown } } | undefined)?.message?.content;
+  const choice = choices[0] as { message?: { content?: unknown }; finish_reason?: unknown } | undefined;
+  if (choice?.finish_reason === "length") return null;
+  const content = choice?.message?.content;
   return typeof content === "string" ? content : null;
 }
 
