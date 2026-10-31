@@ -23,6 +23,7 @@ import { HmacKeyedHasher } from "./infrastructure/keyed-hasher";
 import { LoggingPendientes } from "./infrastructure/logging-pendientes";
 import { DEMO_CATALOG } from "./infrastructure/memory/demo-catalog";
 import { demoOrders } from "./infrastructure/memory/demo-orders";
+import { D1PretendEngine } from "./infrastructure/memory/d1-pretend-engine";
 import { MemoryEngine } from "./infrastructure/memory/memory-engine";
 import { QueueDoorbell } from "./infrastructure/queue-doorbell";
 import { R2MediaEraser } from "./infrastructure/r2-media-eraser";
@@ -41,7 +42,7 @@ import { MuseSparkProvider } from "./integrations/meta/spark";
 export interface Runtime {
   readonly config: Config;
   readonly deps: Deps;
-  /** Null until the real engine is wired in, except for the dev console's pretend engine. */
+  /** Null until the real engine is wired in, except for the pretend engines (DEV_CONSOLE, PRETEND_ENGINE). */
   readonly engine: Engine | null;
   /** The burst reader the console's Anotar screen uses (#26). */
   readonly burstReader: BurstReader;
@@ -71,7 +72,11 @@ export type RuntimeOverrides = Partial<
 export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtime {
   const config = readConfig(env);
   const db = overrides.db ?? env.DB;
-  const engine = overrides.engine ?? (config.devConsole ? devEngine : null);
+  // DEV_CONSOLE: in memory, no login, local simulator only. PRETEND_ENGINE: state in D1, shared by
+  // every isolate, console behind login. Neither: no engine until the real one is wired in.
+  const engine =
+    overrides.engine ??
+    (config.devConsole ? devEngine : config.pretendEngine ? new D1PretendEngine(db, { catalog: DEMO_CATALOG }) : null);
   const clock = overrides.clock ?? systemClock;
   const log = overrides.log ?? consoleLogger;
   const jobs = new D1JobRepository(db);

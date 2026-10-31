@@ -2,7 +2,8 @@
  * A pretend engine kept in memory, so the console and the replies can be built and tried before
  * the real engine lands. It follows the contract's rules for the preparation list (versions,
  * operation keys, roles) but saves straight into memory instead of returning commits, and forgets
- * everything when the Worker restarts. Only wired in when the console runs in dev mode.
+ * everything when the Worker restarts. Wired in as is when the console runs in dev mode; the D1
+ * pretend engine (`d1-pretend-engine.ts`) runs it on a snapshot kept in D1.
  *
  * Marking lines doesn't change an order's version: the version is the content the customer agreed
  * to, and only the customer's changes make a new one.
@@ -65,6 +66,23 @@ interface StoreState {
   readonly drafts: Map<string, Draft>;
   /** Customer -> the question asked last, for perception's context. */
   readonly lastQuestion: Map<string, QuestionCode>;
+}
+
+/**
+ * One store's state as plain JSON, for the D1 pretend engine (`d1-pretend-engine.ts`). Maps become
+ * entry lists in insertion order, which the list's tie-breaks and "the open order" depend on.
+ */
+export interface PretendStoreSnapshot {
+  readonly orders: readonly (readonly [string, StoredOrder])[];
+  readonly operations: readonly (readonly [string, EngineOutcome])[];
+  readonly drafts: readonly (readonly [string, DraftSnapshot])[];
+  readonly lastQuestion: readonly (readonly [string, QuestionCode])[];
+}
+
+interface DraftSnapshot {
+  readonly pending: readonly { readonly code: QuestionCode; readonly lineId: string | null }[];
+  readonly names: readonly (readonly [string, string])[];
+  readonly shown: boolean;
 }
 
 const ON_THE_LIST: readonly OrderView["state"][] = ["confirmado", "preparando", "listo"];
@@ -186,6 +204,35 @@ export class MemoryEngine implements Engine, OrderReadingSource {
       .filter((stored) => ON_THE_LIST.includes(stored.order.state))
       .sort((a, b) => a.confirmedAtMs - b.confirmedAtMs)
       .map(({ order, customerName, confirmedAtMs, changedLineIds }) => ({ order, customerName, confirmedAtMs, changedLineIds }));
+  }
+
+  /** The store's state as JSON-safe data (the store is seeded first if it hasn't been used yet). */
+  exportStore(tenant: Tenant): PretendStoreSnapshot {
+    const state = this.state(tenant);
+    return {
+      orders: [...state.orders],
+      operations: [...state.operations],
+      drafts: [...state.drafts].map(([orderId, draft]) => [
+        orderId,
+        { pending: draft.pending.map((p) => ({ ...p })), names: [...draft.names], shown: draft.shown },
+      ]),
+      lastQuestion: [...state.lastQuestion],
+    };
+  }
+
+  /** Replaces the store's state with a snapshot taken by `exportStore`. The seed isn't used for it. */
+  importStore(tenant: Tenant, snapshot: PretendStoreSnapshot): void {
+    this.stores.set(tenant.businessId, {
+      orders: new Map(snapshot.orders),
+      operations: new Map(snapshot.operations),
+      drafts: new Map(
+        snapshot.drafts.map(([orderId, draft]) => [
+          orderId,
+          { pending: draft.pending.map((p) => ({ ...p })), names: new Map(draft.names), shown: draft.shown },
+        ]),
+      ),
+      lastQuestion: new Map(snapshot.lastQuestion),
+    });
   }
 
   private state(tenant: Tenant): StoreState {

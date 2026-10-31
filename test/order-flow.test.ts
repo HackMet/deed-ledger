@@ -12,7 +12,9 @@ import { ensureLinesTable, LedgerEngine, lateOrderHandler, savedLines } from "./
 import { conversationOf, expireLease, type Harness, harness, rows } from "./helpers/harness";
 import { newPhone, seedStore } from "./helpers/seed";
 import { audioMessage, buttonReply, imageMessage, textMessage, wamid, webhook } from "./helpers/whatsapp";
-import type { BurstMediaResolver } from "../src/application/order-reading";
+import type { BurstMediaResolver, OrderReadingSource } from "../src/application/order-reading";
+import type { Engine } from "../src/application/engine";
+import { D1PretendEngine } from "../src/infrastructure/memory/d1-pretend-engine";
 import type { MediaBytes, ModelProvider, ModelRequest, Transcriber, TranscriberAudio, Transcript } from "../src/application/ports";
 import { toneOgg } from "./fixtures/audio";
 import { FakeMediaSource } from "./helpers/fakes";
@@ -529,11 +531,15 @@ const recordedMedia: BurstMediaResolver = {
   },
 };
 
-async function firstOrderTrip(readings: unknown[]) {
+type PretendEngine = Engine & OrderReadingSource;
+
+const memoryEngine = (): PretendEngine => new MemoryEngine(() => [], { catalog: CATALOG });
+
+async function firstOrderTrip(readings: unknown[], makeEngine: () => PretendEngine = memoryEngine) {
   const store = await storeWithStaff();
   const staff = store.members[1]!;
   const phone = newPhone();
-  const engine = new MemoryEngine(() => [], { catalog: CATALOG });
+  const engine = makeEngine();
   const provider = new RecordedProvider(readings);
   const h = harness({ engine, modelProvider: provider, burstMedia: recordedMedia });
   const tenant = { businessId: store.businessId };
@@ -590,8 +596,12 @@ const EXPECTED_READBACK = [
 ].join("\n");
 
 describe("the first order, from reading to reply", () => {
-  it("goes Hola → name → list and voice note → size → pickup → readback → Confirmar → on the list → listo", async () => {
-    const t = await firstOrderTrip(Object.values(READINGS).concat([READINGS.whenReady]));
+  // The second run is the deployed demo's engine: the same pretend engine, its state in D1 (PRETEND_ENGINE).
+  it.each([
+    ["in memory", memoryEngine],
+    ["with its state in D1", (): PretendEngine => new D1PretendEngine(env.DB, { catalog: CATALOG })],
+  ] as const)("goes Hola → name → list and voice note → size → pickup → readback → Confirmar → on the list → listo (%s)", async (_label, makeEngine) => {
+    const t = await firstOrderTrip(Object.values(READINGS).concat([READINGS.whenReady]), makeEngine);
 
     await t.burst(t.text("Hola, quiero hacer un pedido"));
     // The name, a photo of the list and a voice note settle into one burst: one reading, one reply.

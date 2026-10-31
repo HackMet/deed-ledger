@@ -362,6 +362,14 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
 - `Runtime.engine` is null until the real engine is wired in. With `DEV_CONSOLE=1` (only the local simulator sets
   it) it is an in-memory pretend engine (`src/infrastructure/memory/`) seeded with synthetic orders. It follows the
   contract's version, operation-key and role rules but saves to memory and forgets on restart.
+- **Pretend engine online** (`PRETEND_ENGINE=1`, a `vars` entry, blank by default; `DEV_CONSOLE` wins when both are
+  set). For a deployed demo before the real engine lands: the same pretend engine, with each store's state kept as
+  one JSON snapshot in `pretend_engine_state` (migration 0016), so the queue consumer and the console share it
+  across isolates. No orders are seeded; prices come from `DEMO_CATALOG`. The console still needs login. Each call
+  loads the snapshot for the store in the lease or session, runs `MemoryEngine` on it, and returns the new snapshot
+  as a `Commit` guarded on the version it read (rule 6): it lands in the job's completion batch or the console
+  action's batch, or not at all. A lost race fails that batch with `PretendStateMovedError`; the job is deferred and
+  retried, and a staff tap shows "no se guardó". Remove the table with the pretend engine.
 - `/console/preparacion` renders the preparation list server-side for a 360 px screen and refreshes every 15 s.
   Each button posts one action to `/console/acciones` with the version on screen and its own operation key; the
   result redirects back with a notice when the tap was refused or not saved. The customer messages a tap causes
