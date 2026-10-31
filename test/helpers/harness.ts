@@ -8,6 +8,7 @@ import {
 import { env } from "cloudflare:workers";
 import type { Engine } from "../../src/application/engine";
 import type { BurstMediaResolver } from "../../src/application/order-reading";
+import type { BurstReader } from "../../src/application/perception/reader";
 import type { Deps, JobHandler, MediaSource, ModelProvider } from "../../src/application/ports";
 import { buildRuntime } from "../../src/composition";
 import { createWorker } from "../../src/index";
@@ -48,6 +49,7 @@ export interface HarnessOptions {
   /** Recorded readings instead of Muse Spark: with an engine, wires the real reader. */
   readonly modelProvider?: ModelProvider;
   readonly burstMedia?: BurstMediaResolver;
+  readonly burstReader?: BurstReader;
 }
 
 /** The real Worker (routes, D1 repositories, R2) with fake providers and a controllable clock. */
@@ -75,6 +77,7 @@ export function harness(options: HarnessOptions = {}) {
       ...(options.engine === undefined ? {} : { engine: options.engine }),
       ...(options.modelProvider === undefined ? {} : { modelProvider: options.modelProvider }),
       ...(options.burstMedia === undefined ? {} : { burstMedia: options.burstMedia }),
+      ...(options.burstReader === undefined ? {} : { burstReader: options.burstReader }),
     });
   const worker = createWorker(makeRuntime);
   const deps: Deps = makeRuntime(workerEnv).deps;

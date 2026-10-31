@@ -35,6 +35,8 @@ export interface Runtime {
   readonly deps: Deps;
   /** Null until the real engine is wired in, except for the dev console's pretend engine. */
   readonly engine: Engine | null;
+  /** The burst reader the console's Anotar screen uses (#26). */
+  readonly burstReader: BurstReader;
 }
 
 /** One pretend engine per Worker isolate, so the dev console's taps last between requests. */
@@ -53,6 +55,8 @@ export type RuntimeOverrides = Partial<
   readonly modelProvider?: ModelProvider;
   /** Photos and voice notes for the reader (#26, #27); unresolved until they land. */
   readonly burstMedia?: BurstMediaResolver;
+  // Tests pass a reader whose provider answers with recorded responses.
+  readonly burstReader?: BurstReader;
 };
 
 export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtime {
@@ -70,6 +74,9 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
   return {
     config,
     engine,
+    burstReader:
+      overrides.burstReader ??
+      buildBurstReader(env, { clock, log }, { db, ...(overrides.modelProvider === undefined ? {} : { provider: overrides.modelProvider }) }),
     deps: {
       clock: overrides.clock ?? systemClock,
       ids: overrides.ids ?? randomIds,

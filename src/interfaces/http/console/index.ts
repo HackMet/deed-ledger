@@ -5,6 +5,7 @@
  */
 import { Hono } from "hono";
 import { csrf } from "hono/csrf";
+import { anotarBodyLimit, anotarScreen } from "./anotar";
 import { type ConsoleEnv, registerEntryRoutes, requireCsrf, requireMember } from "./auth";
 import { bienvenidaScreen } from "./bienvenida";
 import { empleadosScreen } from "./empleados";
@@ -18,6 +19,8 @@ export function consoleRoutes() {
   app.use("*", csrf());
   registerEntryRoutes(app);
   app.use("*", requireMember);
+  // Before the CSRF check, which reads the whole body: Anotar's uploads have a size limit.
+  app.use("/anotar", anotarBodyLimit);
   app.use("*", requireCsrf);
 
   app.get("/", (c) => c.redirect("/console/preparacion", 302));
@@ -26,6 +29,7 @@ export function consoleRoutes() {
   bienvenidaScreen(app);
   preparacionScreen(app);
   empleadosScreen(app);
+  anotarScreen(app);
 
   return app;
 }
