@@ -125,7 +125,7 @@ secrets. The expected names (T1 confirms them):
 | `WHATSAPP_APP_SECRET` | App secret, for checking webhook signatures |
 | `WHATSAPP_VERIFY_TOKEN` | Random string for the webhook GET challenge |
 | `SENDER_HASH_SALT` | Key for the HMAC that replaces phone numbers and message IDs of numbers that aren't members (message IDs embed the sender's phone number) |
-| `LINK_SIGNING_SECRET` | Key for signed web links and approval tokens |
+| `LINK_SIGNING_SECRET` | Signs the console's CSRF values; required, or the console answers 503 |
 
 ## Part 1 as built
 
@@ -243,7 +243,18 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
   contract's version, operation-key and role rules but saves to memory and forgets on restart.
 - `/console/preparacion` renders the preparation list server-side for a 360 px screen and refreshes every 15 s.
   Each button posts one action to `/console/acciones` with the version on screen and its own operation key; the
-  result redirects back with a notice when the tap was refused. Without dev mode every `/console` path is a 404.
+  result redirects back with a notice when the tap was refused. Without a real engine the list answers 503.
+- **Login** (`src/interfaces/http/console/auth.ts`, migration 0003). An invite is a 32-byte random code, stored as
+  its SHA-256 hash, valid 15 minutes, one use, for one member. `GET /console/entrar?codigo=…` only shows it (a link
+  preview can't use it up); the "Entrar" POST uses it and opens a session in one guarded batch, so two taps can't
+  both win. The session cookie (`consola`, Path `/console`, HttpOnly, Secure, SameSite=Lax, 30 days) holds another
+  random token, also stored hashed. Every request re-reads the session and requires an active membership;
+  `revokeSessions` sets `revoked_at_ms` (no route calls it yet: "Quitar" is #23). Every POST carries a CSRF
+  value, an HMAC of the session ID with `LINK_SIGNING_SECRET`; without that secret the console answers 503. The
+  store and the actor always come from the session. Cross-site and oversized (> 16 KiB) form posts are refused.
+- **First login:** `npm run admin:invite -- --phone-number-id … --phone … --role owner|staff [--remote]` adds the
+  person as a member if needed and prints a link. The raw code is only printed, never written to disk.
+- **Dev mode** (`DEV_CONSOLE=1`, local simulator only) skips login and CSRF with a fixed demo member.
 
 ### Known limits
 
@@ -252,7 +263,7 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
 - `unknown_delivery` rows need a person to follow up. Whether Meta can answer 5xx after sending is unknown.
 - A dispatcher that dies mid-send holds back its conversation's later replies until the first sweep after its claim
   ends (about 90 s), and stops the rest of that group.
-- The console has no login, sessions or CSRF protection yet, which is why it only runs in dev mode.
+- The shared "Tienda" account isn't designed yet: every login is one member with a phone number.
 - The media download is a stub. A stale writer can leave an unpublished R2 object behind, and nothing cleans those up.
 - Messages over a conversation's hourly cap are dropped and logged, not queued. A conversation that keeps receiving
   messages less than 3 s apart keeps waiting to settle.

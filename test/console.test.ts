@@ -96,7 +96,12 @@ describe("the dev console's preparation list", () => {
   async function post(h: ReturnType<typeof harness>, fields: Record<string, string>) {
     const ctx = createExecutionContext();
     const response = await h.worker.fetch(
-      new Request("https://worker.test/console/acciones", { method: "POST", body: new URLSearchParams(fields), redirect: "manual" }),
+      new Request("https://worker.test/console/acciones", {
+        method: "POST",
+        headers: { origin: "https://worker.test" },
+        body: new URLSearchParams({ csrf: "dev", ...fields }),
+        redirect: "manual",
+      }),
       h.env,
       ctx,
     );
@@ -104,9 +109,11 @@ describe("the dev console's preparation list", () => {
     return response;
   }
 
-  it("isn't served unless dev mode is on", async () => {
+  it("asks for a login unless dev mode is on", async () => {
     const h = harness({ engine: engineWithDemo() });
-    expect((await h.get("/console/preparacion")).status).toBe(404);
+    const response = await h.get("/console/preparacion");
+    expect(response.status).toBe(401);
+    expect(await response.text()).toContain("escaneá el código");
   });
 
   it("shows each order with its lines, version, total and buttons", async () => {

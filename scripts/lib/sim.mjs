@@ -21,6 +21,7 @@ export const SIM_SECRETS = {
   WHATSAPP_VERIFY_TOKEN: SIM.verifyToken,
   WHATSAPP_TOKEN: "",
   SENDER_HASH_SALT: SIM.salt,
+  LINK_SIGNING_SECRET: "sim-link-secret-not-real",
 };
 
 /** Plain settings for the simulated Worker: the console opens without login, on the pretend engine. */
