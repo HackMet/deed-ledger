@@ -229,6 +229,10 @@ export class D1CustomerControlRepository implements CustomerControlRepository {
       this.db
         .prepare(`DELETE FROM customer_places WHERE business_id = ? AND customer_id = ? AND ${due}`)
         .bind(b, customerId, b, customerId),
+      // Their Pendientes: the owner's list no longer points at them.
+      this.db
+        .prepare(`DELETE FROM conversation_pendientes WHERE business_id = ? AND conversation_id IN (${theirConversations}) AND ${due}`)
+        .bind(b, b, customerId, b, customerId),
       this.db
         .prepare(
           `UPDATE conversations SET last_readback_order_id = NULL, last_readback_version = NULL, last_readback_at_ms = NULL

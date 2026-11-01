@@ -30,6 +30,8 @@ export const SIM_SECRETS = {
 /** Plain settings for the simulated Worker: the console opens without login, on the pretend engine. */
 export const SIM_VARS = {
   DEV_CONSOLE: "1",
+  // The console acts as this store's owner, so it shows the orders typed in `npm run chat`.
+  DEV_STORE_PHONE_NUMBER_ID: SIM.phoneNumberId,
 };
 
 /**

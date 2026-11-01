@@ -17,8 +17,14 @@
  * settings (#40) don't exist yet. Customer questions (#47) are answered from the catalog and the
  * hours it was given, never guessed: a product with no record is "no sé", a price only when set,
  * hours only when set. Payments and substitutes aren't pretended: they get the handoff.
+ *
+ * Conversation rules (Oct 31, proposed in docs/contract.md): a burst always gets something to say
+ * (the current step again, never `nothing`); a question answered from records in a burst that also
+ * moves the order comes back as `answered` beside the next step; the name is never asked while the
+ * order is built: Confirmar with no name on file asks it and holds the confirmation, which the
+ * name completes under the same operation key.
  */
-import type { CustomerContext, Engine, EngineResult, LineMatch, MemberContext } from "../../application/engine";
+import type { AnsweredQuestion, CustomerContext, Engine, EngineResult, LineMatch, MemberContext } from "../../application/engine";
 import type { OrderReadingSource } from "../../application/order-reading";
 import { type CatalogProduct, normalize } from "../../application/perception/matching";
 import type { Tenant } from "../../application/ports";
@@ -77,6 +83,22 @@ interface Draft {
   declinedSavedPlace: boolean;
 }
 
+/**
+ * A confirmation held for the customer's name: Confirmar was tapped (or a yes typed) with no name
+ * on file. The name completes it under the same operation key, so it's saved once.
+ */
+export interface HeldConfirmation {
+  readonly orderId: string;
+  readonly version: number;
+  /** The customer-scoped operation key of the Confirmar that was held. */
+  readonly operationKey: string;
+  /** How many times the name was asked for this order. */
+  readonly asks: number;
+}
+
+/** The name is asked at most this many times for one order; then the order is confirmed without it. */
+export const MAX_NAME_ASKS = 2;
+
 interface StoreState {
   readonly orders: Map<string, StoredOrder>;
   /** Operation key -> the first outcome saved under it. */
@@ -84,6 +106,8 @@ interface StoreState {
   readonly drafts: Map<string, Draft>;
   /** Customer -> the question asked last, for perception's context. */
   readonly lastQuestion: Map<string, QuestionCode>;
+  /** Customer -> the confirmation waiting for their name. */
+  readonly held: Map<string, HeldConfirmation>;
 }
 
 /**
@@ -95,6 +119,8 @@ export interface PretendStoreSnapshot {
   readonly operations: readonly (readonly [string, EngineOutcome])[];
   readonly drafts: readonly (readonly [string, DraftSnapshot])[];
   readonly lastQuestion: readonly (readonly [string, QuestionCode])[];
+  /** Absent in snapshots saved before the conversation rules (Oct 31). */
+  readonly held?: readonly (readonly [string, HeldConfirmation])[];
 }
 
 interface DraftSnapshot {
@@ -131,11 +157,11 @@ export class MemoryEngine implements Engine, OrderReadingSource {
 
     const burst = new BurstApplier(state, context, this.options.catalog ?? [], matches, this.options.storeHours ?? null);
     reading.observations.forEach((observation, index) => burst.apply(observation, index));
-    const outcome = burst.decide();
+    const { outcome, answered } = burst.decide();
     state.operations.set(key, outcome);
     if (outcome.type === "ask") state.lastQuestion.set(context.customerId, outcome.question);
     else state.lastQuestion.delete(context.customerId);
-    return result(outcome);
+    return answered === null ? result(outcome) : { ...result(outcome), answered };
   }
 
   async perceptionContext(context: CustomerContext): Promise<PerceptionContext> {
@@ -184,8 +210,13 @@ export class MemoryEngine implements Engine, OrderReadingSource {
       if (outcome.type === "ask") state.lastQuestion.set(context.customerId, outcome.question);
       return result(outcome);
     }
+    if (action.type === "confirm_order" && stored.order.state === "por_confirmar") {
+      const held = holdForName(state, context, stored, action.version, operationKey);
+      if (held !== null) return result(held);
+    }
     const answered = answer(stored, action, context.nowMs);
     if (answered === null) return result({ type: "rejected", reason: "invalid_state", order: stored.order });
+    if (answered.outcome.type === "order_confirmed") state.held.delete(context.customerId);
     state.orders.set(action.orderId, answered.stored);
     state.operations.set(operationKey, answered.outcome);
     return result(answered.outcome);
@@ -212,7 +243,7 @@ export class MemoryEngine implements Engine, OrderReadingSource {
     } else {
       burst.declineSavedPlace();
     }
-    return burst.decide();
+    return burst.decide().outcome;
   }
 
   async onConsoleAction(context: MemberContext, envelope: ActionEnvelope<ConsoleAction>): Promise<EngineResult> {
@@ -278,6 +309,7 @@ export class MemoryEngine implements Engine, OrderReadingSource {
         },
       ]),
       lastQuestion: [...state.lastQuestion],
+      held: [...state.held],
     };
   }
 
@@ -298,6 +330,7 @@ export class MemoryEngine implements Engine, OrderReadingSource {
         ]),
       ),
       lastQuestion: new Map(snapshot.lastQuestion),
+      held: new Map(snapshot.held ?? []),
     });
   }
 
@@ -309,11 +342,41 @@ export class MemoryEngine implements Engine, OrderReadingSource {
         operations: new Map(),
         drafts: new Map(),
         lastQuestion: new Map(),
+        held: new Map(),
       };
       this.stores.set(tenant.businessId, state);
     }
     return state;
   }
+}
+
+/** The customer's name our side put in the context (local CustomerContextWithName), if any. */
+function nameOf(context: CustomerContext): string | null {
+  return (context as { customerName?: string | null }).customerName ?? null;
+}
+
+/**
+ * Confirmar with no name on file: the name is asked and the confirmation held, unless the name was
+ * asked before for another order (asked once) or was asked MAX_NAME_ASKS times for this one (then
+ * the order is confirmed without it). Null when the confirmation goes ahead now.
+ */
+function holdForName(
+  state: StoreState,
+  context: CustomerContext,
+  stored: StoredOrder,
+  version: number,
+  operationKey: string,
+): EngineOutcome | null {
+  const held = state.held.get(context.customerId);
+  if ((nameOf(context) ?? stored.customerName) !== null) return null;
+  const sameOrder = held?.orderId === stored.order.orderId;
+  const askedBefore = (context as { customerNameAsked?: boolean }).customerNameAsked ?? false;
+  if (!sameOrder && askedBefore) return null;
+  const asks = (sameOrder ? held!.asks : 0) + 1;
+  if (asks > MAX_NAME_ASKS) return null;
+  state.held.set(context.customerId, { orderId: stored.order.orderId, version, operationKey, asks });
+  state.lastQuestion.set(context.customerId, "customer_name");
+  return { type: "ask", question: "customer_name", line: null, order: stored.order };
 }
 
 /** The saved place our side put in the customer's context (proposed CustomerContext.savedPlace). */
@@ -346,11 +409,10 @@ class BurstApplier {
   private cancelled = false;
   private statusAsked = false;
   private named: string | null;
-  private nameGiven = false;
   private handoff: EngineOutcome | null = null;
   private embedded = false;
   /** The first question answered from records in this burst (#47). */
-  private answer: EngineOutcome | null = null;
+  private answer: AnsweredQuestion | null = null;
   private offTopic = false;
 
   constructor(
@@ -403,7 +465,6 @@ class BurstApplier {
         return;
       case "customer_name":
         this.named = observation.name;
-        this.nameGiven = true;
         return;
       case "question":
         this.question(observation, index);
@@ -425,39 +486,55 @@ class BurstApplier {
     }
   }
 
-  decide(): EngineOutcome {
+  /**
+   * The one thing to say for the burst, and a question answered from records to say before it.
+   * Never `nothing`: a burst that changes nothing hears the current step again.
+   */
+  decide(): { outcome: EngineOutcome; answered: AnsweredQuestion | null } {
+    const only = (outcome: EngineOutcome) => ({ outcome, answered: null });
     const { state, context } = this;
+    const held = this.heldConfirmation();
     if (this.cancelled && this.stored !== null) {
       const order: OrderView = { ...this.stored.order, state: "cancelado", queuePosition: null };
       this.save(order);
-      return { type: "order_cancelled", order };
+      state.held.delete(context.customerId);
+      return only({ type: "order_cancelled", order });
     }
-    if (this.handoff !== null) return this.handoff;
+    if (this.handoff !== null) return only(this.handoff);
 
-    const nameAsked = (context as { customerNameAsked?: boolean }).customerNameAsked ?? false;
-    const askName = this.named === null && !nameAsked;
     if (this.stored === null || !this.changed) {
       if (this.statusAsked) {
         const order = this.stored === null ? null : { ...this.stored.order, queuePosition: queuePosition(state, this.stored.order.orderId) };
-        return { type: "order_status", order };
+        return only({ type: "order_status", order });
       }
-      // A question answered from records comes before asking the name: it's what they asked.
-      if (this.answer !== null) return this.answer;
-      if (this.offTopic) return { type: "out_of_scope" };
-      if (this.stored === null && askName) return { type: "ask", question: "customer_name", line: null, order: null };
-      if (this.embedded) return { type: "ask", question: "embedded_instructions", line: null, order: null };
-      if (this.stored === null && !this.nameGiven) return { type: "out_of_scope" };
-      return { type: "nothing" };
+      // The name arrived for a held Confirmar: the confirmation completes, under its own key.
+      if (held !== null && this.named !== null) return only(this.completeHeld(held));
+      // A question answered from records comes first: it's what they asked. A question still
+      // waiting on them goes after it, so the order keeps moving.
+      if (this.answer !== null) {
+        const waiting = held !== null ? this.askName(held, false) : this.waitingQuestion();
+        return waiting === null ? only(this.answer) : { outcome: waiting, answered: this.answer };
+      }
+      if (this.offTopic) return only({ type: "out_of_scope" });
+      if (this.embedded) return only({ type: "ask", question: "embedded_instructions", line: null, order: null });
+      // No order yet ("Hola, quiero hacer un pedido"): ask what they want.
+      if (this.stored === null) return only({ type: "ask", question: "what_to_order", line: null, order: null });
+      if (held !== null) return only(this.askName(held, true));
+      return only(this.restate());
     }
 
-    // The order changed: one question at a time, then the readback.
-    const order = this.stored.order;
+    // The order changed: one question at a time, then the readback. The name isn't asked here.
+    return { outcome: this.nextStep(), answered: this.answer };
+  }
+
+  /** The next step for an order being built: an open question, pickup or delivery, the place, the readback. */
+  private nextStep(): EngineOutcome {
+    const order = this.stored!.order;
     const pending = this.draft.pending[0];
     if (pending !== undefined) {
       const line = pending.lineId === null ? -1 : order.lines.findIndex((l) => l.lineId === pending.lineId);
       return this.ask(pending.code, line === -1 ? null : line, "armando");
     }
-    if (askName) return this.ask("customer_name", null, "armando");
     if (order.fulfillment === null) return this.ask("pickup_or_delivery", null, "armando");
     if (order.fulfillment.mode === "delivery" && !hasPlace(order.fulfillment)) {
       // A saved place is offered as a question, once per order; never applied without a yes.
@@ -469,6 +546,63 @@ class BurstApplier {
     this.draft.shown = true;
     this.save(next);
     return onList ? { type: "order_changed", order: next } : { type: "readback", order: next };
+  }
+
+  /**
+   * Nothing changed: where the order stands, said again. Being built: the open question again. Read
+   * back and waiting: the same readback, same version. On the list: its status.
+   */
+  private restate(): EngineOutcome {
+    const order = this.stored!.order;
+    if (order.state === "armando") return this.nextStep();
+    if (order.state === "por_confirmar") return { type: "readback", order };
+    return { type: "order_status", order: { ...order, queuePosition: queuePosition(this.state, order.orderId) } };
+  }
+
+  /** The question an order being built still waits on, if any; null once it's read back or later. */
+  private waitingQuestion(): EngineOutcome | null {
+    if (this.stored === null || this.stored.order.state !== "armando") return null;
+    return this.nextStep();
+  }
+
+  /** The held confirmation for the open order, if any; a hold for another order is dropped. */
+  private heldConfirmation(): HeldConfirmation | null {
+    const held = this.state.held.get(this.context.customerId) ?? null;
+    if (held === null) return null;
+    if (this.stored === null || held.orderId !== this.stored.order.orderId) {
+      this.state.held.delete(this.context.customerId);
+      return null;
+    }
+    return held;
+  }
+
+  /**
+   * The name question again for a held confirmation. `counted`: this burst answered with no name
+   * (it counts toward MAX_NAME_ASKS; past it, the order is confirmed without the name).
+   */
+  private askName(held: HeldConfirmation, counted: boolean): EngineOutcome {
+    const order = this.stored!.order;
+    if (order.state !== "por_confirmar" || order.version !== held.version) {
+      this.state.held.delete(this.context.customerId);
+      return this.restate();
+    }
+    const asks = held.asks + (counted ? 1 : 0);
+    if (asks > MAX_NAME_ASKS) return this.completeHeld(held);
+    this.state.held.set(this.context.customerId, { ...held, asks });
+    return { type: "ask", question: "customer_name", line: null, order };
+  }
+
+  /** Confirms the held version under the held key, once; a version that moved on is read back instead. */
+  private completeHeld(held: HeldConfirmation): EngineOutcome {
+    this.state.held.delete(this.context.customerId);
+    const stored = this.stored!;
+    if (stored.order.state !== "por_confirmar" || stored.order.version !== held.version) return this.restate();
+    const order: OrderView = { ...stored.order, state: "confirmado" };
+    const outcome: EngineOutcome = { type: "order_confirmed", order };
+    this.stored = { ...stored, customerName: this.named, confirmedAtMs: this.context.nowMs, order };
+    this.state.orders.set(order.orderId, this.stored);
+    this.state.operations.set(held.operationKey, outcome);
+    return outcome;
   }
 
   /** "Sí" to the same-place question: the saved place, as our records gave it. */

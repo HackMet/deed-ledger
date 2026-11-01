@@ -153,8 +153,9 @@ describe("anyone writing to the store's number", () => {
 
     h.clock.advance(5_000);
     await h.deliver();
-    // A new customer: the first reply says who is answering (#30), then the placeholder.
-    expect(h.sentTo(stranger)).toEqual([expect.stringContaining("asistente automático"), RECEIVED_PLACEHOLDER]);
+    // A new customer: the first reply says who is answering (#30), in the placeholder's message.
+    expect(h.sentTo(stranger)).toEqual([expect.stringMatching(/^¡Buenas! 👋 Soy el asistente de /u)]);
+    expect(h.sentTo(stranger)[0]).toContain(RECEIVED_PLACEHOLDER);
     expect(h.sentTo(stranger)).not.toContain(UNKNOWN_SENDER_NOTICE);
   });
 

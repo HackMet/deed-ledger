@@ -47,7 +47,7 @@ describe("the shared layout", () => {
     const h = consoleHarness();
     const { cookie } = await ownerSession(h);
     for (const [path, title] of [
-      ["/console/preparacion", "Pedidos por preparar"],
+      ["/console/preparacion", "Pedidos"],
       ["/console/empleados", "Empleados"],
     ] as const) {
       const response = await send(h, path, { cookie });
@@ -55,9 +55,9 @@ describe("the shared layout", () => {
       const page = await response.text();
       expect(page).toContain('<body data-layout="console">');
       expect(page).toContain(`<h1>${title}</h1>`);
-      expect(page).toContain(`<a href="${path}" aria-current="page">`);
+      expect(page).toContain(`<a href="${path === "/console/empleados" ? "/console/mas" : path}" aria-current="page">`);
       expect(page).toContain('<a href="/console/preparacion"');
-      expect(page).toContain('<a href="/console/empleados"');
+      expect(page).toContain('<a href="/console/mas"');
     }
   });
 

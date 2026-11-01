@@ -163,7 +163,8 @@ describe("templates", () => {
         "4. Jabón Xtra: 3 unidades × L 35 = L 105",
         "Lo recogés en la tienda.",
         "Total: L 315",
-        "¿Está bien así? Respondé Confirmar, Corregir o Cancelar.",
+        "¿Está bien así?",
+        "_También podés escribir: confirmar, corregir o cancelar._",
       ].join("\n"),
     );
     expect(reply.claims).toEqual([
@@ -214,7 +215,7 @@ describe("templates", () => {
 
   it("reads back a change after confirming as a new version with its own buttons", () => {
     const reply = render(orderChanged);
-    expect(reply.body.startsWith("Cambié tu pedido. Así queda:\n")).toBe(true);
+    expect(reply.body.startsWith("Listo, así queda tu pedido:\n")).toBe(true);
     expect(reply.body).toContain("3. Azúcar 1 lb: 3 libras × L 30 = L 90");
     expect(reply.body).toContain("Total: L 345");
     expect(reply.buttons.map((b) => b.id)).toEqual(["confirm:order-0001:v2", "correct:order-0001:v2", "cancel:order-0001:v2"]);
@@ -271,7 +272,7 @@ describe("templates", () => {
       render({ type: "ask", question, line, order: readbackOrder }).body;
     expect(ask("ambiguous_size", 0)).toBe("¿De qué tamaño querés Aceite Clover 1 L?");
     expect(ask("pickup_or_delivery")).toBe("¿Lo recogés en la tienda o te lo llevamos?");
-    expect(ask("customer_name")).toBe("¿A nombre de quién lo anoto?");
+    expect(ask("customer_name")).toBe("¡Va! ¿A nombre de quién lo anoto?");
     // Without a saved place in the context there's nothing to echo and no buttons: the typed choices only.
     expect(ask("same_place")).toBe("¿Te lo llevamos al mismo lugar de siempre?\nRespondé Sí u Otro lugar.");
     expect(ask("embedded_instructions")).toBe("Te ayudo con tu pedido. ¿Qué te mando?");
@@ -362,6 +363,18 @@ describe("notices", () => {
       { id: "remove:order-0001:v2:line-1", title: "Quitar" },
     ]);
     expect(flattenClaims(reply.claims)).toContainEqual({ type: "unit_price", productId: sub.productId, price: 6200 });
+  });
+
+  it("says Tocá only when the offer has buttons to tap", () => {
+    // A substitute whose title would read as the Quitar button gets no buttons: it's asked in words.
+    const notice = sampleNotice("substitute_offered") as Extract<CustomerNotice["notice"], { type: "substitute_offered" }>;
+    const reply = renderNotice({
+      ...notice,
+      order: { ...notice.order, lines: notice.order.lines.map((l) => (l.substitute === null ? l : { ...l, substitute: { ...sub, productName: "Quitar" } })) },
+    });
+    expect(reply.buttons).toEqual([]);
+    expect(reply.body).not.toContain("Tocá");
+    expect(reply.body.endsWith(COPY.substituteFallbackTyped)).toBe(true);
   });
 });
 

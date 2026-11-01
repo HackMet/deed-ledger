@@ -8,8 +8,10 @@
  * - "Quiero hablar con Johan" raises a Pendientes item and sends one fixed line, stopped or not.
  * - An explicit deletion request ("borren mis datos") stops the customer and marks them for the
  *   purge (customer-deletion.ts), which runs once the confirmation is out. It is never inferred.
- * - A new customer's first reply starts with who this is, the privacy notice, ALTO and how to
- *   reach the owner, also when that first message is a control word (ALTO, deletion, handoff).
+ * - A new customer's first reply opens with a one-line greeting and ends with ALTO and the privacy
+ *   notice, in the same message as the real reply. With nothing to answer yet ("hola"), it asks
+ *   what to send, with Horario and Hablar con buttons (their taps are routed by ID, never read by a
+ *   model). A control word as the first message (ALTO, deletion, handoff) gets the greeting too.
  *
  * The control word's own message, and for ALTO and deletion every unread message before it, are
  * marked read, so a later reading never acts on them. Direct answers to control words carry
@@ -22,13 +24,22 @@ import {
   controlWord,
   DELETION_CONFIRMED,
   handoffLine,
+  asksToStop,
+  INTRO_BUTTON_IDS,
+  introButtons,
+  introduceControl,
+  introduceReply,
   introduction,
   RESUMED,
+  STOP_ASK,
+  STOP_BUTTON_ID,
+  STOP_BUTTONS,
   STOPPED_REMINDER,
   type StoreVoice,
   stopConfirmed,
 } from "../domain/customer-controls";
 import { PLACEHOLDER_TTL_MS } from "../domain/outbox";
+import { WHAT_TO_ORDER } from "../domain/replies";
 import { BurstTooLargeError } from "./errors";
 import type {
   Clock,
@@ -76,7 +87,7 @@ export async function gateCustomerJob(
   // No customer for the leased conversation: the handler fails loudly on its own.
   if (state === null) return next();
 
-  const word = job.kind === "text" ? controlWord(job.textBody) : null;
+  const word = jobControlWord(job);
   const decided = await decide(gate, input, state, word);
   if (decided !== null) {
     gate.log.info("customer_control_handled", {
@@ -91,6 +102,17 @@ export async function gateCustomerJob(
   const outcome = await next();
   if (state.introducedAtMs !== null) return outcome;
   return withIntroduction(gate, input, state, outcome);
+}
+
+/**
+ * A typed control word, the first message's Hablar con button, or the "¿Pauso los mensajes?"
+ * button (by their IDs, whatever their titles).
+ */
+function jobControlWord(job: JobInput["job"]): ControlWord | null {
+  if (job.kind === "text") return controlWord(job.textBody);
+  if (job.kind === "interactive" && job.replyId === INTRO_BUTTON_IDS.handoff) return "handoff";
+  if (job.kind === "interactive" && job.replyId === STOP_BUTTON_ID) return "stop";
+  return null;
 }
 
 /** Any handler behind the gate: the order handler wraps itself; the placeholder is wrapped here. */
@@ -114,17 +136,17 @@ async function decide(
     // Their data is on its way out: nothing more is answered or read.
     return { label: "deletion_pending", outcome: { replies: [], commits: [readThis] } };
   }
-  // A control word as the very first message still gets the introduction first (#30). It goes out
-  // as a control answer, so dispatch sends it even though ALTO or deletion stops the customer.
+  // A control word as the very first message still gets the greeting (#30), in its answer's
+  // message. It goes out as a control answer, so dispatch sends it though ALTO or deletion stops.
   const first = state.introducedAtMs === null;
-  const intro = first ? [control(introduction(voice))] : [];
+  const answer = (w: ControlWord, body: string): ReplyDraft => control(first ? introduceControl(voice, w, body) : body);
   const introduced = first ? [gate.controls.markIntroducedCommit(lease, state.customerId, nowMs, null)] : [];
 
   if (word === "delete") {
     return {
       label: "deletion_requested",
       outcome: {
-        replies: [...intro, control(DELETION_CONFIRMED)],
+        replies: [answer("delete", DELETION_CONFIRMED)],
         commits: [
           gate.controls.requestDeletionCommit(lease, state.customerId, nowMs),
           await readEverythingUnread(gate, { lease, job }, nowMs),
@@ -143,7 +165,7 @@ async function decide(
     });
     return {
       label: "handoff",
-      outcome: { replies: [...intro, control(handoffLine(voice))], commits: [readThis, ...introduced] },
+      outcome: { replies: [answer("handoff", handoffLine(voice))], commits: [readThis, ...introduced] },
     };
   }
   if (state.stoppedAtMs !== null) {
@@ -164,11 +186,21 @@ async function decide(
       },
     };
   }
+  if (word === null && job.kind === "text" && asksToStop(job.textBody)) {
+    // Stop in other words: asked, with one tap that is the real ALTO. Nothing stops yet.
+    return {
+      label: "stop_asked",
+      outcome: {
+        replies: [{ ...answer("stop", STOP_ASK), buttons: STOP_BUTTONS }],
+        commits: [readThis, ...introduced],
+      },
+    };
+  }
   if (word === "stop") {
     return {
       label: "stopped",
       outcome: {
-        replies: [...intro, control(stopConfirmed(voice))],
+        replies: [answer("stop", stopConfirmed(voice))],
         commits: [
           gate.controls.stopCommit(lease, state.customerId, nowMs),
           await readEverythingUnread(gate, { lease, job }, nowMs),
@@ -181,17 +213,43 @@ async function decide(
   return null;
 }
 
-function withIntroduction(gate: CustomerGateDeps, { lease, job }: JobInput, state: CustomerControlState, outcome: JobOutcome): JobOutcome {
+function withIntroduction(
+  gate: CustomerGateDeps,
+  { lease, job, isNewestOfBurst }: JobInput,
+  state: CustomerControlState,
+  outcome: JobOutcome,
+): JobOutcome {
+  const voice = storeVoice(gate, state);
+  const [first, ...rest] = outcome.replies;
+  if (first === undefined) {
+    // An earlier message of a burst: the burst's later job answers, and carries the introduction.
+    if (!isNewestOfBurst) return outcome;
+    return {
+      replies: [{ body: introduction(voice), ttlMs: CONTROL_REPLY_TTL_MS, buttons: introButtons(voice) }],
+      commits: [...(outcome.commits ?? []), gate.controls.markIntroducedCommit(lease, state.customerId, gate.clock.now(), null)],
+    };
+  }
   // The job's replies are written together or not at all: when they close the burst, the
   // introduction is remembered only if they are written.
   const closes = outcome.replies.some((reply) => reply.closesBurst === true);
   return {
-    replies: [introReply(storeVoice(gate, state)), ...outcome.replies],
+    replies: [introduced(voice, first), ...rest],
     commits: [
       ...(outcome.commits ?? []),
       gate.controls.markIntroducedCommit(lease, state.customerId, gate.clock.now(), closes ? job.id : null),
     ],
   };
+}
+
+/**
+ * The first real reply with the introduction in the same message. Its claims, kind and burst
+ * flag stay as they were; "¿Qué te mando?" with no order becomes the welcome, with its buttons.
+ */
+function introduced(voice: StoreVoice, reply: ReplyDraft): ReplyDraft {
+  if (reply.body === WHAT_TO_ORDER && (reply.buttons ?? []).length === 0) {
+    return { ...reply, body: introduction(voice), buttons: introButtons(voice) };
+  }
+  return { ...reply, body: introduceReply(voice, reply.body) };
 }
 
 /** ALTO and deletion: the control message and every unread one before it, so none is acted on later. */
@@ -208,10 +266,6 @@ async function readEverythingUnread(gate: CustomerGateDeps, { lease, job }: Pick
 
 function storeVoice(gate: CustomerGateDeps, state: CustomerControlState): StoreVoice {
   return { storeName: state.storeName, ownerName: state.ownerName, privacyUrl: gate.privacyUrl };
-}
-
-function introReply(voice: StoreVoice): ReplyDraft {
-  return { body: introduction(voice), ttlMs: CONTROL_REPLY_TTL_MS };
 }
 
 function control(body: string): ReplyDraft {

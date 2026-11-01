@@ -19,7 +19,14 @@ Last updated: Sat Oct 31, 2026, morning Honduras time, by Claude Code (Angel's s
   - delivery to a saved place (#29): pins from the webhook, saved places offered with Sí / Otro lugar (migration
     0017; contract additions proposed in [contract.md](contract.md) "Proposed (#29)");
   - customer questions: price, availability, store hours (#47); contract additions proposed in contract.md
-    "Proposed (#47)".
+    "Proposed (#47)";
+  - console menu and look (worktree `hackathon-claude-menu`, not committed): bottom tabs, Más, Pendientes
+    (migration 0018) with its count on the owner's tab, a top bar with who is logged in, and Pedidos as a list plus
+    a page per order (`handoffs/2026-10-31-console-look.md`);
+  - conversation rules (same worktree, not committed): never silent, name asked at Confirmar, typed yes and typed
+    button numbers, greetings and thanks, question + order in one reply, stop in other words, honest failure and
+    handoff copy (`handoffs/2026-10-31-conversation-fixes.md`; engine side proposed in contract.md "Proposed
+    (conversation rules)").
 - kercmari's engine is PR #62. A local trial ran this branch's full path on it: orders save once under our customer
   IDs, but no order reply goes out until `verifyClaims` exists (#12); the list and staff taps need #12 too.
 - Contract gaps (a)–(p) and 16 questions from the build have proposed answers in [contract.md](contract.md); not

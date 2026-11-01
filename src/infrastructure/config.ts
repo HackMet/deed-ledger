@@ -12,6 +12,8 @@ export interface Config {
   readonly linkSigningSecret: string;
   /** The console without login, on the in-memory pretend engine. Local simulator only. */
   readonly devConsole: boolean;
+  /** With devConsole: the simulator store's WhatsApp phone number ID; the console acts as its owner. */
+  readonly devStorePhoneNumberId: string;
   /**
    * The pretend engine with its state in D1, for a deployed demo before the real engine lands. The
    * console still needs login. Ignored when devConsole is on.
@@ -32,6 +34,7 @@ export function readConfig(env: Env): Config {
     graphApiVersion: env.WHATSAPP_GRAPH_API_VERSION ?? "v26.0",
     linkSigningSecret: env.LINK_SIGNING_SECRET ?? "",
     devConsole: String(env.DEV_CONSOLE ?? "") === "1",
+    devStorePhoneNumberId: String(env.DEV_STORE_PHONE_NUMBER_ID ?? ""),
     pretendEngine: String(env.PRETEND_ENGINE ?? "") === "1",
     modelApiKey: env.MODEL_API_KEY ?? "",
     publicBaseUrl: String(env.PUBLIC_BASE_URL ?? "").replace(/\/+$/u, ""),

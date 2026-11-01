@@ -42,7 +42,16 @@ export interface EngineResult {
   readonly outcome: EngineOutcome;
   readonly notices: readonly CustomerNotice[];
   readonly commits: readonly Commit[];
+  /**
+   * Proposed (conversation rules, Oct 31): a question the same burst asked and the records answer
+   * ("¿hay leche? y mandame 2 de arroz"), when `outcome` is the order's next step. The customer
+   * hears the answer first, then the step, in one message. Absent: nothing else to answer.
+   */
+  readonly answered?: AnsweredQuestion | null;
 }
+
+/** A question answered from records, said before the order's next step. */
+export type AnsweredQuestion = Extract<EngineOutcome, { type: "answer" | "store_hours" }>;
 
 export interface Engine {
   /**

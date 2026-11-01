@@ -1,5 +1,6 @@
 import { ClaimLostError, NoticeConversationMissingError, PermanentWriteError } from "../../application/errors";
 import type {
+  ButtonsShown,
   Commit,
   ConsoleNoticeDraft,
   ConversationRef,
@@ -129,6 +130,28 @@ function readButtons(json: string): readonly ReplyButton[] {
     return valid ? (value as ReplyButton[]) : [];
   } catch {
     return [];
+  }
+}
+
+/**
+ * The buttons on the last message queued to a conversation before a time (#7 typed numbers, typed
+ * yes): the newest row that wasn't left unsent, if it carried buttons. The slow notice doesn't
+ * count: it's queued after the customer wrote. Scoped by store and conversation.
+ */
+export class D1ButtonsShown implements ButtonsShown {
+  constructor(private readonly db: D1Database) {}
+
+  async lastButtons(conversation: ConversationRef, beforeMs: number): Promise<readonly ReplyButton[]> {
+    const row = await this.db
+      .prepare(
+        `SELECT buttons_json FROM outbound_messages
+         WHERE business_id = ? AND conversation_id = ? AND created_at_ms < ?
+           AND kind <> 'slow_notice' AND status NOT IN ('failed', 'expired')
+         ORDER BY seq DESC LIMIT 1`,
+      )
+      .bind(conversation.businessId, conversation.conversationId, beforeMs)
+      .first<{ buttons_json: string | null }>();
+    return row?.buttons_json == null ? [] : readButtons(row.buttons_json);
   }
 }
 

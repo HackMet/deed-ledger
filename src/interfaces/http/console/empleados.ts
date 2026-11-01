@@ -16,6 +16,9 @@ import { csrfField, shell } from "./layout";
 
 const PATH = "/console/empleados";
 const MAX_NAME = 120;
+/** Empleados is opened from Más: the tab it lights, and where "←" goes. */
+const FROM = "/console/mas";
+const SUBTITLE = "Quién entra a la consola";
 
 const NOTICES = {
   quitado: "Listo. Esa persona ya no puede entrar a la consola.",
@@ -35,7 +38,10 @@ export function empleadosScreen(app: Hono<ConsoleEnv>) {
     return c.html(
       shell(c, {
         title: "Empleados",
+        subtitle: SUBTITLE,
+        back: FROM,
         path: PATH,
+        tab: FROM,
         notice: notice !== undefined && Object.hasOwn(NOTICES, notice) ? NOTICES[notice as NoticeKey] : null,
         style: STYLE,
         body: html`${inviteForm(csrf)}${members.map((m) => memberCard(m, csrf))}`,
@@ -71,7 +77,10 @@ export function empleadosScreen(app: Hono<ConsoleEnv>) {
     return c.html(
       shell(c, {
         title: "Empleados",
+        subtitle: SUBTITLE,
+        back: FROM,
         path: PATH,
+        tab: FROM,
         style: STYLE,
         body: html`<section class="card">
 <h2>¿Quitar a ${name}?</h2>
@@ -133,13 +142,16 @@ async function inviteFor(c: Context<ConsoleEnv>, userId: string) {
   return c.html(
     shell(c, {
       title: "Empleados",
+      subtitle: SUBTITLE,
+      back: FROM,
       path: PATH,
+      tab: FROM,
       style: STYLE,
       body: html`<section class="card">
 <h2>Código para ${person.displayName ?? "entrar"}</h2>
 <p>${name} abre este enlace en su teléfono y toca Entrar. Sirve una sola vez y vence en 15 minutos.</p>
 <input class="link" readonly value="${link}" aria-label="Enlace para entrar">
-<p><a class="button" href="https://wa.me/${person.phone}?text=${encodeURIComponent(message)}">Mandarlo por WhatsApp</a></p>
+<p><a class="button primary" href="https://wa.me/${person.phone}?text=${encodeURIComponent(message)}">Mandarlo por WhatsApp</a></p>
 <p class="cancel"><a href="${PATH}">Volver a Empleados</a></p>
 </section>`,
     }),
@@ -209,14 +221,11 @@ function memberCard(m: MemberSummary, csrf: string) {
 const STYLE = `
 h2{font-size:17px;margin:0 0 8px}
 label{display:block;margin:8px 0;font-weight:600}
-input{display:block;width:100%;min-height:44px;margin-top:4px;padding:8px;font-size:16px;border:1px solid #888;border-radius:8px}
+input{display:block;width:100%;min-height:48px;margin-top:4px;padding:8px;font-size:16px;border:1px solid #888;border-radius:8px}
 input.link{font-size:14px}
-.head{display:flex;justify-content:space-between;gap:8px}.head span{font-size:14px;color:#2f6f45}
-.member.off{opacity:.75}.meta{margin:4px 0 8px;font-size:14px;color:#555}
+.head{display:flex;justify-content:space-between;gap:8px}.head span{font-size:14px;color:var(--accent)}
+.member.off{opacity:.75}.meta{margin:4px 0 8px;font-size:14px;color:var(--mute)}
 .buttons{display:flex;flex-wrap:wrap;gap:8px}
-a.button{display:inline-flex;align-items:center;justify-content:center;min-height:44px;min-width:88px;padding:0 12px;
-border-radius:8px;border:1px solid #2f6f45;background:#2f6f45;color:#fff;text-decoration:none;font-size:16px}
-a.button.danger{background:#fff;border-color:#b33;color:#b33}
-button.danger-fill{background:#b33}
+button.danger-fill{background:var(--warn);border-color:var(--warn)}
 .cancel{text-align:center;margin-top:12px}
 `;

@@ -24,6 +24,7 @@ import type { ConsoleEnv } from "./auth";
 import { csrfField, shell } from "./layout";
 
 const PATH = "/console/anotar";
+const SUBTITLE = "Ventas, fiado y pedidos a mano";
 
 /** A photo, a note and the form's own fields; anything bigger is refused before it's parsed. */
 export const MAX_ANOTAR_BODY_BYTES = MAX_PHOTO_BYTES + 64 * 1024;
@@ -86,6 +87,7 @@ export function anotarScreen(app: Hono<ConsoleEnv>) {
     return c.html(
       shell(c, {
         title: "Anotar",
+        subtitle: SUBTITLE,
         path: PATH,
         style: STYLE,
         body: html`<section class="card"><h2>Esto entendí</h2>${outcome.reading.observations.map(observationView)}
@@ -104,6 +106,7 @@ function refusal(c: Context<ConsoleEnv>, reason: Refusal, purpose: ConsolePurpos
 function page(c: Context<ConsoleEnv>, notice: string | null, purpose: ConsolePurpose) {
   return shell(c, {
     title: "Anotar",
+    subtitle: SUBTITLE,
     path: PATH,
     notice,
     style: STYLE,

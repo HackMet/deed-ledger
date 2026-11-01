@@ -181,7 +181,7 @@ describe("console taps save with their customer messages", () => {
     expect(await rows(`SELECT * FROM batch_guards`)).toEqual([]);
   });
 
-  it("through the route, a refused save tells the staff and queues nothing", async () => {
+  it("through the route, a refused save tells the staff on the order's page and queues nothing", async () => {
     const t = await setup({ engine: "commit" });
     t.commit.notices = [{ customerId: t.customer.customerId, notice: { type: "order_ready", order: { ...t.order, state: "listo" } } }];
     t.commit.failGuard = true;
@@ -192,7 +192,7 @@ describe("console taps save with their customer messages", () => {
       form: { type: "mark_ready", orderId: t.order.orderId, version: "1", operationKey: "k-route", csrf: await csrfFor(t.h, cookie) },
     });
     expect(response.status).toBe(303);
-    expect(response.headers.get("location")).toBe(`/console/preparacion?aviso=guardar#${t.order.orderId}`);
+    expect(response.headers.get("location")).toBe(`/console/preparacion/${t.order.orderId}?aviso=guardar`);
     expect(await t.outbox()).toEqual([]);
     expect(t.h.channel.sent).toEqual([]);
   });
@@ -231,7 +231,7 @@ describe("console taps save with their customer messages", () => {
       form: { type: "mark_ready", orderId: a.order.orderId, version: "1", operationKey: "k-cross", csrf: await csrfFor(h, cookie) },
     });
 
-    expect(response.headers.get("location")).toBe(`/console/preparacion?aviso=falta#${a.order.orderId}`);
+    expect(response.headers.get("location")).toBe("/console/preparacion?aviso=falta");
     expect(await a.outbox()).toEqual([]);
     expect(await rows(`SELECT id FROM outbound_messages WHERE business_id = ?`, other.businessId)).toEqual([]);
     expect((await a.memory.preparationList({ businessId: a.store.businessId }))[0]!.order.state).toBe("preparando");

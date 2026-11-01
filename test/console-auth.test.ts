@@ -149,7 +149,7 @@ describe("console login", () => {
     expect((await send(h, "/console/acciones", { method: "POST", form: tap, cookie })).status).toBe(403);
     expect((await send(h, "/console/acciones", { method: "POST", form: { ...tap, csrf: "0".repeat(64) }, cookie })).status).toBe(403);
 
-    const csrf = csrfOf(await (await send(h, "/console/preparacion", { cookie })).text());
+    const csrf = csrfOf(await (await send(h, "/console/preparacion/demo-order-1", { cookie })).text());
     expect(csrf).toBeDefined();
     const saved = await send(h, "/console/acciones", { method: "POST", form: { ...tap, csrf: csrf! }, cookie });
     expect(saved.status).toBe(303);
@@ -201,7 +201,7 @@ describe("console login", () => {
     const store = await storeWithStaff();
     const staff = store.members[1]!;
     const cookie = await login(h, store.businessId, staff.userId);
-    const csrf = csrfOf(await (await send(h, "/console/preparacion", { cookie })).text())!;
+    const csrf = csrfOf(await (await send(h, "/console/preparacion/demo-order-2", { cookie })).text())!;
     await send(h, "/console/acciones", {
       method: "POST",
       form: { type: "start_preparing", orderId: "demo-order-2", version: "1", operationKey: "k-actor", csrf },

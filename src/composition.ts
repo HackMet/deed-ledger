@@ -18,6 +18,7 @@ import type {
   MediaStore,
   ModelProvider,
   Pendientes,
+  PendientesBoard,
   Transcriber,
 } from "./application/ports";
 import { PRIVACY_PATH } from "./domain/customer-controls";
@@ -29,11 +30,11 @@ import { D1CustomerPlaceRepository } from "./infrastructure/d1/customer-place-re
 import { D1CustomerRepository } from "./infrastructure/d1/customer-repository";
 import { D1IntakeRepository } from "./infrastructure/d1/intake-repository";
 import { D1JobRepository } from "./infrastructure/d1/job-repository";
-import { D1OutboxRepository } from "./infrastructure/d1/outbox-repository";
+import { D1ButtonsShown, D1OutboxRepository } from "./infrastructure/d1/outbox-repository";
+import { D1Pendientes } from "./infrastructure/d1/pendientes-repository";
 import { D1SpendLedger } from "./infrastructure/d1/spend-repository";
 import { D1TenancyRepository } from "./infrastructure/d1/tenancy-repository";
 import { HmacKeyedHasher } from "./infrastructure/keyed-hasher";
-import { LoggingPendientes } from "./infrastructure/logging-pendientes";
 import { DEMO_CATALOG } from "./infrastructure/memory/demo-catalog";
 import { demoOrders } from "./infrastructure/memory/demo-orders";
 import { D1PretendEngine } from "./infrastructure/memory/d1-pretend-engine";
@@ -69,6 +70,8 @@ export type RuntimeOverrides = Partial<
   readonly db?: D1Database;
   readonly engine?: Engine;
   readonly pendientes?: Pendientes;
+  /** What the owner's console reads Pendientes from; by default the same D1 table they're raised into. */
+  readonly pendientesBoard?: PendientesBoard;
   /** Stands in for Muse Spark (tests answer with recorded readings). */
   readonly modelProvider?: ModelProvider;
   /** Photos and voice notes for the reader; by default read back from R2 and transcribed. */
@@ -91,7 +94,10 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
   const jobs = new D1JobRepository(db);
   const customers = new D1CustomerRepository(db);
   const customerControls = new D1CustomerControlRepository(db);
-  const pendientes = overrides.pendientes ?? new LoggingPendientes(log);
+  // Kept in D1 for the owner's Pendientes screen, and logged (IDs only).
+  const storedPendientes = new D1Pendientes(db, overrides.ids ?? randomIds, clock, log);
+  const pendientes = overrides.pendientes ?? storedPendientes;
+  const pendientesBoard = overrides.pendientesBoard ?? storedPendientes;
   // ALTO, SEGUIR, handoff, deletion and the first message, ahead of the order handler (#30).
   const gate = {
     controls: customerControls,
@@ -119,6 +125,7 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
           reader,
           gate,
           places: new D1CustomerPlaceRepository(db),
+          buttonsShown: new D1ButtonsShown(db),
         });
   return {
     config,
@@ -161,6 +168,7 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
       // The second claim check reads the records through the engine; none wired, no claim holds.
       claimVerifier: engine,
       pendientes,
+      pendientesBoard,
       audioDecoder,
       transcriber,
       customerControls,

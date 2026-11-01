@@ -42,6 +42,20 @@ const HANDOFF = /^(?:(?:yo )?(?:quiero|quisiera|necesito|ocupo|puedo|me gustaria
 const DELETE =
   /^(?:(?:por favor|porfa) )?(?:(?:yo )?(?:quiero|quisiera|necesito) (?:que )?)?(?:borren|borres|borrar|borra|borrame|eliminen|elimines|eliminar|elimina)(?: todos)? (?:mis datos|mi informacion|toda mi informacion)(?: (?:por favor|porfa|gracias))?$/u;
 
+/**
+ * "No me manden más", "ya no quiero mensajes", "baja": a wish to stop in other words. It doesn't
+ * stop anything by itself: the customer is asked, with a one-tap button that is the real ALTO.
+ */
+const STOP_IN_WORDS =
+  /^(?:ya )?(?:no (?:me )?(?:manden|mandes|envien|envies|escriban|escribas)(?: mas)?(?: mensajes)?|no (?:quiero|deseo) (?:recibir )?(?:mas )?mensajes|no mas mensajes|(?:dar(?:me)? de )?baja|dej(?:en|a) de (?:escribirme|mandarme mensajes))(?: (?:por favor|porfa|gracias))?$/u;
+
+/** True when the whole message asks to stop the messages in other words than ALTO. */
+export function asksToStop(text: string | null): boolean {
+  if (text === null) return false;
+  const tidy = normalizeControlText(text);
+  return tidy !== "" && tidy.length <= 80 && !STOP_WORDS.has(tidy) && STOP_IN_WORDS.test(tidy);
+}
+
 /** The control word a typed message is, alone; null for anything else. */
 export function controlWord(text: string | null): ControlWord | null {
   if (text === null) return null;
@@ -68,23 +82,79 @@ export interface StoreVoice {
 
 function reachOwner(voice: StoreVoice): string {
   return voice.ownerName === null
-    ? "Para hablar con alguien de la tienda, escribí: quiero hablar con una persona."
-    : `Para hablar con ${voice.ownerName}, escribí: quiero hablar con ${voice.ownerName}.`;
+    ? "Si necesitás hablar con alguien de la tienda, pedímelo y le aviso."
+    : `Si necesitás hablar con ${voice.ownerName}, pedímelo y le aviso.`;
 }
 
-/** The first reply to a new customer: who this is, the privacy notice, ALTO, how to reach the owner. */
+/**
+ * The first-contact buttons' IDs. Tapped, they are routed by code, never by a model: the handoff
+ * one is the handoff control word (customer-gate.ts), the hours one the store-hours answer.
+ */
+export const INTRO_BUTTON_IDS = { hours: "intro:hours", handoff: "intro:handoff" } as const;
+
+/** The "¿Pauso los mensajes?" button: tapped, it is ALTO (customer-gate.ts), decided by its ID. */
+export const STOP_BUTTON_ID = "control:stop";
+
+/** Asked when someone asks to stop in other words: one tap stops, ALTO typed works too. */
+export const STOP_ASK = "¿Pauso los mensajes? 🙏\n_También podés escribir ALTO._";
+
+export const STOP_BUTTONS: readonly { readonly id: string; readonly title: string }[] = [{ id: STOP_BUTTON_ID, title: "Sí, pausar" }];
+
+/** Meta's reply-button title limit, counted the way our check counts it (UTF-16 units). */
+const BUTTON_TITLE_MAX = 20;
+
+/** The first line a new customer reads: who this is. */
+export function introGreeting(voice: StoreVoice): string {
+  return `¡Buenas! 👋 Soy el asistente de *${voice.storeName}* 🛒`;
+}
+
+/** The first message's last line, in WhatsApp italics: ALTO, and the privacy notice when there is one. */
+export function introFooter(voice: StoreVoice): string {
+  const data = voice.privacyUrl === null ? "" : ` Tus datos: ${voice.privacyUrl}`;
+  return `_Si no querés recibir mensajes, escribí ALTO.${data}_`;
+}
+
+/** The question that opens a conversation that has no order yet. */
+export const WELCOME_ASK = "Te tomo el pedido y te aviso cuando esté listo. ¿Qué te mando?";
+
+/** The first reply to a new customer with nothing else to answer: greeting, what to send, ALTO. */
 export function introduction(voice: StoreVoice): string {
-  const owner = voice.ownerName ?? "el dueño";
+  return [introGreeting(voice), WELCOME_ASK, introFooter(voice)].join("\n");
+}
+
+/** A new customer's first real reply, in the same message: the greeting first, ALTO last. */
+export function introduceReply(voice: StoreVoice, body: string): string {
+  return [introGreeting(voice), body, introFooter(voice)].join("\n");
+}
+
+/**
+ * A control word as the very first message: the greeting before its answer. ALTO and deletion
+ * already stop the customer, so only the privacy notice follows; a handoff gets the full footer.
+ */
+export function introduceControl(voice: StoreVoice, word: ControlWord, body: string): string {
+  if (word === "handoff") return introduceReply(voice, body);
+  const lines = [introGreeting(voice), body];
+  if (voice.privacyUrl !== null) lines.push(`_Tus datos: ${voice.privacyUrl}_`);
+  return lines.join("\n");
+}
+
+/** The first message's buttons: Horario, and Hablar con the owner (or with someone). */
+export function introButtons(voice: StoreVoice): readonly { readonly id: string; readonly title: string }[] {
   return [
-    `Hola, soy el asistente automático de ${voice.storeName}. No soy ${owner} ni una persona: te ayudo con tus pedidos.`,
-    ...(voice.privacyUrl === null ? [] : [`Cómo usamos tus datos: ${voice.privacyUrl}`]),
-    reachOwner(voice),
-    "Si no querés recibir más mensajes, escribí ALTO.",
-  ].join("\n");
+    { id: INTRO_BUTTON_IDS.hours, title: "🕘 Horario" },
+    { id: INTRO_BUTTON_IDS.handoff, title: handoffTitle(voice) },
+  ];
+}
+
+function handoffTitle(voice: StoreVoice): string {
+  const named = voice.ownerName === null ? null : `🙋 Hablar con ${voice.ownerName}`;
+  if (named !== null && named.length <= BUTTON_TITLE_MAX) return named;
+  // "🙋 Hablar con alguien" is 21 UTF-16 units (the emoji counts two); ✋ counts one.
+  return "✋ Hablar con alguien";
 }
 
 export function stopConfirmed(voice: StoreVoice): string {
-  return `Listo, ya no te escribo. Si querés que te atienda otra vez, escribí SEGUIR. ${reachOwner(voice)}`;
+  return `Listo, pausé los mensajes. Si querés que te atienda otra vez, escribí SEGUIR. ${reachOwner(voice)}`;
 }
 
 /** Sent once per stop, to a stopped customer who writes something other than a control word. */
@@ -93,10 +163,11 @@ export const STOPPED_REMINDER =
 
 export const RESUMED = "Listo, seguimos. ¿Qué te mando?";
 
+/** No time promise: nobody knows when the owner gets to it. */
 export function handoffLine(voice: StoreVoice): string {
   return voice.ownerName === null
-    ? "Listo, le aviso a la tienda para que te atiendan."
-    : `Listo, le aviso a ${voice.ownerName} para que te atienda.`;
+    ? "Listo, se lo dejo anotado a la tienda, te escriben por aquí."
+    : `Listo, se lo dejo anotado a ${voice.ownerName}, te escribe por aquí.`;
 }
 
 /**

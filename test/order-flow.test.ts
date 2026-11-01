@@ -4,7 +4,7 @@ import type { CustomerAction } from "../src/domain/contract/actions";
 import type { OrderView } from "../src/domain/contract/outcomes";
 import { BurstTooLargeError } from "../src/application/errors";
 import { BURST_MAX_MESSAGES } from "../src/domain/burst";
-import { RECEIVED_PLACEHOLDER } from "../src/domain/copy";
+import { HANDED_TO_STORE, RECEIVED_PLACEHOLDER } from "../src/domain/copy";
 import { ANSWER_NEW_READBACK } from "../src/domain/order-copy";
 import { COPY, renderOutcome } from "../src/domain/replies";
 import { MemoryEngine, type StoredOrder } from "../src/infrastructure/memory/memory-engine";
@@ -27,7 +27,9 @@ import { csrfFor, login, send as consoleSend, storeWithStaff } from "./helpers/c
 import { testEnv } from "./helpers/harness";
 
 const SETTLED_MS = 4_000;
-const ASK_NAME = "¿A nombre de quién lo anoto?";
+const ASK_NAME = COPY.askName;
+/** The next step once an order has lines: the name waits for the end (Oct 31). */
+const ASK_HOW = "¿Lo recogés en la tienda o te lo llevamos?";
 const nowS = (h: Harness) => Math.floor(h.clock.now() / 1000);
 
 beforeAll(ensureLinesTable);
@@ -72,6 +74,9 @@ async function customerOnMemoryEngine() {
   const [customer] = await rows<{ id: string }>(`SELECT id FROM customers WHERE business_id = ?`, store.businessId);
   // The first message's introduction (#30) is covered in customer-controls.test.ts; these tests count replies.
   await env.DB.prepare(`UPDATE customers SET introduced_at_ms = 1 WHERE id = ?`).bind(customer!.id).run();
+  // The name was asked on an earlier order and not given: Confirmar confirms at once. The name
+  // asked at Confirmar (Oct 31) has its own tests in conversation-rules.test.ts.
+  await env.DB.prepare(`UPDATE customers SET name_asked_at_ms = 1 WHERE id = ?`).bind(customer!.id).run();
   const conversation = await conversationOf(store.businessId);
   const tenant = { businessId: store.businessId };
 
@@ -127,7 +132,8 @@ describe("readback answers reach the engine with no model", () => {
     expect(await c.orderState("o-1")).toBe("confirmado");
     await c.say("Confirmar");
 
-    expect(c.h.sentTo(c.phone)).toEqual([RECEIVED_PLACEHOLDER, COPY.confirmed]);
+    // The second answer confirms nothing again; it isn't left unanswered either (Oct 31).
+    expect(c.h.sentTo(c.phone)).toEqual([RECEIVED_PLACEHOLDER, COPY.confirmed, COPY.welcome]);
     const jobs = await rows<{ job_state: string }>(`SELECT job_state FROM inbound_messages WHERE business_id = ?`, c.store.businessId);
     expect(jobs.map((job) => job.job_state)).toEqual(["done", "done", "done"]);
   });
@@ -141,7 +147,7 @@ describe("readback answers reach the engine with no model", () => {
 
     await c.say("  CONFIRMÁR! ");
     await c.tap("confirm:o-2:v1", "Confirmar");
-    expect(c.h.sentTo(c.phone)).toEqual([RECEIVED_PLACEHOLDER, COPY.confirmed]);
+    expect(c.h.sentTo(c.phone)).toEqual([RECEIVED_PLACEHOLDER, COPY.confirmed, COPY.welcome]);
     expect(await c.orderState("o-2")).toBe("confirmado");
   });
 
@@ -157,10 +163,10 @@ describe("readback answers reach the engine with no model", () => {
     const confirmedAt = (await c.engine.preparationList(c.tenant))[0]!.confirmedAtMs;
 
     await c.tap("confirm:o-3:v1", "Confirmar", tapId); // the same message again
-    await c.tap("confirm:o-3:v1", "Confirmar"); // a second tap
     expect(await rows(`SELECT id FROM outbound_messages WHERE business_id = ?`, c.store.businessId)).toEqual(outboxAfterFirst);
+    await c.tap("confirm:o-3:v1", "Confirmar"); // a second tap: a new message, answered, confirming nothing
     expect((await c.engine.preparationList(c.tenant))[0]!.confirmedAtMs).toBe(confirmedAt);
-    expect(c.h.sentTo(c.phone)).toEqual([RECEIVED_PLACEHOLDER, COPY.confirmed]);
+    expect(c.h.sentTo(c.phone)).toEqual([RECEIVED_PLACEHOLDER, COPY.confirmed, COPY.welcome]);
     expect(await rows(`SELECT 1 FROM inbound_messages WHERE business_id = ?`, c.store.businessId)).toHaveLength(3);
   });
 
@@ -595,7 +601,8 @@ const EXPECTED_READBACK = [
   "4. Azúcar 1 lb: 2 libras × L 30 = L 60",
   "Lo recogés en la tienda.",
   "Total: L 315",
-  "¿Está bien así? Respondé Confirmar, Corregir o Cancelar.",
+  "¿Está bien así?",
+  "_También podés escribir: confirmar, corregir o cancelar._",
 ].join("\n");
 
 describe("the first order, from reading to reply", () => {
@@ -603,7 +610,7 @@ describe("the first order, from reading to reply", () => {
   it.each([
     ["in memory", memoryEngine],
     ["with its state in D1", (): PretendEngine => new D1PretendEngine(env.DB, { catalog: CATALOG })],
-  ] as const)("goes Hola → name → list and voice note → size → pickup → readback → Confirmar → on the list → listo (%s)", async (_label, makeEngine) => {
+  ] as const)("goes Hola → what to order → name, list and voice note → size → pickup → readback → Confirmar → on the list → listo (%s)", async (_label, makeEngine) => {
     const t = await firstOrderTrip(Object.values(READINGS).concat([READINGS.whenReady]), makeEngine);
 
     await t.burst(t.text("Hola, quiero hacer un pedido"));
@@ -643,14 +650,15 @@ describe("the first order, from reading to reply", () => {
     await t.burst(t.text("¿ya está?"));
 
     const sent = t.h.sentTo(t.phone);
-    // A new customer's first reply opens with the introduction (#30); its wording is tested there.
-    expect(sent[0]).toContain("asistente automático");
+    // A new customer's first reply (no order yet) is the welcome (#30); its wording is tested in
+    // first-contact.test.ts. What they want comes first; the name arrives with the list.
+    expect(sent[0]).toContain("Te tomo el pedido y te aviso cuando esté listo. ¿Qué te mando?");
     expect(sent.slice(1)).toEqual([
-      "¿A nombre de quién lo anoto?",
       "¿De qué tamaño querés 1 aceite clover?",
       "¿Lo recogés en la tienda o te lo llevamos?",
       EXPECTED_READBACK,
-      COPY.confirmed,
+      // Her name is on file, so Confirmar confirms at once and says it.
+      "Listo, Carla, tu pedido ya está en la lista de preparación. Te aviso cuando esté listo.",
       "Vas primero en la lista. Te aviso apenas esté listo.",
       READY,
       COPY.statusReady,
@@ -664,9 +672,9 @@ describe("the first order, from reading to reply", () => {
     expect(outbox.map((row) => row.body_text)).toEqual(t.h.sentTo(t.phone));
     expect(outbox.every((row) => row.status === "sent")).toBe(true);
 
-    // The name was asked once and saved once, through our own records.
+    // She gave her name with the list, so it was saved through our own records and never asked.
     expect(await rows(`SELECT name, name_asked_at_ms IS NOT NULL AS asked FROM customers WHERE business_id = ?`, t.store.businessId)).toEqual([
-      { name: "Carla", asked: 1 },
+      { name: "Carla", asked: 0 },
     ]);
     // Six readings, one model call each; the tap needed none.
     expect(t.provider.requests).toHaveLength(6);
@@ -709,7 +717,7 @@ describe("the first order, from reading to reply", () => {
     await t.burst(t.text("de litro"));
 
     expect(t.provider.textOf(0)).toContain("PREGUNTA PENDIENTE: ninguna");
-    expect(t.provider.textOf(1)).toContain("PREGUNTA PENDIENTE: customer_name");
+    expect(t.provider.textOf(1)).toContain("PREGUNTA PENDIENTE: what_to_order");
     const burst = t.provider.requests[1]!.user;
     expect(burst.filter((part) => part.type === "image")).toHaveLength(1);
     expect(t.provider.textOf(1)).toContain(`[0] texto: "Carla"`);
@@ -759,7 +767,9 @@ describe("the first order, from reading to reply", () => {
       await t.h.deliver(t.h.takeRingsFor(t.store.businessId));
     }
     expect(t.provider.requests).toHaveLength(3);
-    expect(t.h.sentTo(t.phone)).toEqual(["Perdón, no pude revisar tu mensaje. ¿Me lo mandás otra vez?"]);
+    // Not asked to resend (it could fail again): handed to the store, and the store sees it.
+    expect(t.h.sentTo(t.phone)).toEqual([HANDED_TO_STORE]);
+    expect(t.h.log.fields("pendiente_raised").filter((fields) => fields.businessId === t.store.businessId)).toHaveLength(1);
     expect(await rows(`SELECT 1 FROM burst_reads WHERE business_id = ?`, t.store.businessId)).toEqual([]);
     expect(t.h.log.fields("job_attempt_failed").map((fields) => fields.reason)).toContain("ReadingFailedError");
   });
@@ -883,7 +893,7 @@ describe("photos and voice notes in an order", () => {
     const reads = await t.reads();
     expect(reads).toHaveLength(2);
     expect(new Set(reads.map((read) => read.read_by_job_id)).size).toBe(1);
-    expect(t.h.sentTo(t.phone)).toEqual([ASK_NAME]);
+    expect(t.h.sentTo(t.phone)).toEqual([ASK_HOW]);
     expect(await rows(`SELECT 1 FROM outbound_messages WHERE business_id = ?`, t.store.businessId)).toHaveLength(1);
     // The voice note's line came from its transcript, the photo's from the photo.
     const [customer] = await rows<{ id: string }>(`SELECT id FROM customers WHERE business_id = ?`, t.store.businessId);
@@ -908,7 +918,7 @@ describe("photos and voice notes in an order", () => {
 
     expect(t.transcriber.calls).toBe(1);
     expect(t.provider.requests).toHaveLength(1);
-    expect(t.h.sentTo(t.phone)).toEqual([ASK_NAME]);
+    expect(t.h.sentTo(t.phone)).toEqual([ASK_HOW]);
     expect(await t.reads()).toHaveLength(2);
     expect(t.h.log.events()).not.toContain("stale_write_refused");
     expect(await rows(`SELECT 1 FROM inbound_messages WHERE business_id = ? AND job_state <> 'done'`, t.store.businessId)).toEqual([]);
@@ -927,7 +937,7 @@ describe("photos and voice notes in an order", () => {
     expect(t.transcriber.calls).toBe(2);
     // The stale consumer stopped before its (paid) model call; the new one read the burst once.
     expect(t.provider.requests).toHaveLength(1);
-    expect(t.h.sentTo(t.phone)).toEqual([ASK_NAME]);
+    expect(t.h.sentTo(t.phone)).toEqual([ASK_HOW]);
     expect(await t.reads()).toHaveLength(2);
     expect(t.h.log.fields("stale_write_refused").map((fields) => fields.reason)).toEqual(["lease_lost"]);
   });
@@ -949,7 +959,7 @@ describe("photos and voice notes in an order", () => {
     expect(t.provider.requests).toHaveLength(1);
     expect(t.provider.requests[0]!.user.filter((part) => part.type === "image")).toHaveLength(1);
     expect(t.provider.textOf(0)).toContain("MENSAJES (2;");
-    expect(t.h.sentTo(t.phone)).toEqual(["Perdón, no pude escuchar tu nota de voz. ¿Me la mandás otra vez?", ASK_NAME]);
+    expect(t.h.sentTo(t.phone)).toEqual(["Perdón, no pude escuchar tu nota de voz. ¿Me la mandás otra vez?", ASK_HOW]);
     expect(await t.reads()).toHaveLength(3);
   });
 

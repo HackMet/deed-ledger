@@ -8,6 +8,8 @@ import { anotarBodyLimit, anotarScreen } from "./anotar";
 import { type ConsoleEnv, registerEntryRoutes, requireCsrf, requireMember, sameSiteForms } from "./auth";
 import { bienvenidaScreen } from "./bienvenida";
 import { empleadosScreen } from "./empleados";
+import { masScreen } from "./mas";
+import { pendientesScreen } from "./pendientes";
 import { preparacionScreen } from "./preparacion";
 
 export function consoleRoutes() {
@@ -29,6 +31,8 @@ export function consoleRoutes() {
   preparacionScreen(app);
   empleadosScreen(app);
   anotarScreen(app);
+  pendientesScreen(app);
+  masScreen(app);
 
   return app;
 }

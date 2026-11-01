@@ -102,16 +102,26 @@ export type TemplateName =
 
 export const COPY = {
   safeReply: "Dejame revisar bien y ya te confirmo.",
-  /** Queued by the sweep when an answer is slow. Claims nothing, so it is never checked. */
-  slowNotice: "Recibimos tu mensaje, te respondemos en un momento.",
+  /**
+   * Queued by the sweep when an answer is slow. Claims nothing, so it is never checked. No time
+   * promise: we don't know when the answer goes out.
+   */
+  slowNotice: "Recibimos tu mensaje, lo estamos revisando.",
+  /** The typed choices where no button goes with them (a status answer). */
   typedFallback: "Respondé Confirmar, Corregir o Cancelar.",
+  /** The readback's last line, under its buttons: the typed fallback PRD §6.1 requires, softly. */
+  typedFallbackSoft: "_También podés escribir: confirmar, corregir o cancelar._",
   readbackTitle: "Tu pedido:",
-  changedTitle: "Cambié tu pedido. Así queda:",
+  changedTitle: "Listo, así queda tu pedido:",
   staleTapTitle: "Tu pedido cambió desde ese mensaje. Así está ahora:",
   confirmQuestion: "¿Está bien así?",
   pickup: "Lo recogés en la tienda.",
   totalUnknown: "El total te lo confirmo.",
   confirmed: "Listo, tu pedido ya está en la lista de preparación. Te aviso cuando esté listo.",
+  /** Asked once the customer said the order is right (Confirmar, or a typed yes) and no name is on file. */
+  askName: "¡Va! ¿A nombre de quién lo anoto?",
+  /** The name question again, once, after an answer that wasn't a name. Never blames. */
+  askNameAgain: "¿Me decís tu nombre para anotar el pedido? 🙏",
   cancelled: "Listo, cancelé tu pedido. Si querés hacer otro, escribime cuando querás.",
   statusBuilding: "Todavía estamos armando tu pedido.",
   statusAwaitingConfirm: "Todavía estamos armando tu pedido. Falta que lo confirmés.",
@@ -123,7 +133,8 @@ export const COPY = {
   balanceUnknown: "Dejame revisar tu saldo y te confirmo.",
   balanceZero: "No tenés saldo pendiente con la tienda.",
   paymentClaimed: "Recibí tu comprobante. Te aviso cuando la tienda confirme el pago.",
-  handoff: "Le paso tu mensaje a la tienda. Te atienden en un momento.",
+  /** No time promise: nobody knows when the store gets to it. */
+  handoff: "Se lo dejo anotado a la tienda, te escriben por aquí.",
   // Typed ALTO and deletion requests are decided by code before the engine (customer-gate.ts). This
   // outcome only comes from a model reading, which stops nothing: point to the exact words instead.
   stopped: "Si no querés recibir más mensajes, escribí solo la palabra ALTO.",
@@ -136,12 +147,32 @@ export const COPY = {
   paymentRejected: "No pudimos confirmar ese pago. Si tenés otro comprobante, mandámelo.",
   pickupReady: "Ya podés pasar a traerlo.",
   substituteFallback: "Tocá un botón o escribime qué preferís.",
+  /** The same, when the buttons couldn't be built: nothing to tap. */
+  substituteFallbackTyped: "Escribime qué preferís.",
   removeTitle: "Quitar",
   samePlace: "¿Te lo llevamos al mismo lugar de siempre?",
   samePlaceFallback: "Respondé Sí u Otro lugar.",
   samePlacePin: "La vez pasada nos mandaste tu ubicación.",
   deliveryToPin: "Te lo llevamos a la ubicación que nos mandaste.",
+  /** "Gracias", "ok" with nothing waiting on the customer. */
+  welcome: "¡A la orden! 🙌",
+  /** "Gracias" under a readback that waits: the Confirmar button goes with it. */
+  confirmNudge: "Para dejarlo listo, tocá Confirmar ✅",
+  /** The same when the buttons couldn't be built. */
+  confirmNudgeTyped: "Para dejarlo listo, respondé Confirmar.",
+  /** The last resort when nothing else would be said (an order is open). */
+  anythingElse: "¿Qué más te mando?",
 } as const;
+
+/** "Se lo dejo anotado a Johan, te escribe por aquí." The owner's first name, as the console has it. */
+export function handoffText(ownerName: string | null | undefined): string {
+  return ownerName == null ? COPY.handoff : `Se lo dejo anotado a ${quote(ownerName)}, te escribe por aquí.`;
+}
+
+/** A greeting in the middle of a conversation: "¡Buenas, Carla! 👋" (no name: "¡Buenas! 👋"). */
+export function greetingLine(customerName: string | null | undefined): string {
+  return customerName == null ? "¡Buenas! 👋" : `¡Buenas, ${quote(customerName)}! 👋`;
+}
 
 export const PLACE_BUTTON_TITLES = { same: "Sí", other: "Otro lugar" } as const;
 
@@ -151,6 +182,12 @@ export const BUTTON_TITLES = { confirm: "Confirmar", correct: "Corregir", cancel
 export const QUOTE_MAX_CHARS = 60;
 
 const BUTTON_TITLE_MAX = 20;
+
+/**
+ * The what-to-order question alone. A new customer's first reply that is just this becomes the
+ * welcome, with its buttons (customer-gate.ts).
+ */
+export const WHAT_TO_ORDER = "¿Qué te mando? Escribime la lista, mandame una foto o una nota de voz.";
 
 // ---------------------------------------------------------------------------------------------
 // Operation keys for buttons and typed words (contract gap g)
@@ -244,10 +281,18 @@ const OPEN_STATES: readonly OrderState[] = ["armando", "por_confirmar", "confirm
  * action, a duplicate, nothing to say). `customerId` is the conversation's customer, from our
  * records: the balance claim names it.
  */
-export function renderOutcome(
-  outcome: EngineOutcome,
-  context: { readonly customerId: string; readonly savedPlace?: SavedPlace | null },
-): RenderedReply | null {
+export interface RenderContext {
+  readonly customerId: string;
+  readonly savedPlace?: SavedPlace | null;
+  /** The store owner's first name, for the handoff line; null or absent: "la tienda". */
+  readonly ownerName?: string | null;
+  /** The customer's name, from our records: the confirmation says it. */
+  readonly customerName?: string | null;
+  /** The name was asked already: asked again, it's the gentler second ask. */
+  readonly nameAsked?: boolean;
+}
+
+export function renderOutcome(outcome: EngineOutcome, context: RenderContext): RenderedReply | null {
   switch (outcome.type) {
     case "ask":
       if (outcome.question === "same_place") return samePlaceReply(outcome.order, context.savedPlace ?? null);
@@ -255,7 +300,9 @@ export function renderOutcome(
       // cancelled or delivered, asking about it would be wrong.
       return reply(
         "ask",
-        askText(outcome.question, outcome.line, outcome.order),
+        outcome.question === "customer_name" && context.nameAsked === true
+          ? COPY.askNameAgain
+          : askText(outcome.question, outcome.line, outcome.order),
         outcome.order === null ? [] : [stateIn(outcome.order, OPEN_STATES)],
       );
     case "readback":
@@ -263,7 +310,9 @@ export function renderOutcome(
     case "order_changed":
       return readbackReply("order_changed", COPY.changedTitle, outcome.order);
     case "order_confirmed":
-      return reply("order_confirmed", COPY.confirmed, [stateIn(outcome.order, ["confirmado", "preparando", "listo"])]);
+      return reply("order_confirmed", confirmedText(context.customerName), [
+        stateIn(outcome.order, ["confirmado", "preparando", "listo"]),
+      ]);
     case "order_cancelled":
       return reply("order_cancelled", COPY.cancelled, [stateIn(outcome.order, ["cancelado"])]);
     case "order_status":
@@ -277,7 +326,7 @@ export function renderOutcome(
     case "payment_claimed":
       return reply("payment_claimed", COPY.paymentClaimed);
     case "handoff":
-      return reply("handoff", COPY.handoff);
+      return reply("handoff", handoffText(context.ownerName));
     case "stopped":
       return reply("stopped", outcome.deleteRequested ? COPY.stoppedDelete : COPY.stopped);
     case "out_of_scope":
@@ -350,6 +399,32 @@ function soldOut(line: OrderLineView | undefined): ClaimCheck[] {
 
 // --- Questions
 
+/** A question again, without the line it may be about: the never-silent fallback's restatement. */
+export function questionText(question: QuestionCode): string {
+  return askText(question, null, null);
+}
+
+function confirmedText(customerName: string | null | undefined): string {
+  return customerName == null
+    ? COPY.confirmed
+    : `Listo, ${quote(customerName)}, tu pedido ya está en la lista de preparación. Te aviso cuando esté listo.`;
+}
+
+/**
+ * "Para dejarlo listo, tocá Confirmar ✅" under a readback that waits, with the readback's buttons
+ * on this same message, so the button it points at is on the last message. Without buttons, it
+ * says what to write instead. Claims what the readback claimed: the version still waits.
+ */
+export function confirmNudge(order: OrderView): RenderedReply {
+  const buttons = decisionButtons(order);
+  return reply(
+    "readback",
+    buttons.length > 0 ? COPY.confirmNudge : COPY.confirmNudgeTyped,
+    [stateIn(order, ["por_confirmar"])],
+    buttons,
+  );
+}
+
 function askText(question: QuestionCode, lineIndex: number | null, order: OrderView | null): string {
   const line = lineIndex === null ? undefined : order?.lines[lineIndex];
   const name = line === undefined ? null : lineName(line);
@@ -371,12 +446,14 @@ function askText(question: QuestionCode, lineIndex: number | null, order: OrderV
       return name === null ? "¿Cuántos querés?" : `¿Cuánto querés de ${name}?`;
     case "pickup_or_delivery":
       return "¿Lo recogés en la tienda o te lo llevamos?";
+    case "what_to_order":
+      return WHAT_TO_ORDER;
     case "delivery_place":
       return "¿A dónde te lo llevamos? Mandame tu ubicación o escribime la dirección.";
     case "same_place":
       return "¿Te lo llevamos al mismo lugar de siempre?";
     case "customer_name":
-      return "¿A nombre de quién lo anoto?";
+      return COPY.askName;
     default:
       return unreachable(question);
   }
@@ -417,8 +494,13 @@ function readbackReply(template: "readback" | "order_changed" | "rejected_tap", 
   } else {
     lines.push(COPY.totalUnknown);
   }
-  if (awaiting) lines.push(`${COPY.confirmQuestion} ${COPY.typedFallback}`);
-  return reply(template, lines.join("\n"), claims, awaiting ? decisionButtons(order) : []);
+  const buttons = awaiting ? decisionButtons(order) : [];
+  if (awaiting) {
+    lines.push(COPY.confirmQuestion);
+    // With buttons, the typed words are a soft last line; without, the instruction itself.
+    lines.push(buttons.length > 0 ? COPY.typedFallbackSoft : COPY.typedFallback);
+  }
+  return reply(template, lines.join("\n"), claims, buttons);
 }
 
 function readbackLine(line: OrderLineView, n: number): string {
@@ -614,12 +696,9 @@ function substituteReply(order: OrderView, lineId: string): RenderedReply {
           { id: accept, title },
           { id: remove, title: COPY.removeTitle },
         ];
-  return reply(
-    "notice_substitute_offered",
-    `No nos queda ${lineName(line)}. ${question} ${COPY.substituteFallback}`,
-    claims,
-    buttons,
-  );
+  // "Tocá…" only when there is something to tap.
+  const fallback = buttons.length > 0 ? COPY.substituteFallback : COPY.substituteFallbackTyped;
+  return reply("notice_substitute_offered", `No nos queda ${lineName(line)}. ${question} ${fallback}`, claims, buttons);
 }
 
 // --- Helpers

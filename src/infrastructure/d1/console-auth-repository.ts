@@ -21,6 +21,7 @@ interface SessionRow {
   user_id: string;
   role: ConsoleMember["role"];
   can_approve_fiado: number;
+  display_name: string | null;
 }
 
 /** An invite is usable while unused, unexpired, and its membership active. Binds token hash, now. */
@@ -60,8 +61,10 @@ export class D1ConsoleAuthRepository implements ConsoleAuthRepository {
   async findSession(tokenHash: string, nowMs: number): Promise<ConsoleMember | null> {
     const row = await this.db
       .prepare(
-        `SELECT s.id, s.business_id, s.user_id, m.role, m.can_approve_fiado FROM console_sessions s
+        `SELECT s.id, s.business_id, s.user_id, m.role, m.can_approve_fiado, ${MEMBER_NAME} AS display_name
+         FROM console_sessions s
          JOIN memberships m ON m.business_id = s.business_id AND m.user_id = s.user_id
+         JOIN users u ON u.id = s.user_id
          WHERE s.token_hash = ? AND s.revoked_at_ms IS NULL AND s.expires_at_ms > ? AND m.active = 1`,
       )
       .bind(tokenHash, nowMs)
@@ -73,6 +76,29 @@ export class D1ConsoleAuthRepository implements ConsoleAuthRepository {
       sessionId: row.id,
       role: row.role,
       canApproveFiado: row.can_approve_fiado === 1,
+      displayName: row.display_name,
+    };
+  }
+
+  async devOwner(phoneNumberId: string): Promise<ConsoleMember | null> {
+    const row = await this.db
+      .prepare(
+        `SELECT m.business_id, m.user_id, m.can_approve_fiado, ${MEMBER_NAME} AS display_name FROM channel_accounts ca
+         JOIN memberships m ON m.business_id = ca.business_id
+         JOIN users u ON u.id = m.user_id
+         WHERE ca.phone_number_id = ? AND m.role = 'owner' AND m.active = 1
+         ORDER BY m.created_at_ms, m.user_id LIMIT 1`,
+      )
+      .bind(phoneNumberId)
+      .first<{ business_id: string; user_id: string; can_approve_fiado: number; display_name: string | null }>();
+    if (row === null) return null;
+    return {
+      businessId: row.business_id,
+      userId: row.user_id,
+      sessionId: "dev",
+      role: "owner",
+      canApproveFiado: row.can_approve_fiado === 1,
+      displayName: row.display_name,
     };
   }
 

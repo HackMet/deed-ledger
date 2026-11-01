@@ -155,3 +155,36 @@ in `src/domain/contract/outcomes.ts`, marked "Proposed (#47)"; they are additive
 
 Open: `Question.products` are bare strings, so an unmatched "cerveza" can't be known as restricted and hears "te lo
 anoto y te confirmo". Proposal: the wire adds `restricted` per question product, like `ItemLine.restrictedCategory`.
+
+## Proposed (conversation rules)
+
+**Status:** approved by Angel as product behavior (Oct 31); the engine-side parts are proposed to the engine, not
+agreed. Built against the pretend engine (`memory-engine.ts`, and through it `d1-pretend-engine.ts`). Channel-side
+rules (typed yes, typed numbers, greetings and thanks, stop in other words, failure copy) are decided in
+`order-handler.ts`, `customer-gate.ts` and the domain copy, and need nothing from the engine.
+
+1. **Never `nothing` for a burst.** `onBurst` always returns something to say. A burst that changes nothing gets
+   the current step again: an order being built hears its open question (or pickup/delivery, the place, the
+   readback); a readback that waits is returned again as `readback` at the same version; an order on the list
+   gets `order_status`. No order at all: `ask` with the new question code `what_to_order` (proposed, additive in
+   `QuestionCode`). Our side keeps a last guard: a job that would still send nothing sends the pending question,
+   "¿Qué más te mando?" or "¡A la orden! 🙌".
+2. **A question beside an order step.** When one burst both asks something the records answer (price,
+   availability, hours) and moves the order, `EngineResult` gains an optional `answered` (an `answer` or
+   `store_hours` outcome) next to `outcome` (the order's next step). The customer gets the answer first, then the
+   step, in one message; each part keeps its claims. Supersedes #47 point 5's "the question isn't answered in that
+   reply".
+3. **The name at the end.** The engine never asks `customer_name` while the order is built. On `confirm_order`
+   for a `por_confirmar` order when no name is on file (`CustomerContext.customerName` null, proposed): the
+   engine returns `ask customer_name` with the order and holds the confirmation (order, version, the action's
+   operation key). A later burst with a `customer_name` completes it as `order_confirmed` under the held operation
+   key, so a second tap of the same Confirmar is a `duplicate`. A burst with no name asks again (at most twice per
+   order, then the order is confirmed without the name). The hold is dropped when the order changes version, is
+   cancelled, or another order opens. A name given earlier ("soy Carla") is in the context and never asked. If
+   the name was asked on an earlier order and not given (`customerNameAsked`), Confirmar confirms at once.
+4. **What our side decides before the engine sees it** (no engine change, listed so the engine doesn't duplicate
+   it): a typed yes ("sí", "dale", "ok", "listo", "confirmo", "así está bien", "👍") under the readback whose
+   Confirmar button was on the customer's last message is `confirm_order` for that version with the button's
+   operation key; "1"/"2"/"3" alone after a message with buttons is that button's ID; a greeting, thanks or "ok"
+   alone is sent as an empty reading (point 1 restates the step); a name answer is checked by code (never "sí",
+   a number, an emoji, a product or a sentence) before it reaches the engine.

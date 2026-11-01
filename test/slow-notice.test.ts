@@ -14,7 +14,8 @@ import { textMessage, wamid, webhook } from "./helpers/whatsapp";
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const ANSWER = "Respuesta de prueba.";
-const NOTICE = "Recibimos tu mensaje, te respondemos en un momento.";
+// No time promise: nobody knows when the answer goes out.
+const NOTICE = "Recibimos tu mensaje, lo estamos revisando.";
 
 class RecordingPendientes implements Pendientes {
   items: Array<{ tenant: Tenant; item: PendienteItem | SlowReplyPendiente }> = [];

@@ -1,4 +1,4 @@
-import { COULD_NOT_OPEN_MEDIA, couldNotDownload, couldNotProcess } from "../domain/copy";
+import { COULD_NOT_OPEN_MEDIA, couldNotDownload, couldNotProcess, HANDED_TO_STORE } from "../domain/copy";
 import { FAILURE_REPLY_TTL_MS, OUTBOX_BODY_MAX_CHARS } from "../domain/outbox";
 import {
   attemptsExhausted,
@@ -115,6 +115,7 @@ async function runJob(deps: Deps, lease: Lease, job: Job, newestOfBurst: boolean
 
   if (attemptsExhausted(job.attempts)) {
     // Its last attempt died with its consumer.
+    await handOverIfPromised(deps, lease, job, couldNotProcess(job.kind));
     await deps.jobs.abandonJob(lease, job.id, "attempts_exhausted", deps.clock.now(), failureReply(deps, job, couldNotProcess(job.kind)));
     deps.log.warn("job_failed", { ...fields, reason: "attempts_exhausted" });
     return { status: "failed" };
@@ -163,6 +164,7 @@ async function runJob(deps: Deps, lease: Lease, job: Job, newestOfBurst: boolean
     // which reads them again; a constraint violation fails the same way every time.
     deps.log.warn("job_commit_refused", { ...fields, reason: describeError(error) });
     if (error instanceof PermanentWriteError) {
+      await handOverIfPromised(deps, lease, job, couldNotProcess(job.kind));
       await deps.jobs.failJob(lease, job.id, "commit_rejected", deps.clock.now(), failureReply(deps, job, couldNotProcess(job.kind)));
       deps.log.warn("job_failed", { ...fields, attempts: attempt, reason: "commit_rejected" });
       return { status: "failed" };
@@ -188,6 +190,7 @@ async function failOrDefer(
 ): Promise<JobResult> {
   const now = deps.clock.now();
   if (attempt >= MAX_JOB_ATTEMPTS) {
+    await handOverIfPromised(deps, lease, job, failureCopy);
     await deps.jobs.failJob(lease, job.id, errorCode, now, failureReply(deps, job, failureCopy));
     deps.log.warn("job_failed", { ...ids(lease), inboundId: job.id, attempts: attempt, reason: errorCode });
     return { status: "failed" };
@@ -244,6 +247,23 @@ function toOutbox(deps: Deps, job: Job, replies: readonly ReplyDraft[]): OutboxD
       ...(reply.claims === undefined ? {} : { claims: reply.claims }),
       ...(reply.buttons === undefined || part !== parts.length - 1 ? {} : { buttons: reply.buttons }),
     }));
+  });
+}
+
+/**
+ * "Se lo pasé a la tienda" is only true if someone sees it: the failure that says it raises a
+ * Pendientes item first (a retry may raise it twice, never zero times; the item is keyed by the
+ * message). IDs only.
+ */
+async function handOverIfPromised(deps: Deps, lease: Lease, job: Job, body: string): Promise<void> {
+  if (body !== HANDED_TO_STORE) return;
+  const customer = await deps.customers.ofConversation(lease);
+  if (customer === null) return;
+  await deps.pendientes.raise(lease, {
+    kind: "customer_handoff",
+    conversationId: lease.conversationId,
+    customerId: customer.id,
+    inboundId: job.id,
   });
 }
 

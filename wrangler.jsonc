@@ -16,6 +16,9 @@
     "WHATSAPP_GRAPH_API_VERSION": "v26.0",
     // "1" opens the console without login, on an in-memory pretend engine. Only the simulator sets it.
     "DEV_CONSOLE": "",
+    // With DEV_CONSOLE: the WhatsApp phone number ID of the simulator's store; the console acts as
+    // its owner, so it shows the orders typed in `npm run chat`. Ignored without DEV_CONSOLE.
+    "DEV_STORE_PHONE_NUMBER_ID": "",
     // "1" turns on the pretend engine with its state in D1 (migration 0016), for a deployed demo until
     // the real engine lands. The console still needs login. DEV_CONSOLE wins when both are set.
     "PRETEND_ENGINE": "",

@@ -28,6 +28,7 @@ const DEV_MEMBER: ConsoleMember = {
   sessionId: "dev",
   role: "staff",
   canApproveFiado: false,
+  displayName: "Rosa",
 };
 const DEV_CSRF = "dev";
 
@@ -121,7 +122,10 @@ async function sessionMember(c: Context<ConsoleEnv>): Promise<ConsoleMember | nu
 export const requireMember: MiddlewareHandler<ConsoleEnv> = async (c, next) => {
   const { config } = c.get("runtime");
   if (config.devConsole) {
-    c.set("member", DEV_MEMBER);
+    // The simulator store's owner, so its console shows the orders typed in `npm run chat`; without
+    // that store, a fixed staff member of an empty demo store.
+    const owner = config.devStorePhoneNumberId === "" ? null : await c.get("runtime").deps.consoleAuth.devOwner(config.devStorePhoneNumberId);
+    c.set("member", owner ?? DEV_MEMBER);
     c.set("csrf", DEV_CSRF);
     return next();
   }

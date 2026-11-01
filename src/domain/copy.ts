@@ -26,7 +26,16 @@ export function couldNotDownload(kind: MessageKind): string {
   }
 }
 
-/** Sent when a message couldn't be processed after every attempt. */
+/**
+ * A message we couldn't handle after every attempt, handed to the store (a Pendientes item is
+ * raised with it): asking for it again could fail the same way.
+ */
+export const HANDED_TO_STORE = "Se lo pasé a la tienda para que te ayuden 🙏";
+
+/**
+ * Sent when a message couldn't be processed after every attempt. A photo or a voice note may read
+ * fine sent again, so it's asked once; anything else goes to the store (HANDED_TO_STORE).
+ */
 export function couldNotProcess(kind: MessageKind): string {
   switch (kind) {
     case "image":
@@ -34,6 +43,6 @@ export function couldNotProcess(kind: MessageKind): string {
     case "audio":
       return "Perdón, no pude escuchar tu nota de voz. ¿Me la mandás otra vez?";
     default:
-      return "Perdón, no pude revisar tu mensaje. ¿Me lo mandás otra vez?";
+      return HANDED_TO_STORE;
   }
 }

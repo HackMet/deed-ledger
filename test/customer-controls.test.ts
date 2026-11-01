@@ -10,7 +10,8 @@ import {
   controlWord,
   DELETION_CONFIRMED,
   handoffLine,
-  introduction,
+  introduceControl,
+  introduceReply,
   RESUMED,
   STOPPED_REMINDER,
   stopConfirmed,
@@ -116,60 +117,49 @@ describe("control words are decided by code from the typed text", () => {
 });
 
 describe("the first message", () => {
-  it("says it's the store's assistant, links the privacy notice, and explains ALTO and how to reach Johan", () => {
-    const intro = introduction(VOICE);
-    expect(intro).toContain("asistente automático de Punto de prueba");
-    expect(intro).toContain("No soy Johan ni una persona");
-    expect(intro).toContain(`${BASE_URL}/privacidad`);
-    expect(intro).toContain("escribí ALTO");
-    expect(intro).toContain("escribí: quiero hablar con Johan");
-    // Without a public URL the link is left out rather than broken; without an owner name, "una persona".
-    const bare = introduction({ storeName: "X", ownerName: null, privacyUrl: null });
-    expect(bare).not.toContain("http");
-    expect(bare).toContain("quiero hablar con una persona");
-  });
-
-  it("goes first in a new customer's first reply, once", async () => {
+  // Its wording, buttons and taps are covered in first-contact.test.ts.
+  it("opens a new customer's first reply, in the same message, once", async () => {
     const store = await storeWithOwner();
     const h = gatedHarness();
     const c = customerOf(h, store);
     await c.say("Hola, buenas");
-    expect(c.sent()).toEqual([introduction(VOICE), RECEIVED_PLACEHOLDER]);
+    expect(c.sent()).toEqual([introduceReply(VOICE, RECEIVED_PLACEHOLDER)]);
     await c.say("¿Tienen arroz?");
-    expect(c.sent()).toEqual([introduction(VOICE), RECEIVED_PLACEHOLDER, RECEIVED_PLACEHOLDER]);
+    expect(c.sent()).toEqual([introduceReply(VOICE, RECEIVED_PLACEHOLDER), RECEIVED_PLACEHOLDER]);
     // Logs carry IDs only.
     expect(h.log.lines.join("\n")).not.toContain(c.phone);
     expect(h.log.lines.join("\n")).not.toContain("buenas");
   });
 
-  it("comes first even when the first message is ALTO, and the stop holds", async () => {
+  it("greets in the answer even when the first message is ALTO, and the stop holds", async () => {
     const store = await storeWithOwner();
     const h = gatedHarness();
     const c = customerOf(h, store);
     await c.say("ALTO");
-    expect(c.sent()).toEqual([introduction(VOICE), stopConfirmed(VOICE)]);
+    const stopped = introduceControl(VOICE, "stop", stopConfirmed(VOICE));
+    expect(c.sent()).toEqual([stopped]);
     expect((await c.row())!.stopped_at_ms).not.toBeNull();
     // Introduced once: the next message gets only the reminder.
     await c.say("hola?");
-    expect(c.sent()).toEqual([introduction(VOICE), stopConfirmed(VOICE), STOPPED_REMINDER]);
+    expect(c.sent()).toEqual([stopped, STOPPED_REMINDER]);
   });
 
-  it("comes first even when the first message asks to delete their data", async () => {
+  it("greets in the answer even when the first message asks to delete their data", async () => {
     const store = await storeWithOwner();
     const h = gatedHarness();
     const c = customerOf(h, store);
     await c.say("Borren mis datos");
-    expect(c.sent()).toEqual([introduction(VOICE), DELETION_CONFIRMED]);
+    expect(c.sent()).toEqual([introduceControl(VOICE, "delete", DELETION_CONFIRMED)]);
     expect((await c.row())!.deletion_requested_at_ms).not.toBeNull();
   });
 
-  it("comes first even when the first message asks for Johan, once", async () => {
+  it("greets in the answer even when the first message asks for Johan, once", async () => {
     const store = await storeWithOwner();
     const h = gatedHarness();
     const c = customerOf(h, store);
     await c.say("quiero hablar con Johan");
     await c.say("Hola");
-    expect(c.sent()).toEqual([introduction(VOICE), handoffLine(VOICE), RECEIVED_PLACEHOLDER]);
+    expect(c.sent()).toEqual([introduceControl(VOICE, "handoff", handoffLine(VOICE)), RECEIVED_PLACEHOLDER]);
   });
 
   it("names the owner as this store's console names them", async () => {
@@ -179,7 +169,7 @@ describe("the first message", () => {
     const h = gatedHarness();
     const c = customerOf(h, store);
     await c.say("Hola");
-    expect(c.sent()[0]).toBe(introduction({ ...VOICE, ownerName: "Mario" }));
+    expect(c.sent()[0]).toBe(introduceReply({ ...VOICE, ownerName: "Mario" }, RECEIVED_PLACEHOLDER));
   });
 
   it("serves the privacy notice publicly, in Spanish", async () => {
@@ -295,14 +285,14 @@ describe("without an engine (the placeholder answers)", () => {
     const h = plainHarness();
     const c = customerOf(h, store);
     await c.say("Hola");
-    expect(c.sent()).toEqual([introduction(VOICE), RECEIVED_PLACEHOLDER]);
+    expect(c.sent()).toEqual([introduceReply(VOICE, RECEIVED_PLACEHOLDER)]);
     await c.say("ALTO");
     await c.say("2 libras de arroz");
     await c.say("y un aceite");
-    expect(c.sent().slice(2)).toEqual([stopConfirmed(VOICE), STOPPED_REMINDER]);
+    expect(c.sent().slice(1)).toEqual([stopConfirmed(VOICE), STOPPED_REMINDER]);
     await c.say("SEGUIR");
     await c.say("2 libras de arroz");
-    expect(c.sent().slice(4)).toEqual([RESUMED, RECEIVED_PLACEHOLDER]);
+    expect(c.sent().slice(3)).toEqual([RESUMED, RECEIVED_PLACEHOLDER]);
   });
 
   it("raises the handoff and deletes on request", async () => {
@@ -559,7 +549,7 @@ describe("deletion", () => {
     await a.say("Hola de nuevo");
     const fresh = await rows<{ id: string }>(`SELECT id FROM customers WHERE business_id = ? AND phone = ?`, store.businessId, a.phone);
     expect(fresh).toHaveLength(1);
-    expect(a.sent().slice(before)).toEqual([introduction(VOICE), RECEIVED_PLACEHOLDER]);
+    expect(a.sent().slice(before)).toEqual([introduceReply(VOICE, RECEIVED_PLACEHOLDER)]);
   });
 
   it("a late webhook whose reads ran before the purge still doesn't recreate the customer", async () => {

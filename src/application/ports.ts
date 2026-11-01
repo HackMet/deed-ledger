@@ -623,6 +623,8 @@ export interface ConsoleMember extends Tenant {
   readonly sessionId: string;
   readonly role: "owner" | "staff";
   readonly canApproveFiado: boolean;
+  /** The name this store shows for them (same rule as `listMembers`); null when it has none. */
+  readonly displayName: string | null;
 }
 
 export interface InvitePreview {
@@ -655,6 +657,11 @@ export interface ConsoleAuthRepository {
   acceptInvite(tokenHash: string, session: NewConsoleSession): Promise<ConsoleMember | null>;
   /** The session's member while the session is open and the membership active; checked on every request. */
   findSession(tokenHash: string, nowMs: number): Promise<ConsoleMember | null>;
+  /**
+   * Dev mode only (the local simulator, no login): the owner of the store on this WhatsApp phone
+   * number ID, so the console shows the store the simulated customers write to. Null when none.
+   */
+  devOwner(phoneNumberId: string): Promise<ConsoleMember | null>;
   /** Ends every open session of the member. Returns how many were open. */
   revokeSessions(tenant: Tenant, userId: string, nowMs: number): Promise<number>;
   listMembers(tenant: Tenant): Promise<MemberSummary[]>;
@@ -706,6 +713,14 @@ export interface Customer {
 export interface ReadbackRef {
   readonly orderId: string;
   readonly version: number;
+}
+
+/**
+ * The buttons on the last message a conversation was sent before a moment: what "1", "2" or "3"
+ * typed alone, or a typed yes, can refer to. Empty when that message had none.
+ */
+export interface ButtonsShown {
+  lastButtons(conversation: ConversationRef, beforeMs: number): Promise<readonly ReplyButton[]>;
 }
 
 export interface ConversationCustomer extends Customer {
@@ -818,6 +833,29 @@ export interface NoticeWaitingPendiente {
  */
 export interface Pendientes {
   raise(tenant: Tenant, item: AnyPendiente): Promise<void>;
+}
+
+/** Pendientes as the owner's console lists them (wireframe C5). */
+export interface PendientesBoard {
+  /** Open items, urgent first, then newest first; at most 100. */
+  listOpen(tenant: Tenant): Promise<readonly OpenPendiente[]>;
+  /** "Listo": the item leaves the list. False when it isn't this store's or was already done. */
+  markDone(tenant: Tenant, id: string, userId: string, nowMs: number): Promise<boolean>;
+  /** How many items are open: the count on the owner's Pendientes tab. */
+  countOpen(tenant: Tenant): Promise<number>;
+}
+
+export interface OpenPendiente {
+  readonly id: string;
+  readonly kind: AnyPendiente["kind"];
+  /** A code: the question's topic, the notice's type, or the check's stage. */
+  readonly detail: string | null;
+  readonly count: number | null;
+  readonly urgent: boolean;
+  readonly raisedAtMs: number;
+  /** Who it's about, when known: the name they gave, and the last four digits of their number. */
+  readonly customerName: string | null;
+  readonly phoneEnding: string | null;
 }
 
 export type AnyPendiente =
@@ -1005,6 +1043,7 @@ export interface Deps {
   /** Null until an engine is wired in: a reply with claims then sends the safe reply instead. */
   readonly claimVerifier: ClaimVerifier | null;
   readonly pendientes: Pendientes;
+  readonly pendientesBoard: PendientesBoard;
   readonly audioDecoder: AudioDecoder;
   readonly transcriber: Transcriber;
   readonly customerControls: CustomerControlRepository;

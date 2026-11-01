@@ -27,15 +27,25 @@ export interface ReplyContext extends Tenant {
   readonly conversationId: string;
   /** The saved place the engine was given, so "¿al mismo lugar de siempre?" can echo it (#29). */
   readonly savedPlace?: SavedPlace | null;
+  /** The owner's first name, for the handoff line. */
+  readonly ownerName?: string | null;
+  /** The customer's name, from our records. */
+  readonly customerName?: string | null;
+  /** The name was asked already. */
+  readonly nameAsked?: boolean;
 }
 
-/** The reply to a customer's own burst or tap, or none. It closes the burst. */
+/**
+ * The reply to a customer's own burst or tap, or none. It closes the burst. `instead` is another
+ * rendering of the same outcome (the "tocá Confirmar" nudge for a readback), checked the same way.
+ */
 export async function replyForOutcome(
   deps: Pick<Deps, "log" | "pendientes">,
   context: ReplyContext,
   outcome: EngineOutcome,
+  instead: RenderedReply | null = null,
 ): Promise<ReplyDraft[]> {
-  const rendered = renderOutcome(outcome, context);
+  const rendered = instead ?? renderOutcome(outcome, context);
   if (rendered === null) return [];
   const source: ReplySource = { kind: "outcome", outcome, customerId: context.customerId };
   const checked = await checkFirst(deps, context, source, rendered);

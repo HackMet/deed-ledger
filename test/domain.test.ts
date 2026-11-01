@@ -127,6 +127,8 @@ describe("domain rules", () => {
     expect(couldNotDownload("audio")).toBe("No pude descargar la nota de voz. ¿Me la mandás otra vez?");
     expect(couldNotProcess("image")).toBe("Perdón, no pude leer tu foto. ¿Me la mandás otra vez?");
     expect(couldNotProcess("audio")).toBe("Perdón, no pude escuchar tu nota de voz. ¿Me la mandás otra vez?");
-    expect(couldNotProcess("text")).toBe("Perdón, no pude revisar tu mensaje. ¿Me lo mandás otra vez?");
+    // A text message isn't asked for again (it could fail the same way): it's handed to the store.
+    expect(couldNotProcess("text")).toBe("Se lo pasé a la tienda para que te ayuden 🙏");
+    expect(couldNotProcess("text")).not.toMatch(/otra vez/);
   });
 });

@@ -14,9 +14,10 @@ import { confirmedOrder, readbackOrder } from "./fixtures/contract";
 const CUSTOMER = "customer-test";
 const nowS = (h: Harness) => Math.floor(h.clock.now() / 1000);
 
+/** Seeded orders whose customer gave a name already, so Confirmar isn't held for one. */
 function engineWith(...orders: OrderView[]): MemoryEngine {
   return new MemoryEngine(() =>
-    orders.map((order): StoredOrder => ({ customerId: CUSTOMER, customerName: null, confirmedAtMs: 0, changedLineIds: [], order })),
+    orders.map((order): StoredOrder => ({ customerId: CUSTOMER, customerName: "Carla", confirmedAtMs: 0, changedLineIds: [], order })),
   );
 }
 
@@ -201,7 +202,8 @@ describe("reply buttons", () => {
 
     const [sent] = h.channel.sent.filter((s) => s.toPhone === phone);
     expect(sent!.body).toContain("Total: L 315");
-    expect(sent!.body).toContain("Respondé Confirmar, Corregir o Cancelar.");
+    // The typed fallback stays, as the soft last line under the buttons (PRD §6.1).
+    expect(sent!.body.split("\n").at(-1)).toBe("_También podés escribir: confirmar, corregir o cancelar._");
     expect(sent!.buttons).toEqual([
       { id: "confirm:order-0001:v1", title: "Confirmar" },
       { id: "correct:order-0001:v1", title: "Corregir" },

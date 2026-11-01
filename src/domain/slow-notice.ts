@@ -17,7 +17,7 @@ export const SLOW_NOTICE_AFTER_MS = 2 * 60 * 1000;
  */
 export const SLOW_NOTICE_LOOKBACK_MS = 60 * 60 * 1000;
 
-/** "Te respondemos en un momento" is stale soon: unsent by then, it expires. */
+/** "Lo estamos revisando" is stale soon: unsent by then, it expires. */
 export const SLOW_NOTICE_TTL_MS = 10 * 60 * 1000;
 
 export const SLOW_NOTICE_KIND = "slow_notice";

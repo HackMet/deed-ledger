@@ -33,6 +33,7 @@ describe("test environment", () => {
       "0015_member_names.sql",
       "0016_pretend_engine_state.sql",
       "0017_customer_places.sql",
+      "0018_pendientes.sql",
     ]);
   });
 

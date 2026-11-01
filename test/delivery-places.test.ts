@@ -170,7 +170,7 @@ async function customer(readings: unknown[], makeEngine: () => PretendEngine = E
 }
 
 const readback = (placeLine: string, total = "L 60", lineText = "1. Arroz 1 lb: 2 libras × L 30 = L 60") =>
-  ["Tu pedido:", lineText, placeLine, `Total: ${total}`, "¿Está bien así? Respondé Confirmar, Corregir o Cancelar."].join("\n");
+  ["Tu pedido:", lineText, placeLine, `Total: ${total}`, "¿Está bien así?", "_También podés escribir: confirmar, corregir o cancelar._"].join("\n");
 
 describe("a pin from the webhook", () => {
   it.each(ENGINES)("is used for delivery and saved on Confirmar, with no fee shown (%s)", async (_label, makeEngine) => {
@@ -193,7 +193,8 @@ describe("a pin from the webhook", () => {
     ]);
 
     await c.tap("Confirmar");
-    expect(c.sent().at(-1)).toBe(COPY.confirmed);
+    // The name is on file (given earlier), so Confirmar confirms at once and says it.
+    expect(c.sent().at(-1)).toBe("Listo, Ana, tu pedido ya está en la lista de preparación. Te aviso cuando esté listo.");
     expect(await c.places()).toEqual([
       { id: expect.any(String), place_text: null, latitude_e6: 10123456, longitude_e6: -80654321, last_used_at_ms: expect.any(Number) },
     ]);
@@ -250,10 +251,14 @@ describe("the next delivery order", () => {
     expect(c.sent().at(-1)).toBe(readback(`Te lo llevamos a: ${PLACE_TEXT}.`));
     expect((await c.openOrder())!.fulfillment).toMatchObject({ mode: "delivery", placeId, placeText: PLACE_TEXT });
 
-    // A second tap on Sí is the same operation: nothing more is said or saved.
+    // A second tap on Sí is the same operation: nothing more is saved, and it isn't left unanswered.
     const sentBefore = c.sent().length;
+    const before = await c.openOrder();
     await c.burst(buttonReply({ from: c.phone, id: wamid(), timestampS: nowS(c.h), replyId: question.buttons![0]!.id, title: "Sí" }));
-    expect(c.sent()).toHaveLength(sentBefore);
+    expect(c.sent()).toHaveLength(sentBefore + 1);
+    expect(c.lastSent().body).toBe(COPY.confirmNudge);
+    expect(c.lastSent().buttons?.map((b) => b.title)).toEqual(["Confirmar", "Corregir", "Cancelar"]);
+    expect(await c.openOrder()).toEqual(before);
 
     c.h.clock.advance(60_000);
     await c.tap("Confirmar");

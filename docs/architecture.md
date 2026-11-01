@@ -330,8 +330,28 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
   "te confirmo" raises a `customer_question` Pendientes item from the order handler, IDs and counts only.
 - Reply buttons: up to three, IDs are operation keys (`confirm:<order>:v<version>`, `correct:…`, `cancel:…`,
   `substitute:<order>:v<version>:<line>`, `remove:…`). `WhatsAppCloudChannel.sendButtons` sends Meta's
-  interactive reply-button shape, or plain text when the buttons don't fit; the body always carries
-  "Respondé Confirmar, Corregir o Cancelar". Typed words map to the same keys (`typedDecision`).
+  interactive reply-button shape, or plain text when the buttons don't fit. The readback's typed fallback is its
+  soft last line ("_También podés escribir: confirmar, corregir o cancelar._"); without buttons it is the plain
+  "Respondé Confirmar, Corregir o Cancelar." Typed words map to the same keys (`typedDecision`).
+- **Conversation rules (Oct 31; engine side proposed in contract.md "Proposed (conversation rules)").** Decided by
+  code in `order-handler.ts` (`src/domain/small-talk.ts`, `customer-name.ts`):
+  - Never silent: a job that closes a burst and would send nothing sends the pending question, "¿Qué más te
+    mando?" with an order open, or "¡A la orden! 🙌" (log `silent_reply_filled`).
+  - "1"/"2"/"3" alone is the button at that place on the last message queued to the conversation before it
+    arrived (`ButtonsShown.lastButtons`, read from `outbound_messages.buttons_json`); no buttons there: read.
+  - A typed yes (fixed list) is Confirmar only when the last message carried that readback version's Confirmar
+    button, sharing its operation key; otherwise it's read.
+  - A greeting, thanks or "ok" alone skips the model: the engine gets an empty reading and restates the step.
+    A greeting adds "¡Buenas, {name}! 👋"; under a readback that waits, the reply is "Para dejarlo listo, tocá
+    Confirmar ✅" with the readback's buttons; a thanks with nothing pending is "¡A la orden! 🙌". A yes word
+    while the engine waits on a question is read (it may answer it).
+  - A name is saved only when `nameFrom` accepts it and is told to the engine in the context, which completes a
+    Confirmar held for it. The engine asks the name at Confirmar, not while the order is built.
+  - "No me manden más" and similar (`asksToStop`) get "¿Pauso los mensajes? 🙏" with a `control:stop` button
+    that the gate treats as ALTO. ALTO itself is unchanged.
+  - A text message that failed every attempt hears "Se lo pasé a la tienda para que te ayuden 🙏" and raises a
+    `customer_handoff` Pendientes item first (`processor.ts`); a photo or voice note is asked once to resend.
+  - No reply promises a time: the handoff says "Se lo dejo anotado a {owner}, te escribe por aquí."
 
 ### Delivery to a saved place (#29)
 
@@ -361,10 +381,18 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
   `createOrderHandler`) and, with no engine wired, ahead of the placeholder handler (`gatedHandler` in
   `composition.ts`), so the controls work either way. Control words come from the typed text only, matched against the whole message in any
   case or accent (`src/domain/customer-controls.ts`); a model's `stop` or `handoff` reading decides nothing.
-- First message: the introduction (store's assistant, not the owner or a person; `PUBLIC_BASE_URL/privacidad`;
-  ALTO; how to reach the owner) goes before the customer's first reply; `customers.introduced_at_ms` is set in
-  the same batch, and only if the reply is written. A first message that is itself a control word (ALTO, deletion,
-  handoff) gets the introduction first too, sent as a control answer so dispatch lets it through. The notice is `GET /privacidad` (`interfaces/http/privacy.ts`).
+- First message: one bubble. A greeting line ("¡Buenas! 👋 Soy el asistente de *{store}* 🛒"), then the first
+  real reply as rendered, then an italic last line with ALTO and `PUBLIC_BASE_URL/privacidad` (left out when
+  unset). The reply keeps its claims, buttons, kind and burst flag, so both claim checks and the outbox rules are
+  unchanged. When that reply is the bare what-to-order question (no order yet), it becomes the welcome
+  ("Te tomo el pedido y te aviso cuando esté listo. ¿Qué te mando?") with two buttons, `intro:hours` (Horario)
+  and `intro:handoff` (Hablar con {owner}). Their taps are routed by ID, never by a model: `intro:handoff` is the
+  handoff control word in the gate, `intro:hours` sends a store-hours question to the engine in the order
+  handler. A job with no reply carries no introduction if a later job of its burst will answer; the burst's newest
+  job with no reply sends the welcome alone. `customers.introduced_at_ms` is set in the same batch, and only if
+  the reply is written. A first message that is itself a control word (ALTO, deletion, handoff) gets the greeting
+  in its answer's bubble, sent as a control answer so dispatch lets it through. The notice is `GET /privacidad`
+  (`interfaces/http/privacy.ts`).
 - ALTO sets `customers.stopped_at_ms` and marks the message and every unread one before it read. Dispatch fails
   any row for a stopped customer unless its kind is `customer_control` (the direct answers to control words);
   while stopped, a message gets one reminder per stop and nothing else. Only SEGUIR resumes.
@@ -396,10 +424,16 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
   as a `Commit` guarded on the version it read (rule 6): it lands in the job's completion batch or the console
   action's batch, or not at all. A lost race fails that batch with `PretendStateMovedError`; the job is deferred and
   retried, and a staff tap shows "no se guardó". Remove the table with the pretend engine.
-- `/console/preparacion` renders the preparation list server-side for a 360 px screen and refreshes every 15 s.
-  Each button posts one action to `/console/acciones` with the version on screen and its own operation key; the
-  result redirects back with a notice when the tap was refused or not saved. The customer messages a tap causes
-  are saved with it (see "Console notices" under the outbox). Without a real engine the list answers 503.
+- `/console/preparacion` (wireframe C1) renders the preparation list server-side for a 360 px screen as compact
+  cards (name; one chip: Listo, Cambió, minutes waited past `LATE_AFTER_MINUTES` (30), Nuevo or Preparando; product
+  count, how the order leaves, store time), orders to pack first, and refreshes every 15 s. A card opens
+  `/console/preparacion/<order>` (C2): the order is looked up in the session store's own `preparationList`, and the
+  ID from the address is used for nothing else, so another store's order isn't found. It shows the version, the
+  customer's change, each line with its tick and "No hay", the total, and Listo (Entregado once ready). Each button
+  posts one action to `/console/acciones` with the version on screen and its own operation key. A tap lands back
+  on its order (with a notice when refused or not saved), on the list after Listo or Entregado, or on the list
+  with "ya no está" when the order is gone. The customer messages a tap causes are saved with it (see "Console
+  notices" under the outbox). Without a real engine the list answers 503.
 - **Login** (`src/interfaces/http/console/auth.ts`, migration 0003). An invite is a 32-byte random code, stored as
   its SHA-256 hash, valid 15 minutes, one use, for one member. `GET /console/entrar?codigo=…` only shows it (a link
   preview can't use it up); the "Entrar" POST uses it and opens a session in one guarded batch, so two taps can't
@@ -409,15 +443,20 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
   session in one guarded batch (fails loudly when the person isn't staff of the store), so re-inviting can never
   revive an old cookie. The name an owner types for a person lives on that store's membership (migration 0015);
   the console never writes or shows the shared `users.display_name`, except an owner's own, which only the admin
-  scripts set. Every POST carries a CSRF
+  scripts set. The top bar shows the member's own name by the same rule (`findSession`). Every POST carries a CSRF
   value, an HMAC of the session ID with `LINK_SIGNING_SECRET`; without that secret the console answers 503. The
   store and the actor always come from the session. Cross-site and oversized (> 16 KiB) form posts are refused.
 - **First login:** `npm run admin:invite -- --phone-number-id … --phone … --role owner|staff [--remote]` adds the
   person as a member if needed and prints a link. The raw code is only printed, never written to disk.
-- **Dev mode** (`DEV_CONSOLE=1`, local simulator only) skips login and CSRF with a fixed demo member.
+- **Dev mode** (`DEV_CONSOLE=1`, local simulator only) skips login and CSRF: it acts as the owner of the store on
+  `DEV_STORE_PHONE_NUMBER_ID`, or else a fixed demo staff member ("Rosa") of an empty demo store.
 - **Screens** live in `src/interfaces/http/console/`, one file each, rendered through the shared layout in
-  `layout.ts` (header, tabs, notice). A new screen is a file that registers its routes, one line in `index.ts`, and
-  a tab in `NAV` if it needs one.
+  `layout.ts`: a top bar (title, a short subtitle, and who is logged in, "Nombre · Dueño/Empleado"), the notice,
+  and the tab bar (Pedidos, Anotar, Pendientes for the owner, Más). The owner's pages put the open Pendientes count
+  on its tab (`PendientesBoard.countOpen`; a failed read shows the page without it); staff pages never read it. One
+  stylesheet (`BASE_STYLE`) holds the shared look: cards, chips, section titles, 48 px buttons, no external fonts
+  or scripts. A new screen is a file that registers its routes, one line in `index.ts`, and a tab in `NAV` if it
+  needs one.
 - **Empleados** (`empleados.ts`, owner only): invite by phone (a new person becomes staff; an owner's number is
   refused), "Código nuevo", the fiado permission, and "Quitar", which deactivates the membership, expires unused
   invites and revokes every session. Only staff memberships of the session's store can be changed there, so an

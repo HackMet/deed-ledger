@@ -12,22 +12,51 @@
  * - Delivery (#29): the customer's saved place goes to the engine in the context, the same-place
  *   question's Sí / Otro lugar taps are their own step like readback answers, and a confirmed
  *   delivery order's place is saved in the same batch as the confirmation.
+ * - The first message's Horario button is its own step too, routed by its ID: the store-hours
+ *   question goes to the engine as if read, with no model call.
+ *
+ * Conversation rules (Oct 31), decided here by code:
+ * - Never silent: a job that closes a burst and would send nothing sends the current step again.
+ * - "1", "2" or "3" typed alone right after a message with buttons is that button.
+ * - A typed yes ("sí", "dale", "ok", "👍"…) under a readback the customer was last shown, with its
+ *   buttons, is Confirmar for that version, sharing the button's operation key.
+ * - A greeting, a thanks or an "ok" alone isn't read by the model: the engine gets an empty reading
+ *   and restates where the order stands; "¡Buenas, Carla! 👋" or "¡A la orden! 🙌" goes with it.
+ * - A name is saved only when it can be one (customer-name.ts), and the engine is told it in the
+ *   context, so a Confirmar held for the name completes with it.
+ * - A question answered beside the order's next step is said first, in the same message.
  */
 import { BURST_LOOKBACK_MS, parseReadbackButton, type ReadbackAnswer, readbackOperationKey, typedReadbackWord } from "../domain/burst";
+import { nameFrom } from "../domain/customer-name";
+import { foldShortText, isTypedYes, type SmallTalk, smallTalk, typedButtonNumber } from "../domain/small-talk";
 import type { CustomerAction } from "../domain/contract/actions";
-import type { BurstReading } from "../domain/contract/observation";
+import type { BurstReading, Observation } from "../domain/contract/observation";
 import type { EngineOutcome, OrderView, QuestionCode } from "../domain/contract/outcomes";
 import { couldNotProcess, RECEIVED_PLACEHOLDER } from "../domain/copy";
 import { ANSWER_NEW_READBACK, WHAT_TO_CORRECT } from "../domain/order-copy";
 import { FAILURE_REPLY_TTL_MS, PLACEHOLDER_TTL_MS } from "../domain/outbox";
 import { attemptsExhausted } from "../domain/processing";
 import type { SavedPlace } from "../domain/place";
-import { actionFromButtonId, safeReply, unansweredCount } from "../domain/replies";
+import { INTRO_BUTTON_IDS } from "../domain/customer-controls";
+import {
+  actionFromButtonId,
+  COPY,
+  confirmNudge,
+  decisionKey,
+  greetingLine,
+  questionText,
+  type RenderedReply,
+  safeReply,
+  unansweredCount,
+  WHAT_TO_ORDER,
+} from "../domain/replies";
 import { type CustomerGateDeps, gateCustomerJob } from "./customer-gate";
-import type { CustomerContext, Engine, EngineResult, LineMatch } from "./engine";
+import type { AnsweredQuestion, CustomerContext, Engine, EngineResult, LineMatch } from "./engine";
 import { BurstMediaUnreadableError } from "./errors";
-import { CUSTOMER_REPLY_TTL_MS, replyForOutcome } from "./replies";
+import { readingSourceOf } from "./order-reading";
+import { CUSTOMER_REPLY_TTL_MS, type ReplyContext, replyForOutcome } from "./replies";
 import type {
+  ButtonsShown,
   Clock,
   Commit,
   ConversationCustomer,
@@ -102,6 +131,8 @@ export interface OrderHandlerDeps {
   readonly gate?: CustomerGateDeps | null;
   /** Saved delivery places (#29). Without it, no place is offered or saved. */
   readonly places?: CustomerPlaceRepository | null;
+  /** The last message's buttons, for typed numbers and a typed yes. Without it, both are read. */
+  readonly buttonsShown?: ButtonsShown | null;
 }
 
 const ACTION_TYPES = {
@@ -111,7 +142,27 @@ const ACTION_TYPES = {
 } as const satisfies Record<ReadbackAnswer["word"], CustomerAction["type"]>;
 
 export function createOrderHandler(deps: OrderHandlerDeps): JobHandler {
-  return { handle: (input) => gateCustomerJob(deps.gate, input, () => handleJob(deps, input)) };
+  return {
+    handle: async (input) => {
+      // A number typed after buttons is that button, before anything else looks at it (the
+      // gate routes the welcome's Hablar con by its ID).
+      const resolved = { ...input, job: await asTappedNumber(deps, input.lease, input.job) };
+      return gateCustomerJob(deps.gate, resolved, () => neverSilent(deps, resolved, () => handleJob(deps, resolved)));
+    },
+  };
+}
+
+/** A readback answer: the word, the version, and whether it was a typed yes ("dale", "👍"). */
+type Answer = ReadbackAnswer & { readonly typedYes?: boolean };
+
+/** What the handler knows about the store and the customer for one job, read once. */
+interface JobFacts {
+  readonly customer: ConversationCustomer;
+  readonly savedPlace: SavedPlace | null;
+  /** The store owner's first name, for the handoff line. */
+  readonly ownerName: string | null;
+  /** The customer already had the first message: a greeting gets its own line. */
+  readonly introduced: boolean;
 }
 
 async function handleJob(deps: OrderHandlerDeps, { lease, job, isNewestOfBurst }: JobInput): Promise<JobOutcome> {
@@ -119,19 +170,101 @@ async function handleJob(deps: OrderHandlerDeps, { lease, job, isNewestOfBurst }
   // Every conversation has a customer (0004): missing means the lease is for another store's ID.
   if (customer === null) throw new Error("no customer for the leased conversation");
   const savedPlace = (await deps.places?.latest(lease, customer.id)) ?? null;
+  const control = (await deps.gate?.controls.stateOf(lease)) ?? null;
+  const facts: JobFacts = {
+    customer,
+    savedPlace,
+    ownerName: control?.ownerName ?? null,
+    introduced: control === null || control.introducedAtMs !== null,
+  };
 
+  if (isHoursTap(job)) return handleHoursTap(deps, lease, job, facts);
   const placeTap = placeAction(job);
-  if (placeTap !== null) return handlePlaceTap(deps, lease, job, customer, savedPlace, placeTap);
-  const answer = readbackAnswer(job, customer);
+  if (placeTap !== null) return handlePlaceTap(deps, lease, job, facts, placeTap);
+  const answer = await readbackAnswer(deps, lease, job, customer);
   if (answer === "unseen_readback") return handleUnseenReadback(deps, lease, job);
-  if (answer !== null) return handleAnswer(deps, lease, job, customer, savedPlace, answer);
+  if (answer !== null) return handleAnswer(deps, lease, job, facts, answer);
 
   if (!isNewestOfBurst) {
     // Read now only when the next message is an answer, so the answer sees this reading saved.
-    const next = await deps.jobs.nextOpenJob(lease, job.id);
-    if (next !== null && readbackAnswer(next, customer) === null && placeAction(next) === null) return { replies: [] };
+    const found = await deps.jobs.nextOpenJob(lease, job.id);
+    const next = found === null ? null : await asTappedNumber(deps, lease, found);
+    if (next !== null && (await readbackAnswer(deps, lease, next, customer)) === null && placeAction(next) === null && !isHoursTap(next)) {
+      return { replies: [] };
+    }
   }
-  return handleBurst(deps, lease, job, customer, savedPlace, isNewestOfBurst);
+  return handleBurst(deps, lease, job, facts, isNewestOfBurst);
+}
+
+/**
+ * "1", "2" or "3" typed alone, when the last message the customer was sent before writing it had
+ * buttons: that button, as if tapped (its ID is the operation key, checked as any tap is). With no
+ * buttons there, or no button at that place, the text is read as usual: never guessed.
+ */
+async function asTappedNumber(deps: OrderHandlerDeps, lease: Lease, job: Job): Promise<Job> {
+  if (job.kind !== "text" || deps.buttonsShown == null) return job;
+  const n = typedButtonNumber(job.textBody);
+  if (n === null) return job;
+  const button = (await deps.buttonsShown.lastButtons(lease, job.receivedAtMs))[n - 1];
+  if (button === undefined) return job;
+  return { ...job, kind: "interactive", replyId: button.id, textBody: button.title };
+}
+
+/**
+ * Every message gets an answer: a job that closes the burst and would send nothing sends the
+ * current step again. The pending question when the engine says one waits; "¡A la orden! 🙌" for a
+ * tap already answered; "¿Qué más te mando?" with an order open; the what-to-order question with
+ * none (a new customer's becomes the welcome).
+ */
+async function neverSilent(deps: OrderHandlerDeps, { lease, job, isNewestOfBurst }: JobInput, run: () => Promise<JobOutcome>): Promise<JobOutcome> {
+  const outcome = await run();
+  if (outcome.replies.length > 0 || !isNewestOfBurst) return outcome;
+  const body = await fallbackLine(deps, lease, job);
+  deps.log.info("silent_reply_filled", { businessId: lease.businessId, conversationId: lease.conversationId, inboundId: job.id });
+  return { ...outcome, replies: [{ body, ttlMs: ORDER_REPLY_TTL_MS, closesBurst: true }] };
+}
+
+async function fallbackLine(deps: OrderHandlerDeps, lease: Lease, job: Job): Promise<string> {
+  const source = readingSourceOf(deps.engine);
+  const customer = source === null ? null : await deps.customers.ofConversation(lease);
+  const perception =
+    source === null || customer === null
+      ? null
+      : await source.perceptionContext({
+          businessId: lease.businessId,
+          conversationId: lease.conversationId,
+          customerId: customer.id,
+          jobId: job.id,
+          nowMs: deps.clock.now(),
+        });
+  if (perception?.pendingQuestion != null) return questionText(perception.pendingQuestion);
+  if (job.kind === "interactive") return COPY.welcome;
+  return perception?.openOrder != null ? COPY.anythingElse : WHAT_TO_ORDER;
+}
+
+function isHoursTap(job: Job): boolean {
+  return job.kind === "interactive" && job.replyId === INTRO_BUTTON_IDS.hours;
+}
+
+/**
+ * A tap on the first message's Horario: the store-hours question, decided by code from the button
+ * ID. Like a readback answer, its reply goes out even if more messages follow.
+ */
+async function handleHoursTap(deps: OrderHandlerDeps, lease: Lease, job: Job, facts: JobFacts): Promise<JobOutcome> {
+  const { customer, savedPlace } = facts;
+  const nowMs = deps.clock.now();
+  const reading: BurstReading = {
+    observations: [{ kind: "question", topic: "store_hours", products: [], issues: [] }],
+    calls: [],
+  };
+  const result = await deps.engine.onBurst(context(lease, job, customer, savedPlace, nowMs), reading, []);
+  deps.log.info("customer_action_handled", {
+    businessId: lease.businessId,
+    conversationId: lease.conversationId,
+    inboundId: job.id,
+    outcome: result.outcome.type,
+  });
+  return complete(deps, lease, job, facts, [job], result, null, false, nowMs);
 }
 
 /** A tap on Sí or Otro lugar under "¿Te lo llevamos al mismo lugar de siempre?". Typed, it's read. */
@@ -145,14 +278,8 @@ function placeAction(job: Job): PlaceAction | null {
  * The same-place answer goes to the engine at its own job, keyed by the button ID: a second tap is
  * a duplicate. The saved place it names is resolved by the engine against the context's only.
  */
-async function handlePlaceTap(
-  deps: OrderHandlerDeps,
-  lease: Lease,
-  job: Job,
-  customer: ConversationCustomer,
-  savedPlace: SavedPlace | null,
-  action: PlaceAction,
-): Promise<JobOutcome> {
+async function handlePlaceTap(deps: OrderHandlerDeps, lease: Lease, job: Job, facts: JobFacts, action: PlaceAction): Promise<JobOutcome> {
+  const { customer, savedPlace } = facts;
   const nowMs = deps.clock.now();
   const result = await deps.engine.onCustomerAction(context(lease, job, customer, savedPlace, nowMs), {
     operationKey: job.replyId!,
@@ -165,7 +292,10 @@ async function handlePlaceTap(
     inboundId: job.id,
     outcome: result.outcome.type,
   });
-  return complete(deps, lease, job, customer, savedPlace, [job], result, null, false, nowMs);
+  // Tapped again: nothing changes, and the customer hears where the order stands (under a readback
+  // that waits, "tocá Confirmar" with its buttons), like an "ok".
+  if (result.outcome.type === "duplicate") return handleSmallTalk(deps, lease, job, facts, [job], "ack", false, nowMs);
+  return complete(deps, lease, job, facts, [job], result, null, false, nowMs);
 }
 
 /**
@@ -173,18 +303,26 @@ async function handlePlaceTap(
  * open. A typed word answers the last readback only if it arrived after that readback was queued:
  * one sent earlier answered a version the customer saw before, which may have changed since, so
  * it is `unseen_readback` and confirms nothing.
+ *
+ * A typed yes is Confirmar only when the last message the customer was sent before writing it
+ * carried that readback's Confirmar button: after any other message (a question, an answer) the
+ * yes may answer that one, so it's read instead.
  */
-function readbackAnswer(job: Job, customer: ConversationCustomer): ReadbackAnswer | "unseen_readback" | null {
+async function readbackAnswer(deps: OrderHandlerDeps, lease: Lease, job: Job, customer: ConversationCustomer): Promise<Answer | "unseen_readback" | null> {
   if (job.kind === "interactive") {
     const tapped = parseReadbackButton(job.replyId);
     if (tapped !== null) return tapped;
   }
   if (job.kind !== "text" || customer.lastReadback === null) return null;
-  const word = typedReadbackWord(job.textBody);
-  if (word === null) return null;
   const { orderId, version, queuedAtMs } = customer.lastReadback;
-  if (job.receivedAtMs <= queuedAtMs) return "unseen_readback";
-  return { word, orderId, version };
+  const word = typedReadbackWord(job.textBody);
+  if (word !== null) return job.receivedAtMs <= queuedAtMs ? "unseen_readback" : { word, orderId, version };
+  if (!isTypedYes(job.textBody) || job.receivedAtMs <= queuedAtMs || deps.buttonsShown == null) return null;
+  const confirmId = decisionKey("confirm", { orderId, version });
+  const shown = await deps.buttonsShown.lastButtons(lease, job.receivedAtMs);
+  return confirmId !== null && shown.some((button) => button.id === confirmId)
+    ? { word: "confirm", orderId, version, typedYes: true }
+    : null;
 }
 
 /**
@@ -204,14 +342,8 @@ function handleUnseenReadback(deps: OrderHandlerDeps, lease: Lease, job: Job): J
   };
 }
 
-async function handleAnswer(
-  deps: OrderHandlerDeps,
-  lease: Lease,
-  job: Job,
-  customer: ConversationCustomer,
-  savedPlace: SavedPlace | null,
-  answer: ReadbackAnswer,
-): Promise<JobOutcome> {
+async function handleAnswer(deps: OrderHandlerDeps, lease: Lease, job: Job, facts: JobFacts, answer: Answer): Promise<JobOutcome> {
+  const { customer, savedPlace } = facts;
   const nowMs = deps.clock.now();
   // The button and the typed word share the key, so whichever comes second is a duplicate.
   const result = await deps.engine.onCustomerAction(context(lease, job, customer, savedPlace, nowMs), {
@@ -225,18 +357,19 @@ async function handleAnswer(
     inboundId: job.id,
     outcome: result.outcome.type,
   });
+  // Already answered (a second tap, the word typed after the tap), or a typed yes that confirms
+  // nothing (the order moved on): nothing changed, and it gets the house answer, not silence or a
+  // refusal.
+  const refusedYes = answer.typedYes === true && result.outcome.type === "rejected" && result.outcome.reason !== "stale_version";
+  if (result.outcome.type === "duplicate" || refusedYes) {
+    return { replies: [{ body: COPY.welcome, ttlMs: ORDER_REPLY_TTL_MS }], commits: [deps.jobs.markReadCommit(lease, job.id, [job.id], nowMs), ...result.commits] };
+  }
   // The answer's own reply goes out even if more messages follow: it is never a burst-closing one.
-  return complete(deps, lease, job, customer, savedPlace, [job], result, answer.word, false, nowMs);
+  return complete(deps, lease, job, facts, [job], result, answer.word, false, nowMs);
 }
 
-async function handleBurst(
-  deps: OrderHandlerDeps,
-  lease: Lease,
-  job: Job,
-  customer: ConversationCustomer,
-  savedPlace: SavedPlace | null,
-  closesBurst: boolean,
-): Promise<JobOutcome> {
+async function handleBurst(deps: OrderHandlerDeps, lease: Lease, job: Job, facts: JobFacts, closesBurst: boolean): Promise<JobOutcome> {
+  const { customer, savedPlace } = facts;
   const messages = await deps.jobs.unreadBurst(lease, job.id, job.receivedAtMs - BURST_LOOKBACK_MS);
   if (messages.length === 0) return { replies: [] };
   const nowMs = deps.clock.now();
@@ -250,6 +383,9 @@ async function handleBurst(
   }
 
   const customerContext = context(lease, job, customer, savedPlace, nowMs);
+  const talk = await smallTalkOf(deps, messages, customerContext);
+  if (talk !== null) return handleSmallTalk(deps, lease, job, facts, messages, talk, closesBurst, nowMs);
+
   let read: BurstRead;
   try {
     read = await deps.reader.read({ lease, messages, context: customerContext });
@@ -257,8 +393,14 @@ async function handleBurst(
     if (!(error instanceof BurstMediaUnreadableError) || !givesUpOnMedia(job, error)) throw error;
     return unreadableMediaOutcome(deps, lease, job, error, nowMs);
   }
-  const { reading, matches, pendingQuestion } = read;
-  const result = await deps.engine.onBurst(customerContext, reading, matches);
+  const products = await productWords(deps, lease);
+  const { matches, pendingQuestion } = read;
+  const reading = withNamesChecked(read.reading, products);
+  // The name, when this burst gave one that can be a name: saved here, and told to the engine so a
+  // Confirmar held for it completes now.
+  const name = customer.name === null ? givenName(reading, pendingQuestion, products) : null;
+  const engineContext: CustomerContextWithName = { ...customerContext, customerName: customer.name ?? name };
+  const result = await deps.engine.onBurst(engineContext, reading, matches);
   deps.log.info("burst_read", {
     businessId: lease.businessId,
     conversationId: lease.conversationId,
@@ -266,9 +408,95 @@ async function handleBurst(
     count: messages.length,
     outcome: result.outcome.type,
   });
-  const name = customer.name === null ? givenName(reading, pendingQuestion) : null;
   const nameCommits = name === null ? [] : [deps.customers.saveNameCommit(lease, customer.id, name, nowMs)];
-  return complete(deps, lease, job, customer, savedPlace, messages, result, null, closesBurst, nowMs, nameCommits);
+  const named: JobFacts = { ...facts, customer: { ...customer, name: customer.name ?? name } };
+  return complete(deps, lease, job, named, messages, result, null, closesBurst, nowMs, nameCommits);
+}
+
+/**
+ * A burst of only greetings, thanks or "ok"s, decided by code: no model call. A yes word ("sí",
+ * "dale") while the engine waits on a question isn't small talk: it may answer it, so it's read.
+ */
+async function smallTalkOf(deps: OrderHandlerDeps, messages: readonly Job[], customerContext: CustomerContextWithName): Promise<SmallTalk | null> {
+  const kinds = messages.map((message) => (message.kind === "text" ? smallTalk(message.textBody) : null));
+  if (kinds.some((kind) => kind === null)) return null;
+  const source = readingSourceOf(deps.engine);
+  if (source === null) return null;
+  if (kinds.includes("ack") && (await source.perceptionContext(customerContext)).pendingQuestion !== null) return null;
+  if (kinds.includes("greeting")) return "greeting";
+  return kinds.includes("thanks") ? "thanks" : "ack";
+}
+
+/**
+ * Small talk: the engine gets an empty reading and says where the order stands (the open
+ * question, the readback, the status). A greeting puts "¡Buenas, Carla! 👋" before it. A thanks or
+ * an "ok": under a readback that waits and was sent, "Para dejarlo listo, tocá Confirmar ✅" with
+ * the buttons (one that was withheld goes out in full); with a question waiting, "¡A la orden! 🙌"
+ * and the question; otherwise "¡A la orden! 🙌" alone.
+ */
+async function handleSmallTalk(
+  deps: OrderHandlerDeps,
+  lease: Lease,
+  job: Job,
+  facts: JobFacts,
+  messages: readonly Job[],
+  talk: SmallTalk,
+  closesBurst: boolean,
+  nowMs: number,
+): Promise<JobOutcome> {
+  const { customer, savedPlace } = facts;
+  const result = await deps.engine.onBurst(context(lease, job, customer, savedPlace, nowMs), { observations: [], calls: [] }, []);
+  deps.log.info("small_talk_handled", {
+    businessId: lease.businessId,
+    conversationId: lease.conversationId,
+    inboundId: job.id,
+    count: messages.length,
+    outcome: result.outcome.type,
+  });
+  const outcome = result.outcome;
+  // A readback that waits, and that the customer was sent (its reply wasn't withheld for a later
+  // message), isn't sent again in full: a short nudge, with its buttons. Never sent: in full.
+  const shownBefore =
+    outcome.type === "readback" &&
+    customer.lastReadback?.orderId === outcome.order.orderId &&
+    customer.lastReadback.version === outcome.order.version;
+  const nudge = shownBefore && outcome.order.state === "por_confirmar" ? confirmNudge(outcome.order) : null;
+  if (talk === "greeting") {
+    // A new customer's greeting comes from the first message itself (customer-gate.ts).
+    const lead = facts.introduced ? greetingLine(customer.name) : null;
+    return complete(deps, lease, job, facts, messages, result, null, closesBurst, nowMs, [], nudge, lead);
+  }
+  if (nudge !== null) return complete(deps, lease, job, facts, messages, result, null, closesBurst, nowMs, [], nudge);
+  // A readback the customer was never sent goes out in full: there's nothing to nudge toward yet.
+  if (outcome.type === "readback") return complete(deps, lease, job, facts, messages, result, null, closesBurst, nowMs);
+  if (outcome.type === "ask" && outcome.question !== "what_to_order") {
+    return complete(deps, lease, job, facts, messages, result, null, closesBurst, nowMs, [], null, COPY.welcome);
+  }
+  // Nothing waits on them: the house answer alone, claiming nothing.
+  return {
+    replies: [{ body: COPY.welcome, ttlMs: ORDER_REPLY_TTL_MS, closesBurst }],
+    commits: [deps.jobs.markReadCommit(lease, job.id, messages.map((message) => message.id), nowMs), ...result.commits],
+  };
+}
+
+/** Catalog names and aliases, folded: an answer that names a product isn't a name. */
+async function productWords(deps: OrderHandlerDeps, lease: Lease): Promise<ReadonlySet<string>> {
+  const source = readingSourceOf(deps.engine);
+  if (source === null) return new Set();
+  const catalog = await source.catalog({ businessId: lease.businessId });
+  return new Set(catalog.flatMap((product) => [...product.names, ...product.aliases]).map(foldShortText));
+}
+
+/** The reading with every `customer_name` that can't be a name dropped, and the rest tidied. */
+function withNamesChecked(reading: BurstReading, products: ReadonlySet<string>): BurstReading {
+  const observations = reading.observations.flatMap((observation): Observation[] => {
+    if (observation.kind !== "customer_name") return [observation];
+    const name = nameFrom(observation.name, products);
+    return name === null ? [] : [{ ...observation, name }];
+  });
+  return observations.length === reading.observations.length && observations.every((o, i) => o === reading.observations[i])
+    ? reading
+    : { ...reading, observations };
 }
 
 /**
@@ -308,15 +536,16 @@ function unreadableMediaOutcome(
 
 /**
  * The name the customer gave in this burst: said outright ("soy Carla"), or the answer to the name
- * question asked last ("Carla"). Saved through our own records (gap d), first answer wins.
+ * question asked last ("Carla"), only when it can be a name (never "sí", "ok", a number, an emoji,
+ * a product or a sentence). Saved through our own records (gap d), first answer wins.
  */
-function givenName(reading: BurstReading, pendingQuestion: QuestionCode | null): string | null {
+function givenName(reading: BurstReading, pendingQuestion: QuestionCode | null, products: ReadonlySet<string>): string | null {
   for (const observation of reading.observations) {
-    if (observation.kind === "customer_name") return observation.name;
+    if (observation.kind === "customer_name") return nameFrom(observation.name, products);
   }
   if (pendingQuestion !== "customer_name") return null;
   for (const observation of reading.observations) {
-    if (observation.kind === "clarification") return observation.answer;
+    if (observation.kind === "clarification") return nameFrom(observation.answer, products);
   }
   return null;
 }
@@ -329,27 +558,35 @@ async function complete(
   deps: OrderHandlerDeps,
   lease: Lease,
   job: Job,
-  customer: ConversationCustomer,
-  savedPlace: SavedPlace | null,
+  facts: JobFacts,
   read: readonly Job[],
   result: EngineResult,
   answered: ReadbackAnswer["word"] | null,
   closesBurst: boolean,
   nowMs: number,
   extra: readonly Commit[] = [],
+  instead: RenderedReply | null = null,
+  lead: string | null = null,
 ): Promise<JobOutcome> {
-  const replies = await repliesFor(deps, lease, customer, savedPlace, result.outcome, answered, closesBurst);
+  const { customer } = facts;
+  const step = await repliesFor(deps, lease, facts, result.outcome, answered, closesBurst, instead);
+  // What the reply showed is remembered only if it went out as rendered, not as the safe reply.
+  const shownAsRendered = step.length > 0 && step[0]!.body !== safeReply().body;
+  const before = await answeredFirst(deps, lease, facts, result.answered ?? null);
+  const replies = joined(before, lead, step, closesBurst);
   const commits: Commit[] = [
     deps.jobs.markReadCommit(lease, job.id, read.map((message) => message.id), nowMs),
     ...result.commits,
     ...extra,
     ...placeCommits(deps, lease, customer, result.outcome, nowMs),
   ];
-  // What the reply showed is remembered only if it went out as rendered, not as the safe reply.
-  const shownAsRendered = replies.length > 0 && replies[0]!.body !== safeReply().body;
   if (shownAsRendered) {
     commits.push(...channelCommits(deps, lease, job, customer, result.outcome, closesBurst, nowMs));
     await raiseUnanswered(deps, lease, job, customer, result.outcome);
+    await raiseHandoff(deps, lease, job, customer, result.outcome);
+  }
+  if (result.answered != null && before.length > 0 && before[0]!.body !== safeReply().body) {
+    await raiseUnanswered(deps, lease, job, customer, result.answered);
   }
   // Notices for other customers (staff actions) don't arise from a customer's own message here.
   if (result.notices.length > 0) {
@@ -366,17 +603,53 @@ async function complete(
 async function repliesFor(
   deps: OrderHandlerDeps,
   lease: Lease,
-  customer: ConversationCustomer,
-  savedPlace: SavedPlace | null,
+  facts: JobFacts,
   outcome: EngineOutcome,
   answered: ReadbackAnswer["word"] | null,
   closesBurst: boolean,
+  instead: RenderedReply | null = null,
 ): Promise<ReplyDraft[]> {
   if (outcome.type === "nothing" && answered === "correct") {
     return [{ body: WHAT_TO_CORRECT, ttlMs: ORDER_REPLY_TTL_MS }];
   }
-  const drafts = await replyForOutcome(deps, { ...lease, customerId: customer.id, savedPlace }, outcome);
+  const drafts = await replyForOutcome(deps, replyContext(lease, facts), outcome, instead);
   return drafts.map(({ closesBurst: _closes, ...draft }) => (closesBurst ? { ...draft, closesBurst } : draft));
+}
+
+function replyContext(lease: Lease, facts: JobFacts): ReplyContext {
+  return {
+    ...lease,
+    customerId: facts.customer.id,
+    savedPlace: facts.savedPlace,
+    ownerName: facts.ownerName,
+    customerName: facts.customer.name,
+    nameAsked: facts.customer.nameAskedAtMs !== null,
+  };
+}
+
+/** A question the burst asked, answered from records, rendered to go before the order's next step. */
+async function answeredFirst(deps: OrderHandlerDeps, lease: Lease, facts: JobFacts, answered: AnsweredQuestion | null): Promise<ReplyDraft[]> {
+  return answered === null ? [] : replyForOutcome(deps, replyContext(lease, facts), answered);
+}
+
+/**
+ * One message: the answer first, then a lead line ("¡Buenas, Carla! 👋"), then the step. Claims of
+ * every part go with it; the buttons are the step's, the message's last part.
+ */
+function joined(before: readonly ReplyDraft[], lead: string | null, step: readonly ReplyDraft[], closesBurst: boolean): ReplyDraft[] {
+  const [main, ...rest] = step;
+  if (main === undefined) return [...before];
+  const first = before[0];
+  const body = [first?.body, lead, main.body].filter((part): part is string => part != null).join("\n");
+  if (body === main.body) return [...step];
+  const claims = [...(first?.claims ?? []), ...(main.claims ?? [])];
+  const merged: ReplyDraft = {
+    ...main,
+    body,
+    ...(claims.length === 0 ? {} : { claims }),
+    ...(closesBurst ? { closesBurst } : {}),
+  };
+  return [merged, ...rest];
 }
 
 /**
@@ -438,6 +711,20 @@ async function raiseUnanswered(
     inboundId: job.id,
     topic,
     unknown,
+  });
+}
+
+/**
+ * "Se lo dejo anotado a Johan" is only true if someone sees it: an engine handoff (a payment, the
+ * balance) raises a Pendientes item, like the typed handoff does. Raised before the save.
+ */
+async function raiseHandoff(deps: OrderHandlerDeps, lease: Lease, job: Job, customer: ConversationCustomer, outcome: EngineOutcome): Promise<void> {
+  if (outcome.type !== "handoff") return;
+  await deps.pendientes.raise(lease, {
+    kind: "customer_handoff",
+    conversationId: lease.conversationId,
+    customerId: customer.id,
+    inboundId: job.id,
   });
 }
 

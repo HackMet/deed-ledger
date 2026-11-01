@@ -76,7 +76,9 @@ export type QuestionCode =
   | "pickup_or_delivery"
   | "delivery_place"
   | "same_place"
-  | "customer_name";
+  | "customer_name"
+  // Proposed, not agreed: no order yet, so the next step is what they want.
+  | "what_to_order";
 
 export interface AnswerFact {
   /** As the customer named it. */
