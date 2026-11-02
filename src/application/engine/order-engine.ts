@@ -7,10 +7,18 @@
  * outcome, a key that doesn't resolve inside the customer's own orders answers `not_found`, a tap on
  * an older version answers `stale_version`. The commit's guards only settle a race.
  */
-import type { ActionEnvelope, ConsoleAction, CustomerAction } from "../../domain/contract/actions";
+import type { ActionEnvelope, ConsoleAction, CustomerAction, OrderRef } from "../../domain/contract/actions";
 import { toThousandths } from "../../domain/contract/numbers";
 import { type BurstReading, type ItemLine, isCustomerKind, type OrderChange } from "../../domain/contract/observation";
-import type { Claim, EngineOutcome, OrderLineView, OrderState, OrderView, PreparationCard } from "../../domain/contract/outcomes";
+import type {
+  Claim,
+  CustomerNotice,
+  EngineOutcome,
+  OrderLineView,
+  OrderState,
+  OrderView,
+  PreparationCard,
+} from "../../domain/contract/outcomes";
 import { totalOf } from "../../domain/order-total";
 import { indexOfLabel, labelOf, nextVersion } from "../../domain/orders";
 import type { CustomerContext, Engine, EngineResult, LineMatch, MemberContext } from "../engine";
@@ -46,7 +54,19 @@ export interface OrderWrite {
   /** Sets the first-confirmed time if it isn't set yet: the order's place in line. */
   readonly confirming: boolean;
   readonly auditId: string;
-  readonly auditKind: "order_created" | "order_changed" | "order_confirmed" | "order_cancelled";
+  readonly auditKind:
+    | "order_created"
+    | "order_changed"
+    | "order_confirmed"
+    | "order_cancelled"
+    | "order_preparing"
+    | "order_line_marked"
+    | "order_ready"
+    | "order_delivered";
+  /** Who acted, for the audit row: a member on the console. Defaults to the customer. */
+  readonly actorId?: string;
+  /** More for the audit row's detail, next to the state change. */
+  readonly auditDetail?: Readonly<Record<string, unknown>>;
   readonly nowMs: number;
 }
 
@@ -55,6 +75,8 @@ export interface OrderStore {
   firstOutcome(tenant: Tenant, operationKey: string): Promise<EngineOutcome | null>;
   /** The customer's open order (not entregado, not cancelado), current version. */
   openOrder(tenant: Tenant, customerId: string): Promise<StoredOrder | null>;
+  /** Null unless the order exists in this store. Staff aren't customers: the store is the only scope. */
+  order(tenant: Tenant, orderId: string): Promise<StoredOrder | null>;
   /** Null unless the order exists in this store and belongs to this customer. */
   customerOrder(tenant: Tenant, customerId: string, orderId: string): Promise<StoredOrder | null>;
   /** Catalog names of the products that exist in this store; others are left out. */
@@ -98,6 +120,28 @@ export function actionKey(action: CustomerAction): string | null {
     default:
       return null;
   }
+}
+
+/** The console actions on an order this cut saves: staff move it along the preparation list. */
+type StaffAction = Extract<ConsoleAction, { type: "start_preparing" | "mark_line" | "mark_ready" | "mark_delivered" }>;
+
+/** Each staff action's only pre-state and the state it leaves. mark_line records a mark and keeps preparando. */
+const STAFF_STEPS: Readonly<Record<StaffAction["type"], { from: OrderState; to: OrderState; audit: OrderWrite["auditKind"] }>> = {
+  start_preparing: { from: "confirmado", to: "preparando", audit: "order_preparing" },
+  mark_line: { from: "preparando", to: "preparando", audit: "order_line_marked" },
+  mark_ready: { from: "preparando", to: "listo", audit: "order_ready" },
+  mark_delivered: { from: "listo", to: "entregado", audit: "order_delivered" },
+};
+
+const isStaffAction = (action: ConsoleAction): action is StaffAction => Object.hasOwn(STAFF_STEPS, action.type);
+
+/**
+ * The operation key a staff action must carry (D-44): one action on one version of one order, and
+ * for a line mark one line, so a double tap saves once.
+ */
+export function staffKey(action: StaffAction & OrderRef): string {
+  const base = `staff:${action.orderId}:${action.version}:${action.type}`;
+  return action.type === "mark_line" ? `${base}:${action.lineId}` : base;
 }
 
 /** 1500 -> "1.5": the canonical decimal for a quantity in thousandths. */
@@ -269,8 +313,62 @@ export class OrderEngine implements Engine {
     };
   }
 
-  async onConsoleAction(_context: MemberContext, _action: ActionEnvelope<ConsoleAction>): Promise<EngineResult> {
-    throw new Error("not implemented: issue #12");
+  async onConsoleAction(member: MemberContext, envelope: ActionEnvelope<ConsoleAction>): Promise<EngineResult> {
+    const { store } = this.deps;
+    const refused = (reason: "not_allowed" | "not_found" | "stale_version" | "invalid_state", order: OrderView | null) =>
+      result({ type: "rejected", reason, order });
+    // The actor comes from the signed-in member; an envelope for anyone else is refused.
+    const { actor, action } = envelope;
+    if (actor.type !== "member" || actor.memberId !== member.memberId || actor.role !== member.role) {
+      return refused("not_allowed", null);
+    }
+    // Payments, fiado, prices, stock, observations, pause and replies: not in this cut, and never a throw.
+    if (!isStaffAction(action)) return refused("not_allowed", null);
+
+    // The order id is untrusted: it resolves only inside this store. Its customer comes from the record.
+    const stored = await store.order(member, action.orderId);
+    if (stored === null) return refused("not_found", null);
+    // A key the engine didn't derive is refused, so a key only ever names an order that resolved above.
+    if (envelope.operationKey !== staffKey(action)) return refused("not_allowed", null);
+    const first = await store.firstOutcome(member, envelope.operationKey);
+    if (first !== null) return result({ type: "duplicate", first });
+
+    const { view } = stored;
+    if (action.version !== view.version) return refused("stale_version", view);
+    const step = STAFF_STEPS[action.type];
+    if (view.state !== step.from) return refused("invalid_state", view);
+    if (action.type === "mark_line" && indexOfLabel(view.lines.length, action.lineId) === null) return refused("not_found", view);
+
+    const packing = step.to === "confirmado" || step.to === "preparando";
+    const order: OrderView = { ...view, state: step.to, queuePosition: packing ? view.queuePosition : null };
+    const outcome: EngineOutcome = { type: "action_saved", order };
+    const notice = (n: CustomerNotice["notice"]): CustomerNotice => ({ customerId: stored.customerId, notice: n });
+    const notices: CustomerNotice[] = [];
+    if (action.type === "mark_ready") notices.push(notice({ type: "order_ready", order }));
+    if (action.type === "mark_line" && action.mark === "no_hay") notices.push(notice({ type: "line_unavailable", order, lineId: action.lineId }));
+    if (action.type === "mark_line" && action.mark === "ofrecer_otro") {
+      notices.push(notice({ type: "substitute_offered", order, lineId: action.lineId }));
+    }
+
+    // Guarded by what was read: a race the read couldn't see fails the batch (no post guards: D-42).
+    const commit = store.commitFor(member, {
+      operationKey: envelope.operationKey,
+      outcome,
+      customerId: stored.customerId,
+      base: { orderId: view.orderId, version: view.version, state: view.state },
+      order,
+      newVersion: false,
+      confirming: false,
+      auditId: this.deps.ids.newId(),
+      auditKind: step.audit,
+      actorId: member.memberId,
+      auditDetail:
+        action.type === "mark_line"
+          ? { lineId: action.lineId, mark: action.mark, substituteProductId: action.substituteProductId }
+          : undefined,
+      nowMs: member.nowMs,
+    });
+    return { outcome, notices, commits: [commit] };
   }
 
   async verifyClaims(tenant: Tenant, claims: readonly Claim[]): Promise<readonly boolean[]> {

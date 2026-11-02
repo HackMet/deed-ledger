@@ -69,6 +69,14 @@ export class D1OrderStore implements OrderStore {
     return row === null ? null : this.load(tenant, row);
   }
 
+  async order(tenant: Tenant, orderId: string): Promise<StoredOrder | null> {
+    const row = await this.db
+      .prepare(`${ORDER_SELECT} WHERE o.business_id = ? AND o.id = ?`)
+      .bind(tenant.businessId, orderId)
+      .first<OrderRow>();
+    return row === null ? null : this.load(tenant, row);
+  }
+
   async customerOrder(tenant: Tenant, customerId: string, orderId: string): Promise<StoredOrder | null> {
     const row = await this.db
       .prepare(`${ORDER_SELECT} WHERE o.business_id = ? AND o.customer_id = ? AND o.id = ?`)
@@ -169,9 +177,11 @@ export class D1OrderStore implements OrderStore {
       statements.push(
         this.db
           .prepare(
-            `UPDATE orders SET state = ?, current_version = ?,
-               first_confirmed_at_ms = CASE WHEN ? THEN COALESCE(first_confirmed_at_ms, ?) ELSE first_confirmed_at_ms END
-             WHERE business_id = ? AND id = ? AND customer_id = ?`,
+            `UPDATE orders SET state = ?1, current_version = ?2,
+               first_confirmed_at_ms = CASE WHEN ?3 THEN COALESCE(first_confirmed_at_ms, ?4) ELSE first_confirmed_at_ms END,
+               ready_at_ms = CASE WHEN ?1 = 'listo' THEN COALESCE(ready_at_ms, ?4) ELSE ready_at_ms END,
+               delivered_at_ms = CASE WHEN ?1 = 'entregado' THEN COALESCE(delivered_at_ms, ?4) ELSE delivered_at_ms END
+             WHERE business_id = ?5 AND id = ?6 AND customer_id = ?7`,
           )
           .bind(order.state, order.version, write.confirming ? 1 : 0, write.nowMs, businessId, order.orderId, write.customerId),
       );
@@ -233,9 +243,9 @@ export class D1OrderStore implements OrderStore {
           businessId,
           write.auditKind,
           order.orderId,
-          write.customerId,
+          write.actorId ?? write.customerId,
           write.nowMs,
-          JSON.stringify({ from: write.base?.state ?? null, to: order.state, version: order.version }),
+          JSON.stringify({ from: write.base?.state ?? null, to: order.state, version: order.version, ...write.auditDetail }),
         ),
       // UNIQUE (business_id, operation_key): only settles a race; the engine read the key first.
       this.db

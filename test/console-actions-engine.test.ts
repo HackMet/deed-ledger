@@ -1,8 +1,11 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
+import type { MemberContext } from "../src/application/engine";
+import { staffKey } from "../src/application/engine/order-engine";
+import type { ActionEnvelope, ConsoleAction } from "../src/domain/contract/actions";
 import type { Claim, OrderState } from "../src/domain/contract/outcomes";
-import { addAndPickup, ids, moreSugar } from "./fixtures/contract";
-import { engine, newStore, placeFirstOrder, save, store, T0, tap } from "./helpers/orders";
+import { addAndPickup, ids, moreSugar, noHayAceite, offerMazola, staleReady } from "./fixtures/contract";
+import { count, engine, footprint, newStore, placeFirstOrder, save, store, T0, tap } from "./helpers/orders";
 
 type Store = Awaited<ReturnType<typeof newStore>>;
 
@@ -173,5 +176,279 @@ describe("preparationList: confirmado, preparando and listo, oldest confirmation
     await save(again);
     await confirm(s, v1.orderId, 3, T0 + 5000);
     expect((await engine.preparationList(s.context()))[0]?.changedLineIds).toEqual(["L6"]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Staff on the preparation list.
+
+const member = (s: Store, over: Partial<MemberContext> = {}): MemberContext => ({
+  businessId: s.businessId,
+  memberId: ids.staff,
+  role: "staff",
+  canApproveFiado: false,
+  nowMs: T0 + 10_000,
+  ...over,
+});
+
+type StaffAction = Extract<ConsoleAction, { type: "start_preparing" | "mark_line" | "mark_ready" | "mark_delivered" }>;
+
+/** A staff tap shaped like the fixtures', carrying the key the engine derives for it. */
+function staffTap(action: StaffAction, over: Partial<ActionEnvelope<ConsoleAction>> = {}): ActionEnvelope<ConsoleAction> {
+  return { ...staleReady, operationKey: staffKey(action), action, ...over };
+}
+
+const step = (type: "start_preparing" | "mark_ready" | "mark_delivered", orderId: string, version = 1): StaffAction => ({ type, orderId, version });
+
+const orderRow = (orderId: string) =>
+  env.DB.prepare(`SELECT state, current_version, first_confirmed_at_ms, ready_at_ms, delivered_at_ms FROM orders WHERE id = ?`)
+    .bind(orderId)
+    .first();
+
+const lastAudit = (orderId: string) =>
+  env.DB.prepare(`SELECT kind, actor_id, at_ms, detail_json FROM audit_events WHERE subject_id = ? ORDER BY at_ms DESC, rowid DESC LIMIT 1`)
+    .bind(orderId)
+    .first<{ kind: string; actor_id: string; at_ms: number; detail_json: string }>()
+    .then((row) => row && { ...row, detail: JSON.parse(row.detail_json) as unknown });
+
+/** A confirmed order of the fixture's customer, as staff see it. */
+async function confirmedOrder(s: Store) {
+  const v1 = await placeFirstOrder(s);
+  await confirm(s, v1.orderId, 1);
+  return (await store.order(s.context(), v1.orderId))!.view;
+}
+
+describe("onConsoleAction: staff move an order along the list, every refusal answered by a read", () => {
+  it("saves start_preparing, mark_line, mark_ready and mark_delivered with their rows, audits and notices", async () => {
+    const s = await newStore();
+    const confirmed = await confirmedOrder(s);
+    const { orderId } = confirmed;
+    expect(confirmed).toMatchObject({ state: "confirmado", queuePosition: 1 });
+
+    const start = await engine.onConsoleAction(member(s), staffTap(step("start_preparing", orderId)));
+    const preparing = { ...confirmed, state: "preparando" as const };
+    expect(start.outcome).toEqual({ type: "action_saved", order: preparing });
+    expect(start.notices).toEqual([]);
+    expect(start.commits.every((c) => c.post === undefined || c.post.length === 0)).toBe(true);
+    await save(start);
+    expect(await orderRow(orderId)).toEqual({
+      state: "preparando",
+      current_version: 1,
+      first_confirmed_at_ms: T0 + 1000,
+      ready_at_ms: null,
+      delivered_at_ms: null,
+    });
+    expect(await lastAudit(orderId)).toMatchObject({
+      kind: "order_preparing",
+      actor_id: ids.staff,
+      at_ms: T0 + 10_000,
+      detail: { from: "confirmado", to: "preparando", version: 1 },
+    });
+    expect((await store.order(s.context(), orderId))?.view).toEqual(preparing);
+
+    // Line marks keep preparando; the customer hears about a missing line and an offered one.
+    const marks = [
+      // The fixtures' marks, aimed at this order's lines.
+      { type: "mark_line", orderId, version: 1, lineId: "L2", mark: "no_hay", substituteProductId: null },
+      { type: "mark_line", orderId, version: 1, lineId: "L3", mark: "ofrecer_otro", substituteProductId: "product-mazola-1l" },
+      { type: "mark_line", orderId, version: 1, lineId: "L4", mark: "listo", substituteProductId: null },
+    ] as const satisfies readonly StaffAction[];
+    expect(marks.map(({ mark, substituteProductId }) => ({ mark, substituteProductId })).slice(0, 2)).toEqual(
+      [noHayAceite.action, offerMazola.action].map((a) => ({ mark: "mark" in a ? a.mark : null, substituteProductId: "substituteProductId" in a ? a.substituteProductId : null })),
+    );
+    const noticesOf = [] as unknown[];
+    for (const [index, mark] of marks.entries()) {
+      const marked = await engine.onConsoleAction(member(s, { nowMs: T0 + 11_000 + index }), staffTap(mark));
+      expect(marked.outcome).toEqual({ type: "action_saved", order: preparing });
+      expect(marked.commits.every((c) => c.post === undefined || c.post.length === 0)).toBe(true);
+      noticesOf.push(marked.notices);
+      await save(marked);
+      expect(await lastAudit(orderId)).toMatchObject({
+        kind: "order_line_marked",
+        actor_id: ids.staff,
+        detail: { from: "preparando", to: "preparando", version: 1, lineId: mark.lineId, mark: mark.mark, substituteProductId: mark.substituteProductId },
+      });
+    }
+    expect(noticesOf).toEqual([
+      [{ customerId: ids.customer, notice: { type: "line_unavailable", order: preparing, lineId: "L2" } }],
+      [{ customerId: ids.customer, notice: { type: "substitute_offered", order: preparing, lineId: "L3" } }],
+      [],
+    ]);
+    expect(await orderRow(orderId)).toMatchObject({ state: "preparando" });
+
+    const ready = await engine.onConsoleAction(member(s, { nowMs: T0 + 20_000 }), staffTap(step("mark_ready", orderId)));
+    const listo = { ...confirmed, state: "listo" as const, queuePosition: null };
+    expect(ready).toMatchObject({
+      outcome: { type: "action_saved", order: listo },
+      notices: [{ customerId: ids.customer, notice: { type: "order_ready", order: listo } }],
+    });
+    await save(ready);
+    expect(await orderRow(orderId)).toMatchObject({ state: "listo", ready_at_ms: T0 + 20_000, delivered_at_ms: null });
+    expect(await lastAudit(orderId)).toMatchObject({ kind: "order_ready", actor_id: ids.staff, detail: { from: "preparando", to: "listo" } });
+    expect((await store.order(s.context(), orderId))?.view).toEqual(listo);
+
+    const owner = member(s, { memberId: "member-owner", role: "owner", nowMs: T0 + 30_000 });
+    const delivered = await engine.onConsoleAction(
+      owner,
+      staffTap(step("mark_delivered", orderId), { actor: { type: "member", memberId: "member-owner", role: "owner" } }),
+    );
+    const entregado = { ...listo, state: "entregado" as const };
+    expect(delivered).toMatchObject({ outcome: { type: "action_saved", order: entregado }, notices: [] });
+    await save(delivered);
+    expect(await orderRow(orderId)).toEqual({
+      state: "entregado",
+      current_version: 1,
+      first_confirmed_at_ms: T0 + 1000,
+      ready_at_ms: T0 + 20_000,
+      delivered_at_ms: T0 + 30_000,
+    });
+    expect(await lastAudit(orderId)).toMatchObject({ kind: "order_delivered", actor_id: "member-owner", detail: { from: "listo", to: "entregado" } });
+    // Off the list once delivered.
+    expect(await engine.preparationList(s.context())).toEqual([]);
+    expect(await footprint(s.businessId)).toEqual({ orders: 1, versions: 1, lines: 4, operations: 8, audit: 8 });
+  });
+
+  it("refuses mark_ready on a cancelled order from the read: invalid_state, nothing written", async () => {
+    const s = await newStore();
+    const confirmed = await confirmedOrder(s);
+    await cancel(s, confirmed.orderId, 1);
+    const before = await footprint(s.businessId);
+
+    const refused = await engine.onConsoleAction(member(s), staffTap(step("mark_ready", confirmed.orderId)));
+    expect(refused).toEqual({
+      outcome: { type: "rejected", reason: "invalid_state", order: { ...confirmed, state: "cancelado", queuePosition: null } },
+      notices: [],
+      commits: [],
+    });
+    // Each other step from the wrong state is refused the same way.
+    for (const type of ["start_preparing", "mark_delivered"] as const) {
+      expect((await engine.onConsoleAction(member(s), staffTap(step(type, confirmed.orderId)))).outcome).toMatchObject({
+        type: "rejected",
+        reason: "invalid_state",
+      });
+    }
+    const line = { type: "mark_line", orderId: confirmed.orderId, version: 1, lineId: "L1", mark: "listo", substituteProductId: null } as const;
+    expect((await engine.onConsoleAction(member(s), staffTap(line))).outcome).toMatchObject({ reason: "invalid_state" });
+    expect(await footprint(s.businessId)).toEqual(before);
+  });
+
+  it("lets the guard settle a race the read could not see: a cancel lands between the read and the save", async () => {
+    const s = await newStore();
+    const confirmed = await confirmedOrder(s);
+    const start = await engine.onConsoleAction(member(s), staffTap(step("start_preparing", confirmed.orderId)));
+    expect(start.outcome.type).toBe("action_saved");
+    await cancel(s, confirmed.orderId, 1);
+    const before = await footprint(s.businessId);
+
+    await expect(save(start)).rejects.toThrow(/order_moved/);
+    expect(await footprint(s.businessId)).toEqual(before);
+    expect(await orderRow(confirmed.orderId)).toMatchObject({ state: "cancelado" });
+  });
+
+  it("answers a double tap from the read: duplicate with the first outcome, saved once", async () => {
+    const s = await newStore();
+    const confirmed = await confirmedOrder(s);
+    const envelope = staffTap(step("start_preparing", confirmed.orderId));
+    const first = await engine.onConsoleAction(member(s), envelope);
+    await save(first);
+    const before = await footprint(s.businessId);
+
+    // The order is preparando now, so only the key read can answer this (a state check would say invalid_state).
+    const again = await engine.onConsoleAction(member(s), envelope);
+    expect(again).toEqual({ outcome: { type: "duplicate", first: first.outcome }, notices: [], commits: [] });
+    await save(again);
+    expect(await footprint(s.businessId)).toEqual(before);
+    expect(await count(`operations WHERE business_id = ? AND operation_key = ?`, s.businessId, envelope.operationKey)).toBe(1);
+  });
+
+  it("refuses a tap on an older version as stale_version with the current view", async () => {
+    const s = await newStore();
+    const confirmed = await confirmedOrder(s);
+    await save(await engine.onBurst(s.context({ nowMs: T0 + 2000 }), addAndPickup, []));
+    await confirm(s, confirmed.orderId, 2, T0 + 3000);
+    const v2 = (await store.order(s.context(), confirmed.orderId))!.view;
+    expect(v2).toMatchObject({ version: 2, state: "confirmado" });
+    const before = await footprint(s.businessId);
+
+    const stale = await engine.onConsoleAction(member(s), staffTap(step("start_preparing", confirmed.orderId, 1)));
+    expect(stale).toEqual({ outcome: { type: "rejected", reason: "stale_version", order: v2 }, notices: [], commits: [] });
+    expect(await footprint(s.businessId)).toEqual(before);
+  });
+
+  it("refuses another store's order, a key it didn't derive, an unknown line and a spoofed actor", async () => {
+    const s = await newStore();
+    const other = await newStore();
+    const confirmed = await confirmedOrder(s);
+    const { orderId } = confirmed;
+    const before = await footprint(s.businessId);
+    const start = step("start_preparing", orderId);
+    const refusal = (reason: string, order: unknown = null) => ({ outcome: { type: "rejected", reason, order }, notices: [], commits: [] });
+
+    // Staff of another store: the order doesn't resolve there.
+    expect(await engine.onConsoleAction(member(other), staffTap(start))).toEqual(refusal("not_found"));
+    // D-44: the fixture's own key, a key for another action, and one for another order.
+    for (const operationKey of [noHayAceite.operationKey, staffKey(step("mark_ready", orderId)), staffKey(step("start_preparing", "order-x"))]) {
+      expect(await engine.onConsoleAction(member(s), staffTap(start, { operationKey }))).toEqual(refusal("not_allowed"));
+    }
+    const ghost = { type: "mark_line", orderId, version: 1, lineId: "L9", mark: "no_hay", substituteProductId: null } as const;
+    await save(await engine.onConsoleAction(member(s), staffTap(start)));
+    const preparing = (await store.order(s.context(), orderId))!.view;
+    expect(await engine.onConsoleAction(member(s), staffTap(ghost))).toEqual(refusal("not_found", preparing));
+
+    // The actor must be the signed-in member, as they are.
+    for (const actor of [
+      { type: "member", memberId: "member-someone-else", role: "staff" },
+      { type: "member", memberId: ids.staff, role: "owner" },
+      { type: "customer", customerId: ids.customer },
+    ] as const) {
+      expect(await engine.onConsoleAction(member(s), staffTap(step("mark_ready", orderId), { actor }))).toEqual(refusal("not_allowed"));
+    }
+    expect(await footprint(s.businessId)).toEqual({ ...before, operations: before.operations + 1, audit: before.audit + 1 });
+  });
+
+  it("refuses every console action that isn't a staff step as not_allowed, without throwing", async () => {
+    const s = await newStore();
+    const confirmed = await confirmedOrder(s);
+    const before = await footprint(s.businessId);
+    const actions: ConsoleAction[] = [
+      { type: "match_line", orderId: confirmed.orderId, version: 1, lineId: "L1", productId: "p" },
+      { type: "confirm_payment", paymentClaimId: "c" },
+      { type: "reject_payment", paymentClaimId: "c" },
+      { type: "approve_fiado", fiadoClaimId: "f" },
+      { type: "propose_price", productId: "p", price: 100 },
+      { type: "confirm_price", productId: "p", price: 100 },
+      { type: "record_count", productId: "p", count: "3" },
+      { type: "confirm_observation", observationId: "o" },
+      { type: "set_pause", paused: true },
+      { type: "reply_as_store", conversationId: "c", body: "hola" },
+    ];
+    const owner = member(s, { memberId: "member-owner", role: "owner", canApproveFiado: true });
+    for (const action of actions) {
+      const envelope = { operationKey: `staff:${action.type}`, actor: { type: "member", memberId: "member-owner", role: "owner" }, action } as const;
+      expect(await engine.onConsoleAction(owner, envelope)).toEqual({
+        outcome: { type: "rejected", reason: "not_allowed", order: null },
+        notices: [],
+        commits: [],
+      });
+    }
+    expect(await footprint(s.businessId)).toEqual(before);
+  });
+
+  it("D-43: once preparando a customer cancel is refused, and a re-confirm after a change returns to preparando", async () => {
+    const s = await newStore();
+    const confirmed = await confirmedOrder(s);
+    await save(await engine.onConsoleAction(member(s), staffTap(step("start_preparing", confirmed.orderId))));
+
+    const cancelTap = await engine.onCustomerAction(
+      s.context(),
+      tap(confirmed.orderId, 1, { operationKey: `cancel:${confirmed.orderId}:v1`, action: { type: "cancel_order", orderId: confirmed.orderId, version: 1 } }),
+    );
+    expect(cancelTap.outcome).toMatchObject({ type: "rejected", reason: "invalid_state", order: { state: "preparando" } });
+
+    await save(await engine.onBurst(s.context({ nowMs: T0 + 12_000 }), addAndPickup, []));
+    await confirm(s, confirmed.orderId, 2, T0 + 13_000);
+    expect(await orderRow(confirmed.orderId)).toMatchObject({ state: "preparando", current_version: 2 });
+    const [card] = await engine.preparationList(s.context());
+    expect(card).toMatchObject({ order: { state: "preparando", version: 2 }, changedLineIds: ["L5"], confirmedAtMs: T0 + 1000 });
   });
 });
