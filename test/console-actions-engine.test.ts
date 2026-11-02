@@ -451,4 +451,34 @@ describe("onConsoleAction: staff move an order along the list, every refusal ans
     const [card] = await engine.preparationList(s.context());
     expect(card).toMatchObject({ order: { state: "preparando", version: 2 }, changedLineIds: ["L5"], confirmedAtMs: T0 + 1000 });
   });
+
+  it("keys a tap by version: the same line marked again after a change and re-confirm is saved, not a duplicate", async () => {
+    const s = await newStore();
+    const confirmed = await confirmedOrder(s);
+    const { orderId } = confirmed;
+    await save(await engine.onConsoleAction(member(s), staffTap(step("start_preparing", orderId))));
+    const markL2 = (version: number): StaffAction => ({ type: "mark_line", orderId, version, lineId: "L2", mark: "no_hay", substituteProductId: null });
+    await save(await engine.onConsoleAction(member(s, { nowMs: T0 + 11_000 }), staffTap(markL2(1))));
+
+    // The customer changes the order and re-confirms it; D-43 returns it to preparando at v2.
+    await save(await engine.onBurst(s.context({ nowMs: T0 + 12_000 }), addAndPickup, []));
+    await confirm(s, orderId, 2, T0 + 13_000);
+    const v2 = (await store.order(s.context(), orderId))!.view;
+    expect(v2).toMatchObject({ state: "preparando", version: 2 });
+    const before = await footprint(s.businessId);
+
+    const again = await engine.onConsoleAction(member(s, { nowMs: T0 + 14_000 }), staffTap(markL2(2)));
+    expect(again.outcome).toEqual({ type: "action_saved", order: v2 });
+    expect(staffKey(markL2(2))).not.toBe(staffKey(markL2(1)));
+    expect(again.notices).toEqual([{ customerId: ids.customer, notice: { type: "line_unavailable", order: v2, lineId: "L2" } }]);
+    await save(again);
+    expect(await footprint(s.businessId)).toEqual({ ...before, operations: before.operations + 1, audit: before.audit + 1 });
+    expect(await count(`operations WHERE business_id = ? AND operation_key = ?`, s.businessId, staffKey(markL2(2)))).toBe(1);
+    expect(await lastAudit(orderId)).toMatchObject({
+      kind: "order_line_marked",
+      actor_id: ids.staff,
+      at_ms: T0 + 14_000,
+      detail: { from: "preparando", to: "preparando", version: 2, lineId: "L2", mark: "no_hay" },
+    });
+  });
 });
