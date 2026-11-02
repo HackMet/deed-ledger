@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { beforeAll, describe, expect, it } from "vitest";
-import { JobConflictError, LeaseLostError } from "../src/application/errors";
+import { JobConflictError, LeaseLostError, PermanentWriteError } from "../src/application/errors";
 import { placeholderHandler } from "../src/application/placeholder-handler";
 import type { Commit, JobHandler, JobInput, Lease } from "../src/application/ports";
 import { couldNotProcess, RECEIVED_PLACEHOLDER } from "../src/domain/copy";
@@ -130,21 +130,39 @@ describe("a job's commits save with the job (JobOutcome.commits)", () => {
     expect(h.sentTo(phone)).toEqual([couldNotProcess("text")]);
   });
 
-  it("refuses a commit with post guards until the fence runs them, and saves nothing", async () => {
-    const h = harness({
+  // Replaces "refuses a commit with post guards": the fence runs them now, so a commit that
+  // carries post guards saves, and one whose post guard doesn't hold rolls the batch back.
+  it("runs a commit's post guards in the same batch: holding saves, failing saves nothing", async () => {
+    const holds = harness({
       jobHandler: {
         async handle(input) {
           const { replies } = await placeholderHandler.handle(input);
-          const commit = factCommit(input, `post:${input.job.id}`);
-          return { replies, commits: [{ ...commit, post: commit.guards }] };
+          const commit = factCommit(input, `post-ok:${input.job.id}`);
+          return { replies, commits: [{ ...commit, post: [{ holdsSql: "SELECT 1", params: [], error: () => new Error("unused") }] }] };
         },
       },
     });
-    const { store } = await sendText(h, "seis huevos");
-    await h.deliver();
+    const ok = await sendText(holds, "seis huevos");
+    await holds.deliver();
+    expect(await factsOf(ok.store.businessId)).toHaveLength(1);
+    expect(await jobsOf(ok.store.businessId)).toMatchObject([{ job_state: "done" }]);
 
-    expect(await factsOf(store.businessId)).toEqual([]);
-    expect(await jobsOf(store.businessId)).toMatchObject([{ job_state: "failed", last_error: "commit_rejected" }]);
+    const fails = harness({
+      jobHandler: {
+        async handle(input) {
+          const { replies } = await placeholderHandler.handle(input);
+          const commit = factCommit(input, `post-bad:${input.job.id}`);
+          return {
+            replies,
+            commits: [{ ...commit, post: [{ holdsSql: "SELECT NULL", params: [], error: () => new PermanentWriteError("post guard failed") }] }],
+          };
+        },
+      },
+    });
+    const bad = await sendText(fails, "seis huevos");
+    await fails.deliver();
+    expect(await factsOf(bad.store.businessId)).toEqual([]);
+    expect(await jobsOf(bad.store.businessId)).toMatchObject([{ job_state: "failed", last_error: "commit_rejected" }]);
   });
 
   it("saves the commits even when the closing reply is withheld for a newer message", async () => {

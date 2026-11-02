@@ -149,3 +149,28 @@ export class BurstMediaUnreadableError extends Error {
     super(`${failures.length} burst media message(s) could not be read`);
   }
 }
+
+/**
+ * A fact refused inside its commit batch: the draft isn't the pending, unexpired revision the
+ * commit pins, something it depends on is no longer live, or the fact it closes is absent, foreign or already closed. Nothing in the batch was applied.
+ */
+export class FactRefusedError extends Error {
+  override readonly name = "FactRefusedError";
+
+  constructor(readonly reason: "draft_not_pending" | "dependency_not_live" | "closes_not_live") {
+    super(`fact refused: ${reason}`);
+  }
+}
+
+/**
+ * An order write refused inside its batch: the order moved since the engine read it (another
+ * version, another state), or the customer opened an order meanwhile. Nothing was applied. A race,
+ * never the first answer (D-42): the retry's read produces the outcome.
+ */
+export class OrderMovedError extends Error {
+  override readonly name = "OrderMovedError";
+
+  constructor(readonly reason: "order_moved" | "open_order_exists") {
+    super(`order write refused: ${reason}`);
+  }
+}

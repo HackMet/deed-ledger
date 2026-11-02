@@ -35,6 +35,9 @@ describe("test environment", () => {
       "0017_customer_places.sql",
       "0018_pendientes.sql",
       "0019_store_setup.sql",
+      "0020_ledger.sql",
+      "0021_orders.sql",
+      "0022_order_line_details.sql",
     ]);
   });
 
