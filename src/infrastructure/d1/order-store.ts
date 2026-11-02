@@ -1,5 +1,5 @@
 import { OrderMovedError } from "../../application/errors";
-import { fromThousandths, type OrderStore, type OrderWrite, type StoredOrder } from "../../application/engine/order-engine";
+import { fromThousandths, type OrderHead, type OrderStore, type OrderWrite, type StoredOrder } from "../../application/engine/order-engine";
 import type { Commit, Tenant } from "../../application/ports";
 import type { EngineOutcome, OrderLineView, OrderState, OrderView } from "../../domain/contract/outcomes";
 import { toThousandths } from "../../domain/contract/numbers";
@@ -84,6 +84,19 @@ export class D1OrderStore implements OrderStore {
       .bind(tenant.businessId, JSON.stringify(productIds))
       .all<{ id: string; canonical_name: string }>();
     return new Map(results.map((row) => [row.id, row.canonical_name]));
+  }
+
+  async orderHead(tenant: Tenant, orderId: string): Promise<OrderHead | null> {
+    const row = await this.db
+      .prepare(
+        `SELECT o.current_version AS version, o.state, v.total_centavos AS total
+         FROM orders o
+         JOIN order_versions v ON v.business_id = o.business_id AND v.order_id = o.id AND v.version = o.current_version
+         WHERE o.business_id = ? AND o.id = ?`,
+      )
+      .bind(tenant.businessId, orderId)
+      .first<OrderHead>();
+    return row ?? null;
   }
 
   async queuePosition(tenant: Tenant, orderId: string, confirmedAtMs: number): Promise<number> {

@@ -25,6 +25,14 @@ export interface StoredOrder {
   readonly resumeState: "confirmado" | "preparando" | null;
 }
 
+/** What the claim check reads of an order: its current version only. */
+export interface OrderHead {
+  readonly version: number;
+  readonly state: OrderState;
+  /** Null when unknown. */
+  readonly total: number | null;
+}
+
 /** One decision to save: the order as it reads after the write, and what the decision read. */
 export interface OrderWrite {
   readonly operationKey: string;
@@ -51,6 +59,8 @@ export interface OrderStore {
   customerOrder(tenant: Tenant, customerId: string, orderId: string): Promise<StoredOrder | null>;
   /** Catalog names of the products that exist in this store; others are left out. */
   productNames(tenant: Tenant, productIds: readonly string[]): Promise<ReadonlyMap<string, string>>;
+  /** The current version's number, state and total of an order in this store; null when absent. */
+  orderHead(tenant: Tenant, orderId: string): Promise<OrderHead | null>;
   /** 1 is next, counting orders holding a place in line confirmed before `confirmedAtMs`. */
   queuePosition(tenant: Tenant, orderId: string, confirmedAtMs: number): Promise<number>;
   commitFor(tenant: Tenant, write: OrderWrite): Commit;
@@ -256,12 +266,28 @@ export class OrderEngine implements Engine {
     throw new Error("not implemented: issue #12");
   }
 
-  async verifyClaims(_tenant: Tenant, _claims: readonly Claim[]): Promise<readonly boolean[]> {
-    throw new Error("not implemented: issue #12");
+  async verifyClaims(tenant: Tenant, claims: readonly Claim[]): Promise<readonly boolean[]> {
+    return Promise.all(claims.map((claim) => this.verifyClaim(tenant, claim)));
   }
 
   async preparationList(_tenant: Tenant): Promise<readonly PreparationCard[]> {
     throw new Error("not implemented: issue #12");
+  }
+
+  /** True only when the records back the claim now. Absent means unknown: anything not stored is false. */
+  private async verifyClaim(tenant: Tenant, claim: Claim): Promise<boolean> {
+    try {
+      if (typeof claim !== "object" || claim === null) return false;
+      if (claim.type !== "order_state" && claim.type !== "order_total") return false;
+      if (typeof claim.orderId !== "string" || !Number.isInteger(claim.version)) return false;
+      const head = await this.deps.store.orderHead(tenant, claim.orderId);
+      if (head === null || head.version !== claim.version) return false;
+      // unit_price, availability, payment_confirmed, balance and store hours aren't stored in this cut.
+      return claim.type === "order_state" ? head.state === claim.state : head.total !== null && head.total === claim.total;
+    } catch {
+      // A claim the records can't back right now isn't sent.
+      return false;
+    }
   }
 
   /** New content: the next version in por_confirmar, read back. After confirming, D-38. */
