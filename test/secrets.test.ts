@@ -22,9 +22,9 @@ describe("test environment", () => {
       "0001_tenancy.sql",
       "0002_messaging.sql",
       "0003_console_auth.sql",
-      "0004_ledger.sql",
-      "0005_orders.sql",
-      "0006_order_line_details.sql",
+      "0020_ledger.sql",
+      "0021_orders.sql",
+      "0022_order_line_details.sql",
     ]);
   });
 

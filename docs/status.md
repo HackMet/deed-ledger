@@ -23,7 +23,7 @@ Last updated: Fri Oct 30, 2026, evening Honduras time, by Claude Code (E7: docs 
     console. For the spec meeting; not agreed.
   - The console's preparation list, on an in-memory pretend engine. Console login (#22) is in PR #61
     (`claude/console-login`).
-- Fact memory is plumbing under the engine (#11), not a deliverable of its own: the ledger migration `0004_ledger.sql`,
+- Fact memory is plumbing under the engine (#11), not a deliverable of its own: the ledger migration `0020_ledger.sql`,
   `FactCommit` in `domain/facts.ts`, `D1FactLedger.statementsFor` turning one into a `Commit` (D-41), post-guards that
   the fence now runs inside the batch, cancellation as compensating movements, and the dependency gate G4. On local D1
   only, **not deployed**. The chain's trace records T1 to T5 as PASS.

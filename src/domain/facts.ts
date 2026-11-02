@@ -3,7 +3,7 @@
  * Shapes follow the fact-memory spec (§3 schema, §4 port change).
  */
 
-/** What a fact rests on. Mirrors the `fact_evidence.kind` CHECK in migrations/0004_ledger.sql. */
+/** What a fact rests on. Mirrors the `fact_evidence.kind` CHECK in migrations/0020_ledger.sql. */
 export interface EvidenceRef {
   readonly kind: "inbound_message" | "media_asset" | "confirmation" | "stock_movement" | "fact";
   readonly refId: string;
