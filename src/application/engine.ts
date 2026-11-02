@@ -8,14 +8,18 @@ import type { BurstReading } from "../domain/contract/observation";
 import type { Claim, CustomerNotice, EngineOutcome, PreparationCard } from "../domain/contract/outcomes";
 import type { Commit, Tenant } from "./ports";
 
-/** A catalog match found by code, inside the store's scope. Never proposed by the model. */
+/**
+ * A catalog match inside the store's scope. The product ID always comes from code: `label_pick` is
+ * the model choosing one of the labels code put in the prompt, mapped back by code (proposed). The
+ * customer confirms the readback, which names the product, before anything is saved.
+ */
 export interface LineMatch {
   /** Index into the burst's observations. */
   readonly observation: number;
   /** Index into that observation's lines (or edits, for order_change). */
   readonly line: number;
   readonly productId: string;
-  readonly how: "barcode" | "exact_name" | "known_alias" | "customer_history";
+  readonly how: "barcode" | "exact_name" | "known_alias" | "customer_history" | "label_pick";
 }
 
 export interface CustomerContext extends Tenant {

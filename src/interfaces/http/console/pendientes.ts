@@ -2,11 +2,15 @@
  * Pendientes (wireframe C5, owner only): everything that needs the owner, grouped, so he isn't
  * interrupted message by message. Today: what the customer side raises (a customer asked for a
  * person, a question got "te confirmo", a late reply, a notice that couldn't go out, a reply the
- * claim check stopped). "Listo" takes an item off the list. The engine's items (prices, payments)
- * join once contract gap (c) is agreed.
+ * claim check stopped). Each card shows what the customer wrote; "Responder" sends the owner's
+ * answer to their chat and takes the item off the list, "Listo" only takes it off. The engine's
+ * items (prices, payments) join once contract gap (c) is agreed.
  */
 import type { Context, Hono } from "hono";
 import { html } from "hono/html";
+import { dispatchOutbox } from "../../../application/dispatch";
+import { describeError } from "../../../application/errors";
+import { OWNER_REPLY_MAX_CHARS, replyFromPendientes } from "../../../application/owner-reply";
 import type { OpenPendiente } from "../../../application/ports";
 import { formatStoreTime } from "../../../domain/store-time";
 import { type ConsoleEnv, requireOwner } from "./auth";
@@ -17,6 +21,10 @@ const PATH = "/console/pendientes";
 const NOTICES = {
   listo: "Listo, ya no aparece en la lista.",
   falta: "Ese pendiente ya no estaba en la lista.",
+  respondido: "Listo, le mandamos tu respuesta.",
+  ventana: "Tu respuesta queda lista, pero WhatsApp no deja mandarla hasta que el cliente vuelva a escribir. Llamale si es urgente.",
+  vacio: "Escribí la respuesta antes de tocar Responder.",
+  largo: `La respuesta es muy larga: máximo ${OWNER_REPLY_MAX_CHARS} letras.`,
 } as const;
 type NoticeKey = keyof typeof NOTICES;
 
@@ -58,6 +66,29 @@ ${group.items.map((item) => card(item, nowMs, csrf))}`,
     );
   });
 
+  app.post("/pendientes/responder", requireOwner, async (c) => {
+    const { deps } = c.get("runtime");
+    const form = await c.req.parseBody();
+    const id = form["pendiente"];
+    const text = form["respuesta"];
+    if (typeof id !== "string" || id.length === 0 || id.length > 100 || typeof text !== "string" || text.length > 4 * OWNER_REPLY_MAX_CHARS) {
+      return back(c, "falta");
+    }
+    const result = await replyFromPendientes(deps, c.get("member"), id, text);
+    if (result.status === "not_found") return back(c, "falta");
+    if (result.status === "empty") return back(c, "vacio");
+    if (result.status === "too_long") return back(c, "largo");
+    if (result.status === "sent") {
+      // Sent after the response; the cron sweep retries what doesn't go out now.
+      c.executionCtx.waitUntil(
+        dispatchOutbox(deps, { limit: 10, conversation: result.conversation }).catch((error: unknown) => {
+          deps.log.error("outbox_dispatch_failed", { ...result.conversation, reason: describeError(error) });
+        }),
+      );
+    }
+    return back(c, result.status === "sent" ? "respondido" : "ventana");
+  });
+
   app.post("/pendientes/listo", requireOwner, async (c) => {
     const { deps } = c.get("runtime");
     const id = (await c.req.parseBody())["pendiente"];
@@ -77,8 +108,18 @@ function card(item: OpenPendiente, nowMs: number, csrf: string) {
 <div class="row"><strong class="name">${item.customerName ?? "Cliente sin nombre"}</strong>${item.urgent ? html`<span class="chip late">urgente</span>` : ""}</div>
 <p class="muted">${formatStoreTime(item.raisedAtMs, nowMs)}${item.phoneEnding === null ? "" : html` · Su número termina en ${item.phoneEnding}`}</p>
 <p>${whatHappened(item)}</p>
+${item.said == null ? "" : html`<blockquote class="said">«${item.said}»</blockquote>`}
+${answerable(item) ? html`<form method="post" action="${PATH}/responder" class="answer">${csrfField(csrf)}<input type="hidden" name="pendiente" value="${item.id}">
+<label>Tu respuesta <small>(le llega por WhatsApp con tu nombre)</small><textarea name="respuesta" rows="2" maxlength="${OWNER_REPLY_MAX_CHARS}" placeholder="Sí hay, a L 65"></textarea></label>
+<button class="primary">Responder</button></form>` : ""}
 <form method="post" action="${PATH}/listo">${csrfField(csrf)}<input type="hidden" name="pendiente" value="${item.id}"><button>Listo</button></form>
 </article>`;
+}
+
+/** Items where the customer waits for a person's answer, in a conversation we can write to. */
+function answerable(item: OpenPendiente): boolean {
+  if (item.conversationId == null) return false;
+  return item.kind === "customer_question" || item.kind === "customer_handoff" || item.kind === "slow_reply" || item.kind === "claim_blocked";
 }
 
 /** What happened, in words the owner reads cold. The codes stay in the code. */
@@ -96,6 +137,11 @@ export function whatHappened(item: Pick<OpenPendiente, "kind" | "detail" | "coun
       if (item.detail === "availability") {
         return many === null ? "Preguntó si hay un producto y no lo sabemos. Le dijimos que le confirmamos." : `Preguntó si hay ${many} productos y no lo sabemos. Le dijimos que le confirmamos.`;
       }
+      if (item.detail === "order_prices") {
+        return many === null
+          ? "Confirmó un pedido con un producto sin precio. Le dijimos que le confirmamos el precio."
+          : `Confirmó un pedido con ${many} productos sin precio. Le dijimos que le confirmamos los precios.`;
+      }
       return "Preguntó el horario y no está puesto. Le dijimos que le confirmamos.";
     case "notice_waiting_window":
       return item.detail === "order_ready"
@@ -111,5 +157,8 @@ const STYLE = `
 .pendiente p{margin:6px 0}.pendiente .muted{margin-top:2px}
 .pendiente .name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pendiente form{display:flex;justify-content:flex-end}
+.pendiente form.answer{display:block;margin-top:8px}.pendiente form.answer textarea{width:100%;box-sizing:border-box}
+.pendiente form.answer button{margin-top:6px;width:100%}
+.pendiente .said{margin:6px 0;padding:6px 10px;border-left:3px solid var(--line,#ddd);color:var(--ink,#222);overflow-wrap:anywhere}
 .hint{font-size:14px;color:var(--mute)}
 `;

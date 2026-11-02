@@ -29,7 +29,9 @@ import { testEnv } from "./helpers/harness";
 const SETTLED_MS = 4_000;
 const ASK_NAME = COPY.askName;
 /** The next step once an order has lines: the name waits for the end (Oct 31). */
-const ASK_HOW = "¿Lo recogés en la tienda o te lo llevamos?";
+const ASK_HOW = "Anotado ✅ 3 × Arroz 1 lb, 2 × Azúcar 1 lb.\n¿Lo recogés en la tienda o te lo llevamos?";
+/** The confirmation for the stubbed readbacks below: no order number, a total of L 90. */
+const CONFIRMED = "Listo 🙌 Tu pedido quedó anotado. Total: L 90. Te aviso cuando esté listo.";
 const nowS = (h: Harness) => Math.floor(h.clock.now() / 1000);
 
 beforeAll(ensureLinesTable);
@@ -133,7 +135,7 @@ describe("readback answers reach the engine with no model", () => {
     await c.say("Confirmar");
 
     // The second answer confirms nothing again; it isn't left unanswered either (Oct 31).
-    expect(c.h.sentTo(c.phone)).toEqual([RECEIVED_PLACEHOLDER, COPY.confirmed, COPY.welcome]);
+    expect(c.h.sentTo(c.phone)).toEqual([RECEIVED_PLACEHOLDER, CONFIRMED, COPY.welcome]);
     const jobs = await rows<{ job_state: string }>(`SELECT job_state FROM inbound_messages WHERE business_id = ?`, c.store.businessId);
     expect(jobs.map((job) => job.job_state)).toEqual(["done", "done", "done"]);
   });
@@ -147,7 +149,7 @@ describe("readback answers reach the engine with no model", () => {
 
     await c.say("  CONFIRMÁR! ");
     await c.tap("confirm:o-2:v1", "Confirmar");
-    expect(c.h.sentTo(c.phone)).toEqual([RECEIVED_PLACEHOLDER, COPY.confirmed, COPY.welcome]);
+    expect(c.h.sentTo(c.phone)).toEqual([RECEIVED_PLACEHOLDER, CONFIRMED, COPY.welcome]);
     expect(await c.orderState("o-2")).toBe("confirmado");
   });
 
@@ -166,7 +168,7 @@ describe("readback answers reach the engine with no model", () => {
     expect(await rows(`SELECT id FROM outbound_messages WHERE business_id = ?`, c.store.businessId)).toEqual(outboxAfterFirst);
     await c.tap("confirm:o-3:v1", "Confirmar"); // a second tap: a new message, answered, confirming nothing
     expect((await c.engine.preparationList(c.tenant))[0]!.confirmedAtMs).toBe(confirmedAt);
-    expect(c.h.sentTo(c.phone)).toEqual([RECEIVED_PLACEHOLDER, COPY.confirmed, COPY.welcome]);
+    expect(c.h.sentTo(c.phone)).toEqual([RECEIVED_PLACEHOLDER, CONFIRMED, COPY.welcome]);
     expect(await rows(`SELECT 1 FROM inbound_messages WHERE business_id = ?`, c.store.businessId)).toHaveLength(3);
   });
 
@@ -201,7 +203,7 @@ describe("readback answers reach the engine with no model", () => {
     ).toEqual([{ last_readback_order_id: "o-4", last_readback_version: 2 }]);
 
     await c.say("Confirmar");
-    expect(c.h.sentTo(c.phone).at(-1)).toBe(COPY.confirmed);
+    expect(c.h.sentTo(c.phone).at(-1)).toBe(CONFIRMED);
     expect(await c.orderState("o-4")).toBe("confirmado");
   });
 
@@ -222,7 +224,7 @@ describe("readback answers reach the engine with no model", () => {
 
     // Typed after seeing v2, it confirms v2.
     await c.say("confirmar");
-    expect(c.h.sentTo(c.phone).at(-1)).toBe(COPY.confirmed);
+    expect(c.h.sentTo(c.phone).at(-1)).toBe(CONFIRMED);
     expect(await c.orderState("o-6")).toBe("confirmado");
   });
 
@@ -595,14 +597,15 @@ async function firstOrderTrip(readings: unknown[], makeEngine: () => PretendEngi
 
 const EXPECTED_READBACK = [
   "Tu pedido:",
-  "1. Aceite Clover 1 L: 1 × L 60 = L 60",
-  "2. Arroz 1 lb: 3 libras × L 30 = L 90",
-  "3. Jabón Xtra: 3 × L 35 = L 105",
-  "4. Azúcar 1 lb: 2 libras × L 30 = L 60",
+  "• 1 × Aceite Clover 1 L · L 60",
+  "• 3 × Arroz 1 lb · L 90",
+  "• 3 × Jabón Xtra · L 105",
+  "• 2 × Azúcar 1 lb · L 60",
   "Lo recogés en la tienda.",
-  "Total: L 315",
-  "¿Está bien así?",
-  "_También podés escribir: confirmar, corregir o cancelar._",
+  "*Total: L 315*",
+  "Pagás cuando lo recogés.",
+  "¿Te lo preparo así?",
+  "_O escribí: confirmar, corregir o cancelar._",
 ].join("\n");
 
 describe("the first order, from reading to reply", () => {
@@ -640,7 +643,7 @@ describe("the first order, from reading to reply", () => {
     await t.staffTap("mark_ready", "k-ready");
     expect((await t.engine.preparationList(t.tenant))[0]!.order.state).toBe("listo");
     // The engine's notice, rendered as the PRD says, was saved with the tap and reached the phone.
-    const READY = "Tu pedido ya está listo. Total L 315. Ya podés pasar a traerlo.";
+    const READY = "¡Tu pedido #101 ya está listo! 🙌 Total: L 315. Ya podés pasar por él.";
     expect(t.notices.map((notice) => renderNotice(notice.notice).body)).toEqual([READY]);
     expect(t.h.sentTo(t.phone).at(-1)).toBe(READY);
     // A second tap of the same button (same operation key) queues nothing more.
@@ -654,14 +657,15 @@ describe("the first order, from reading to reply", () => {
     // first-contact.test.ts. What they want comes first; the name arrives with the list.
     expect(sent[0]).toContain("Te tomo el pedido y te aviso cuando esté listo. ¿Qué te mando?");
     expect(sent.slice(1)).toEqual([
-      "¿De qué tamaño querés 1 aceite clover?",
-      "¿Lo recogés en la tienda o te lo llevamos?",
+      // The size question, for a line that fits two catalog products, lists them by number.
+      ["Anotado ✅ 3 × Arroz 1 lb, 3 × Jabón Xtra, 2 × Azúcar 1 lb.", "Para 1 aceite clover tengo:", "1. Aceite Clover 1 L · L 60", "2. Aceite Clover 500 ml · L 34", COPY.pickOption].join("\n"),
+      "Anotado ✅ 1 × Aceite Clover 1 L, 3 × Arroz 1 lb, 3 × Jabón Xtra, 2 × Azúcar 1 lb.\n¿Lo recogés en la tienda o te lo llevamos?",
       EXPECTED_READBACK,
       // Her name is on file, so Confirmar confirms at once and says it.
-      "Listo, Carla, tu pedido ya está en la lista de preparación. Te aviso cuando esté listo.",
-      "Vas primero en la lista. Te aviso apenas esté listo.",
+      "Listo, Carla 🙌 Tu pedido #101 quedó anotado. Total: L 315. Te aviso cuando esté listo.",
+      "Vas primero en la fila. Te aviso apenas esté listo.",
       READY,
-      COPY.statusReady,
+      "Tu pedido #101 ya está listo. Te esperamos 🙌",
     ]);
 
     // Each reply was written once and sent once, in order.
@@ -680,6 +684,45 @@ describe("the first order, from reading to reply", () => {
     expect(t.provider.requests).toHaveLength(6);
     expect(await rows(`SELECT 1 FROM inbound_messages WHERE business_id = ? AND job_state <> 'done'`, t.store.businessId)).toEqual([]);
   }, 30_000);
+
+  it("prices a line by the model's pick when the words match no name (store catalog without short names)", async () => {
+    // As the Tienda loader saves them: one name each, no "arroz" alias. Labels follow this order.
+    const storeCatalog: readonly PretendProduct[] = [
+      { productId: "p-arroz", names: ["Arroz 1 lb"], aliases: [], barcode: null, price: 1800 },
+      { productId: "p-azucar", names: ["Azúcar 1 lb"], aliases: [], barcode: null, price: 1650 },
+    ];
+    const said = "Queria 5 libras de arroz y 5 libras de azucar";
+    const order = {
+      observations: [
+        {
+          kind: "customer_order",
+          lines: [
+            line("5 libras de arroz", "arroz", "5", "libra", quote(0, "5 libras de arroz"), { pick: "P1" }),
+            line("5 libras de azucar", "azucar", "5", "libra", quote(0, "5 libras de azucar"), { pick: "P2" }),
+          ],
+          ...none,
+        },
+      ],
+    };
+    // "Hola" is small talk, answered without a model call.
+    const t = await firstOrderTrip([order, READINGS.pickup], () => new MemoryEngine(() => [], { catalog: storeCatalog }));
+    await t.burst(t.text("Hola"));
+    await t.burst(t.text(said));
+    await t.burst(t.text("Lo paso a recoger luego"));
+
+    expect(t.h.sentTo(t.phone).at(-1)).toBe(
+      [
+        "Tu pedido:",
+        "• 5 × Arroz 1 lb · L 90",
+        "• 5 × Azúcar 1 lb · L 82.50",
+        "Lo recogés en la tienda.",
+        "*Total: L 172.50*",
+        "Pagás cuando lo recogés.",
+        "¿Te lo preparo así?",
+        "_O escribí: confirmar, corregir o cancelar._",
+      ].join("\n"),
+    );
+  });
 
   it("stamps the readback when its reply is built, not when the reading began", async () => {
     const t = await firstOrderTrip([READINGS.hola, READINGS.nameListVoice, READINGS.deLitro, READINGS.pickup]);

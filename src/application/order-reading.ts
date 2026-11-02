@@ -7,7 +7,7 @@
 import type { BurstReading, Observation, PerceptionContext } from "../domain/contract/observation";
 import { type BurstMessage, isSupportedImage } from "../domain/perception/burst";
 import { LEASE_TTL_MS, READING_MAX_MS, TRANSCRIBE_MAX_MS } from "../domain/processing";
-import type { CustomerContext, Engine } from "./engine";
+import type { CustomerContext, Engine, LineMatch } from "./engine";
 import {
   BurstMediaUnreadableError,
   describeError,
@@ -110,11 +110,10 @@ async function readBurst(deps: OrderReadingDeps, { lease, messages, context }: B
   await holdLeaseFor(deps, lease, READING_MAX_MS);
   const outcome = await deps.reader.read(tenant, { audience: "customer", messages: burst, context: perception, catalog });
   if (!outcome.ok) throw new ReadingFailedError(outcome.reason);
-  if (outcome.labelMatches.length > 0) {
-    // The model's picks among labels code supplied aren't LineMatches until the contract says so.
-    deps.log.info("perception.label_picks_unused", { businessId: tenant.businessId, count: outcome.labelMatches.length });
-  }
-  return { reading: withSharedPin(outcome.reading, burst), matches: outcome.matches, pendingQuestion: perception.pendingQuestion };
+  // Code matches come first; a pick only fills a line code couldn't match (resolvePicks).
+  const picks: LineMatch[] = outcome.labelMatches.map(({ observation, line, productId }) => ({ observation, line, productId, how: "label_pick" }));
+  if (picks.length > 0) deps.log.info("perception.label_picks_used", { businessId: tenant.businessId, count: picks.length });
+  return { reading: withSharedPin(outcome.reading, burst), matches: [...outcome.matches, ...picks], pendingQuestion: perception.pendingQuestion };
 }
 
 /**

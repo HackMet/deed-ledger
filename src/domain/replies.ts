@@ -17,6 +17,7 @@ import type {
   OrderLineView,
   OrderState,
   OrderView,
+  ProductOption,
   QuestionCode,
   StoreHours,
 } from "./contract/outcomes";
@@ -110,22 +111,25 @@ export const COPY = {
   /** The typed choices where no button goes with them (a status answer). */
   typedFallback: "Respondé Confirmar, Corregir o Cancelar.",
   /** The readback's last line, under its buttons: the typed fallback PRD §6.1 requires, softly. */
-  typedFallbackSoft: "_También podés escribir: confirmar, corregir o cancelar._",
+  typedFallbackSoft: "_O escribí: confirmar, corregir o cancelar._",
   readbackTitle: "Tu pedido:",
   changedTitle: "Listo, así queda tu pedido:",
   staleTapTitle: "Tu pedido cambió desde ese mensaje. Así está ahora:",
-  confirmQuestion: "¿Está bien así?",
+  confirmQuestion: "¿Te lo preparo así?",
   pickup: "Lo recogés en la tienda.",
+  /** How the store is paid, as the owner works today (to confirm with him): on pickup or delivery. */
+  payOnPickup: "Pagás cuando lo recogés.",
+  payOnDelivery: "Pagás cuando te lo entregamos.",
   totalUnknown: "El total te lo confirmo.",
-  confirmed: "Listo, tu pedido ya está en la lista de preparación. Te aviso cuando esté listo.",
+  confirmed: "Listo 🙌 Tu pedido quedó anotado. Te aviso cuando esté listo.",
   /** Asked once the customer said the order is right (Confirmar, or a typed yes) and no name is on file. */
   askName: "¡Va! ¿A nombre de quién lo anoto?",
   /** The name question again, once, after an answer that wasn't a name. Never blames. */
-  askNameAgain: "¿Me decís tu nombre para anotar el pedido? 🙏",
-  cancelled: "Listo, cancelé tu pedido. Si querés hacer otro, escribime cuando querás.",
+  askNameAgain: "Es solo para anotar de quién es el pedido 🙂 ¿A nombre de quién lo anoto?",
+  cancelled: "Listo, cancelé tu pedido. Cuando necesités algo, aquí estoy 🙌",
   statusBuilding: "Todavía estamos armando tu pedido.",
-  statusAwaitingConfirm: "Todavía estamos armando tu pedido. Falta que lo confirmés.",
-  statusOnList: "Tu pedido está en la lista de preparación. Te aviso apenas esté listo.",
+  statusAwaitingConfirm: "Tu pedido está armado, solo falta que me lo confirmés.",
+  statusOnList: "Tu pedido ya está en la fila. Te aviso apenas esté listo.",
   statusReady: "Tu pedido ya está listo.",
   statusDelivered: "Tu pedido ya fue entregado.",
   statusCancelled: "Ese pedido está cancelado. Si querés hacer otro, escribime.",
@@ -139,13 +143,13 @@ export const COPY = {
   // outcome only comes from a model reading, which stops nothing: point to the exact words instead.
   stopped: "Si no querés recibir más mensajes, escribí solo la palabra ALTO.",
   stoppedDelete: "Si querés que borremos tus datos, escribí: borren mis datos.",
-  outOfScope: "Solo te puedo ayudar con pedidos, precios y tu cuenta de la tienda. ¿Qué te mando?",
+  outOfScope: "De eso no sé 😅 Yo te ayudo con pedidos, precios y el horario de la tienda. ¿Qué te mando?",
   refusedTap: "Ese botón ya no aplica. Si necesitás algo con tu pedido, escribime.",
   whichProduct: "¿De qué producto me preguntás?",
   /** Store hours not set in settings (#47): never a guessed schedule. */
   hoursUnknown: "El horario te lo confirmo.",
   paymentRejected: "No pudimos confirmar ese pago. Si tenés otro comprobante, mandámelo.",
-  pickupReady: "Ya podés pasar a traerlo.",
+  pickupReady: "Ya podés pasar por él.",
   substituteFallback: "Tocá un botón o escribime qué preferís.",
   /** The same, when the buttons couldn't be built: nothing to tap. */
   substituteFallbackTyped: "Escribime qué preferís.",
@@ -162,6 +166,10 @@ export const COPY = {
   confirmNudgeTyped: "Para dejarlo listo, respondé Confirmar.",
   /** The last resort when nothing else would be said (an order is open). */
   anythingElse: "¿Qué más te mando?",
+  /** Under a list of options for an unclear line. */
+  pickOption: "¿Cuál te mando? Respondé con el número.",
+  /** Before the next question, what the order holds so far: the customer sees it was understood. */
+  noted: "Anotado ✅",
 } as const;
 
 /** "Se lo dejo anotado a Johan, te escribe por aquí." The owner's first name, as the console has it. */
@@ -171,7 +179,7 @@ export function handoffText(ownerName: string | null | undefined): string {
 
 /** A greeting in the middle of a conversation: "¡Buenas, Carla! 👋" (no name: "¡Buenas! 👋"). */
 export function greetingLine(customerName: string | null | undefined): string {
-  return customerName == null ? "¡Buenas! 👋" : `¡Buenas, ${quote(customerName)}! 👋`;
+  return customerName == null ? "¡Buenas! 👋" : `¡Buenas, ${firstName(customerName)}! 👋`;
 }
 
 export const PLACE_BUTTON_TITLES = { same: "Sí", other: "Otro lugar" } as const;
@@ -298,11 +306,14 @@ export function renderOutcome(outcome: EngineOutcome, context: RenderContext): R
       if (outcome.question === "same_place") return samePlaceReply(outcome.order, context.savedPlace ?? null);
       // A question about an order holds only while that version is still open: once it's
       // cancelled or delivered, asking about it would be wrong.
+      if (outcome.options !== undefined && outcome.options.length > 1 && outcome.order !== null) {
+        return optionsReply(outcome.order, outcome.line, outcome.options);
+      }
       return reply(
         "ask",
         outcome.question === "customer_name" && context.nameAsked === true
           ? COPY.askNameAgain
-          : askText(outcome.question, outcome.line, outcome.order),
+          : withEcho(outcome.question, outcome.order, askText(outcome.question, outcome.line, outcome.order), outcome.line),
         outcome.order === null ? [] : [stateIn(outcome.order, OPEN_STATES)],
       );
     case "readback":
@@ -310,9 +321,7 @@ export function renderOutcome(outcome: EngineOutcome, context: RenderContext): R
     case "order_changed":
       return readbackReply("order_changed", COPY.changedTitle, outcome.order);
     case "order_confirmed":
-      return reply("order_confirmed", confirmedText(context.customerName), [
-        stateIn(outcome.order, ["confirmado", "preparando", "listo"]),
-      ]);
+      return confirmedReply(outcome.order, context.customerName);
     case "order_cancelled":
       return reply("order_cancelled", COPY.cancelled, [stateIn(outcome.order, ["cancelado"])]);
     case "order_status":
@@ -350,10 +359,16 @@ export function renderNotice(notice: CustomerNotice["notice"]): RenderedReply {
     case "line_unavailable": {
       const line = notice.order.lines.find((l) => l.lineId === notice.lineId);
       const name = line === undefined ? "uno de los productos" : lineName(line);
+      const claims: ClaimCheck[] = [stateIn(notice.order, ["confirmado", "preparando"]), ...soldOut(line)];
+      let total = "";
+      if (notice.order.total !== null && notice.order.total === orderSubtotal(notice.order)) {
+        total = ` Tu pedido queda en ${formatLempiras(notice.order.total)}.`;
+        claims.push(one({ type: "order_total", orderId: notice.order.orderId, version: notice.order.version, total: notice.order.total }));
+      }
       return reply(
         "notice_line_unavailable",
-        `No nos queda ${name}. Si querés otra cosa en su lugar, decime.`,
-        [stateIn(notice.order, ["confirmado", "preparando"]), ...soldOut(line)],
+        `Perdón, no nos queda ${name} 😔${total} Si querés otra cosa en su lugar, decime.`,
+        claims,
       );
     }
     case "substitute_offered":
@@ -404,10 +419,71 @@ export function questionText(question: QuestionCode): string {
   return askText(question, null, null);
 }
 
-function confirmedText(customerName: string | null | undefined): string {
-  return customerName == null
-    ? COPY.confirmed
-    : `Listo, ${quote(customerName)}, tu pedido ya está en la lista de preparación. Te aviso cuando esté listo.`;
+/**
+ * "Listo, María 🙌 Tu pedido #101 quedó anotado. Total: L 172.50. Te aviso cuando esté listo." The
+ * first name only ("Doña Rosa" keeps the title); the number and total when the order has them.
+ */
+function confirmedReply(order: OrderView, customerName: string | null | undefined): RenderedReply {
+  const claims: ClaimCheck[] = [stateIn(order, ["confirmado", "preparando", "listo"])];
+  const name = customerName == null ? null : firstName(customerName);
+  const opening = name === null ? "Listo 🙌" : `Listo, ${name} 🙌`;
+  const which = order.code === undefined ? "Tu pedido" : `Tu pedido #${order.code}`;
+  let total = "";
+  if (order.total !== null) {
+    total = ` Total: ${formatLempiras(order.total + (feeOf(order) ?? 0))}.`;
+    claims.push(one({ type: "order_total", orderId: order.orderId, version: order.version, total: order.total }));
+  }
+  return reply("order_confirmed", `${opening} ${which} quedó anotado.${total} Te aviso cuando esté listo.`, claims);
+}
+
+/** "María" from "Maria Lopez"; a title stays with the name ("Doña Rosa", "Don Mario"). */
+export function firstName(name: string): string {
+  const words = quote(name).split(" ").filter((word) => word !== "");
+  if (words.length === 0) return quote(name);
+  const title = /^(?:don|doña|dona|doña|sra|sr|señora|senora|señor|senor|seño|seno|profe|ing|lic)\.?$/iu;
+  return title.test(words[0]!) && words[1] !== undefined ? `${words[0]} ${words[1]}` : words[0]!;
+}
+
+/**
+ * "Anotado ✅ 5 × Arroz 1 lb, 5 × Azúcar 1 lb." before a question about how the order goes, so the
+ * customer sees what was understood before answering. Lists up to four lines; more are counted.
+ */
+function withEcho(question: QuestionCode, order: OrderView | null, text: string, lineIndex: number | null = null): string {
+  const echoed: readonly QuestionCode[] = ["pickup_or_delivery", "delivery_place", "same_place"];
+  const aboutLine: readonly QuestionCode[] = ["quantity", "ambiguous_size", "ambiguous_product", "illegible"];
+  if (order === null || order.lines.length === 0) return text;
+  if (echoed.includes(question)) return `${echoLine(order.lines)}\n${text}`;
+  if (aboutLine.includes(question) && lineIndex !== null && order.lines[lineIndex] !== undefined) {
+    const others = order.lines.filter((_, n) => n !== lineIndex);
+    if (others.length > 0) return `${echoLine(others)}\n${text}`;
+  }
+  return text;
+}
+
+/** "Anotado ✅ 5 × Arroz 1 lb, 5 × Azúcar 1 lb." Up to four lines; more are counted. */
+function echoLine(lines: readonly OrderLineView[]): string {
+  const items = lines.length <= 4 ? lines.map(shortLine).join(", ") : `tus ${lines.length} productos`;
+  return `${COPY.noted} ${items}.`;
+}
+
+function shortLine(line: OrderLineView): string {
+  const quantity = line.quantity === null ? null : quantityShown(line);
+  return quantity === null ? lineName(line) : `${quantity} ${lineName(line)}`;
+}
+
+/** An unclear line's options, numbered, each with its confirmed price (a claim) when there is one. */
+function optionsReply(order: OrderView, lineIndex: number | null, options: readonly ProductOption[]): RenderedReply {
+  const line = lineIndex === null ? undefined : order.lines[lineIndex];
+  const claims: ClaimCheck[] = [stateIn(order, OPEN_STATES)];
+  const rows = options.map((option, n) => {
+    if (option.unitPrice === null) return `${n + 1}. ${quote(option.name)}`;
+    claims.push(one({ type: "unit_price", productId: option.productId, price: option.unitPrice }));
+    return `${n + 1}. ${quote(option.name)} · ${formatLempiras(option.unitPrice)}`;
+  });
+  const head = line === undefined ? "Tengo estos:" : `Para ${lineName(line)} tengo:`;
+  const others = order.lines.filter((_, n) => n !== lineIndex);
+  const echo = others.length > 0 ? [echoLine(others)] : [];
+  return reply("ask", [...echo, head, ...rows, COPY.pickOption].join("\n"), claims);
 }
 
 /**
@@ -486,14 +562,21 @@ function samePlaceReply(order: OrderView | null, place: SavedPlace | null): Rend
 
 function readbackReply(template: "readback" | "order_changed" | "rejected_tap", title: string, order: OrderView): RenderedReply {
   const awaiting = order.state === "por_confirmar";
-  const lines = [title, ...order.lines.map((line, n) => readbackLine(line, n + 1)), ...fulfillmentLines(order)];
+  const lines = [title, ...order.lines.map((line) => readbackLine(line)), ...fulfillmentLines(order)];
   const claims: ClaimCheck[] = [stateIn(order, [order.state])];
+  const fee = feeOf(order);
   if (order.total !== null) {
-    lines.push(`Total: ${formatLempiras(order.total)}${feeOf(order) === null ? "" : ", más el envío"}`);
+    lines.push(
+      fee === null
+        ? `*Total: ${formatLempiras(order.total)}*`
+        : `*Total: ${formatLempiras(order.total + fee)}* (${formatLempiras(order.total)} + ${formatLempiras(fee)} de envío)`,
+    );
     claims.push(one({ type: "order_total", orderId: order.orderId, version: order.version, total: order.total }));
   } else {
     lines.push(COPY.totalUnknown);
   }
+  const pay = payLine(order);
+  if (pay !== null) lines.push(pay);
   const buttons = awaiting ? decisionButtons(order) : [];
   if (awaiting) {
     lines.push(COPY.confirmQuestion);
@@ -503,15 +586,33 @@ function readbackReply(template: "readback" | "order_changed" | "rejected_tap", 
   return reply(template, lines.join("\n"), claims, buttons);
 }
 
-function readbackLine(line: OrderLineView, n: number): string {
+/**
+ * "• 5 × Arroz 1 lb · L 90", the way a receipt reads. A weight in parts keeps its unit ("• Queso
+ * seco 1 lb, 1.5 libras · L 105"). What isn't known says so, never a guessed number.
+ */
+function readbackLine(line: OrderLineView): string {
   const name = lineName(line);
-  if (line.restricted) return `${n}. ${name}: eso solo lo vendemos aquí en la tienda.`;
-  if (!countsTowardTotal(line)) return `${n}. ${name}: no nos queda.`;
-  if (line.quantity === null) return `${n}. ${name}: cantidad por definir.`;
-  const quantity = formatQuantity(line.quantity, line.unit);
+  if (line.restricted) return `• ${name}: eso solo lo vendemos aquí en la tienda.`;
+  if (!countsTowardTotal(line)) return `• ${name}: no nos queda.`;
+  if (line.quantity === null) return `• ${name}: falta la cantidad.`;
+  const item = `${quantityShown(line)} ${name}`;
   const amount = countedLineAmount(line);
-  if (line.unitPrice === null || amount === null) return `${n}. ${name}: ${quantity}, el precio te lo confirmo.`;
-  return `${n}. ${name}: ${quantity} × ${formatLempiras(line.unitPrice)} = ${formatLempiras(amount)}`;
+  if (line.productId === null) return `• ${item}: te confirmo si hay y el precio.`;
+  if (line.unitPrice === null || amount === null) return `• ${item}: el precio te lo confirmo.`;
+  return `• ${item} · ${formatLempiras(amount)}`;
+}
+
+/** "5 ×" for whole numbers; "1.5 libras" with its unit otherwise (before the name: "1.5 libras de"). */
+function quantityShown(line: OrderLineView): string {
+  const quantity = line.quantity!;
+  if (/^\d+$/u.test(quantity)) return `${quantity} ×`;
+  return `${formatQuantity(quantity, line.unit)}${line.unit === null ? " ×" : " de"}`;
+}
+
+/** How the order is paid, once it says how it's received. */
+function payLine(order: OrderView): string | null {
+  if (order.fulfillment === null) return null;
+  return order.fulfillment.mode === "pickup" ? COPY.payOnPickup : COPY.payOnDelivery;
 }
 
 function fulfillmentLines(order: OrderView): string[] {
@@ -526,8 +627,7 @@ function fulfillmentLines(order: OrderView): string[] {
         : fulfillment.placeId !== null
           ? "Te lo llevamos al lugar que nos diste."
           : "Te lo llevamos. Falta la dirección.";
-  const fee = feeOf(order);
-  return fee === null ? [place] : [place, `Envío: ${formatLempiras(fee)}, aparte del total.`];
+  return [place];
 }
 
 /** A fee shows only when the store set one above zero. */
@@ -554,7 +654,7 @@ const ORDINALS = ["primero", "segundo", "tercero", "cuarto", "quinto", "sexto", 
 
 export function queuePlace(position: number): string {
   const ordinal = ORDINALS[position - 1];
-  return ordinal === undefined ? `Vas en el lugar ${position} de la lista.` : `Vas ${ordinal} en la lista.`;
+  return ordinal === undefined ? `Vas en el lugar ${position} de la fila.` : `Vas ${ordinal} en la fila.`;
 }
 
 function statusReply(template: "order_status", order: OrderView | null): RenderedReply {
@@ -575,8 +675,11 @@ function statusReply(template: "order_status", order: OrderView | null): Rendere
           : `${queuePlace(order.queuePosition)} Te aviso apenas esté listo.`,
         [stateIn(order, ["confirmado", "preparando"])],
       );
-    case "listo":
-      return reply(template, COPY.statusReady, [stateIn(order, ["listo"])]);
+    case "listo": {
+      const ready = order.code === undefined ? COPY.statusReady : `Tu pedido #${order.code} ya está listo.`;
+      const body = order.fulfillment?.mode === "pickup" ? `${ready} Te esperamos 🙌` : ready;
+      return reply(template, body, [stateIn(order, ["listo"])]);
+    }
     case "entregado":
       return reply(template, COPY.statusDelivered, [stateIn(order, ["entregado"])]);
     case "cancelado":
@@ -618,7 +721,7 @@ function answerReply(topic: "price" | "availability", facts: readonly AnswerFact
       claims.push(one({ type: "availability", productId: fact.productId, availability: "se_acabo" }));
     } else {
       // No record (or no recent evidence): never a guess (PRD "Honest stock").
-      lines.push(`${capitalize(asked)}: te lo anoto y te confirmo.`);
+      lines.push(`${capitalize(asked)}: te confirmo si hay.`);
     }
   }
   return reply("answer", lines.join("\n"), claims);
@@ -637,6 +740,10 @@ function storeHoursReply(hours: StoreHours | null): RenderedReply {
  */
 export function unansweredCount(outcome: EngineOutcome): number {
   if (outcome.type === "store_hours") return isUsableStoreHours(outcome.hours) ? 0 : 1;
+  // A confirmed order with lines we couldn't price or find: "te confirmo" the owner must answer.
+  if (outcome.type === "order_confirmed") {
+    return outcome.order.lines.filter((line) => !line.restricted && countsTowardTotal(line) && (line.productId === null || line.unitPrice === null)).length;
+  }
   if (outcome.type !== "answer") return 0;
   return outcome.facts.filter((fact) => {
     if (fact.restricted) return false;
@@ -660,11 +767,12 @@ function readyReply(order: OrderView): RenderedReply {
   const missing = order.lines.filter((line) => !line.restricted && !countsTowardTotal(line)).map(lineName);
   const without = missing.length === 0 ? "" : `, sin ${missing.join(", ")}`;
   let body: string;
+  const ready = order.code === undefined ? "¡Tu pedido ya está listo! 🙌" : `¡Tu pedido #${order.code} ya está listo! 🙌`;
   if (order.total !== null) {
-    body = `${COPY.statusReady} Total ${formatLempiras(order.total)}${without}.`;
+    body = `${ready} Total: ${formatLempiras(order.total + (feeOf(order) ?? 0))}${without}.`;
     claims.push(one({ type: "order_total", orderId: order.orderId, version: order.version, total: order.total }));
   } else {
-    body = `${COPY.statusReady} ${COPY.totalUnknown}`;
+    body = `${ready} ${COPY.totalUnknown}`;
   }
   if (order.fulfillment?.mode === "pickup") body += ` ${COPY.pickupReady}`;
   return reply("notice_order_ready", body, claims);
@@ -797,6 +905,11 @@ export function backedClaims(source: ReplySource): Claim[] {
   const outcome = source.outcome;
   switch (outcome.type) {
     case "ask":
+      order(outcome.order);
+      for (const option of outcome.options ?? []) {
+        if (option.unitPrice !== null) claims.push({ type: "unit_price", productId: option.productId, price: option.unitPrice });
+      }
+      break;
     case "order_status":
     case "rejected":
     case "readback":

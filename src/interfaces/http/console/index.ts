@@ -11,6 +11,7 @@ import { empleadosScreen } from "./empleados";
 import { masScreen } from "./mas";
 import { pendientesScreen } from "./pendientes";
 import { preparacionScreen } from "./preparacion";
+import { tiendaScreen } from "./tienda";
 
 export function consoleRoutes() {
   const app = new Hono<ConsoleEnv>();
@@ -33,6 +34,7 @@ export function consoleRoutes() {
   anotarScreen(app);
   pendientesScreen(app);
   masScreen(app);
+  tiendaScreen(app);
 
   return app;
 }

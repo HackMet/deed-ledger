@@ -12,6 +12,9 @@
 // MODEL_API_KEY in the environment or the --vars file (default .dev.vars); WhatsApp stays fake.
 //
 //   npm run dev:sim -- --ai --vars ../hackathon/.dev.vars
+//
+// With --store, the chat uses the store's own products, prices and hours from Más → Preparar la
+// tienda (the D1 pretend engine) instead of the in-memory demo list.
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -40,7 +43,7 @@ if (args.ai === true && aiKey === null) {
 mkdirSync(dirname(SIM.envFile), { recursive: true });
 writeFileSync(
   SIM.envFile,
-  `${Object.entries({ ...SIM_SECRETS, ...SIM_VARS })
+  `${Object.entries({ ...SIM_SECRETS, ...SIM_VARS, ...(args.store === true ? { PRETEND_ENGINE: "1" } : {}) })
     .map(([name, value]) => `${name}=${value}`)
     .join("\n")}\n`,
 );

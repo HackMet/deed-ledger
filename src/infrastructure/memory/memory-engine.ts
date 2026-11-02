@@ -13,10 +13,12 @@
  * name once, pickup or delivery), then the readback. It also answers "¿a qué hora está?", a cancel
  * and the reads perception needs (contract gaps a and b). Delivery (#29): a place in words or a
  * pin is used for a delivery order only; a saved place from the customer's context is offered as
- * "same_place" and used only after a yes (accept_saved_place, or a typed yes); no fee, since store
- * settings (#40) don't exist yet. Customer questions (#47) are answered from the catalog and the
- * hours it was given, never guessed: a product with no record is "no sé", a price only when set,
- * hours only when set. Payments and substitutes aren't pretended: they get the handoff.
+ * "same_place" and used only after a yes (accept_saved_place, or a typed yes); a delivery carries
+ * the store's fee when one was given (store setup, #40), none otherwise. Customer questions (#47)
+ * are answered from the catalog and the hours it was given, never guessed: a product with no record
+ * is "no sé", a price only when set, hours only when set. An ordered product marked "se_acabo"
+ * keeps that mark on its line, so the readback says it's out and leaves it out of the total.
+ * Payments and substitutes aren't pretended: they get the handoff.
  *
  * Conversation rules (Oct 31, proposed in docs/contract.md): a burst always gets something to say
  * (the current step again, never `nothing`); a question answered from records in a burst that also
@@ -46,6 +48,9 @@ import type {
 import { orderSubtotal } from "../../domain/money";
 import { isYes, type SavedPlace, tidyPlaceText } from "../../domain/place";
 import { storeHoursKey } from "../../domain/store-hours";
+import { searchCatalog } from "../../domain/catalog-search";
+import { fulfillmentWords, optionNumber, quantityFrom } from "../../domain/answer-words";
+import { MAX_OPTIONS, type ProductOption } from "../../domain/contract/outcomes";
 
 export interface StoredOrder {
   readonly customerId: string;
@@ -69,12 +74,17 @@ export interface MemoryEngineOptions {
   readonly catalog?: readonly PretendProduct[];
   /** Store hours as settings would hold them (#40); absent or null means unset. */
   readonly storeHours?: StoreHours | null;
+  /** The store's delivery fee (#40); absent or null means unset, and deliveries carry no fee. */
+  readonly deliveryFee?: Centavos | null;
 }
 
 /** What the pretend engine keeps about an order while it's being put together. */
 interface Draft {
-  /** Questions still to ask, oldest first; `lineId` when one is about a line. */
-  readonly pending: { readonly code: QuestionCode; readonly lineId: string | null }[];
+  /**
+   * Questions still to ask, oldest first; `lineId` when one is about a line; `options` (product
+   * IDs) when the line fits a few of the store's products and the customer picks one.
+   */
+  readonly pending: PendingQuestion[];
   /** Each line's product words as perception read them ("aceite clover"), to settle a size answer. */
   readonly names: Map<string, string>;
   /** The current version was read back: any change makes a new version, so old taps are refused. */
@@ -108,7 +118,12 @@ interface StoreState {
   readonly lastQuestion: Map<string, QuestionCode>;
   /** Customer -> the confirmation waiting for their name. */
   readonly held: Map<string, HeldConfirmation>;
+  /** The next order's number in this store (its code). */
+  readonly counter: { next: number };
 }
+
+/** A store's first order number: three digits read well out loud. */
+export const FIRST_ORDER_NUMBER = 101;
 
 /**
  * One store's state as plain JSON, for the D1 pretend engine (`d1-pretend-engine.ts`). Maps become
@@ -121,10 +136,18 @@ export interface PretendStoreSnapshot {
   readonly lastQuestion: readonly (readonly [string, QuestionCode])[];
   /** Absent in snapshots saved before the conversation rules (Oct 31). */
   readonly held?: readonly (readonly [string, HeldConfirmation])[];
+  /** Absent in snapshots saved before order numbers (Nov 2). */
+  readonly nextOrderNumber?: number;
+}
+
+interface PendingQuestion {
+  readonly code: QuestionCode;
+  readonly lineId: string | null;
+  readonly options?: readonly string[];
 }
 
 interface DraftSnapshot {
-  readonly pending: readonly { readonly code: QuestionCode; readonly lineId: string | null }[];
+  readonly pending: readonly PendingQuestion[];
   readonly names: readonly (readonly [string, string])[];
   readonly shown: boolean;
   /** Absent in snapshots saved before #29. */
@@ -155,7 +178,7 @@ export class MemoryEngine implements Engine, OrderReadingSource {
     const first = state.operations.get(key);
     if (first !== undefined) return result(first);
 
-    const burst = new BurstApplier(state, context, this.options.catalog ?? [], matches, this.options.storeHours ?? null);
+    const burst = new BurstApplier(state, context, this.options.catalog ?? [], matches, this.options.storeHours ?? null, this.options.deliveryFee ?? null);
     reading.observations.forEach((observation, index) => burst.apply(observation, index));
     const { outcome, answered } = burst.decide();
     state.operations.set(key, outcome);
@@ -235,7 +258,7 @@ export class MemoryEngine implements Engine, OrderReadingSource {
     if (stored.order.state !== "armando" || stored.order.fulfillment?.mode !== "delivery") {
       return { type: "rejected", reason: "invalid_state", order: stored.order };
     }
-    const burst = new BurstApplier(state, context, this.options.catalog ?? [], [], this.options.storeHours ?? null);
+    const burst = new BurstApplier(state, context, this.options.catalog ?? [], [], this.options.storeHours ?? null, this.options.deliveryFee ?? null);
     if (action.type === "accept_saved_place") {
       const saved = savedPlaceOf(context);
       if (saved === null || saved.placeId !== action.placeId) return { type: "rejected", reason: "not_found", order: stored.order };
@@ -310,6 +333,7 @@ export class MemoryEngine implements Engine, OrderReadingSource {
       ]),
       lastQuestion: [...state.lastQuestion],
       held: [...state.held],
+      nextOrderNumber: state.counter.next,
     };
   }
 
@@ -331,6 +355,7 @@ export class MemoryEngine implements Engine, OrderReadingSource {
       ),
       lastQuestion: new Map(snapshot.lastQuestion),
       held: new Map(snapshot.held ?? []),
+      counter: { next: snapshot.nextOrderNumber ?? FIRST_ORDER_NUMBER },
     });
   }
 
@@ -343,6 +368,7 @@ export class MemoryEngine implements Engine, OrderReadingSource {
         drafts: new Map(),
         lastQuestion: new Map(),
         held: new Map(),
+        counter: { next: FIRST_ORDER_NUMBER },
       };
       this.stores.set(tenant.businessId, state);
     }
@@ -414,6 +440,8 @@ class BurstApplier {
   /** The first question answered from records in this burst (#47). */
   private answer: AnsweredQuestion | null = null;
   private offTopic = false;
+  /** Lines added by this burst, in order, with the products that fit them when a few do. */
+  private readonly added: { readonly lineId: string; readonly options: readonly string[]; readonly quantity: boolean }[] = [];
 
   constructor(
     private readonly state: StoreState,
@@ -421,6 +449,7 @@ class BurstApplier {
     private readonly catalog: readonly PretendProduct[],
     private readonly matches: readonly LineMatch[],
     private readonly storeHours: StoreHours | null,
+    private readonly deliveryFee: Centavos | null,
   ) {
     this.stored = openOrderOf(state, context.customerId);
     this.before = this.stored?.order ?? null;
@@ -439,6 +468,7 @@ class BurstApplier {
       case "customer_order":
         observation.lines.forEach((line, n) => this.addLine(line, this.matchOf(index, n)));
         this.queueIssues(observation, observation.lines.length);
+        this.queueLineQuestions();
         return;
       case "order_change":
         observation.edits.forEach((edit, n) => {
@@ -446,12 +476,15 @@ class BurstApplier {
           const at = edit.target.ref === null ? -1 : Number(edit.target.ref.slice(1)) - 1;
           const line = this.stored?.order.lines[at];
           if (line === undefined) return this.draft.pending.push({ code: "ambiguous_product", lineId: null });
+          // "Entonces solo los frijoles" after a No hay: that line is already out; nothing changes.
+          if (edit.op === "remove" && line.mark === "no_hay") return;
           this.setLines(
             edit.op === "remove"
               ? this.stored!.order.lines.filter((l) => l !== line)
               : this.stored!.order.lines.map((l) => (l === line ? { ...l, quantity: edit.quantity } : l)),
           );
         });
+        this.queueLineQuestions();
         return;
       case "order_cancel":
         this.cancelled = this.stored !== null;
@@ -461,6 +494,7 @@ class BurstApplier {
         return;
       case "clarification":
         if (this.answerPlaceQuestion(observation.answer)) return;
+        if (this.answerFulfillmentQuestion(observation.answer)) return;
         this.settleQuestion(observation.answer);
         return;
       case "customer_name":
@@ -515,11 +549,13 @@ class BurstApplier {
         const waiting = held !== null ? this.askName(held, false) : this.waitingQuestion();
         return waiting === null ? only(this.answer) : { outcome: waiting, answered: this.answer };
       }
+      // Waiting for the name, anything else ("¿para qué mi nombre?") gets the name question again,
+      // gently: it counts toward MAX_NAME_ASKS, so the order is never stuck on it.
+      if (held !== null) return only(this.askName(held, true));
       if (this.offTopic) return only({ type: "out_of_scope" });
       if (this.embedded) return only({ type: "ask", question: "embedded_instructions", line: null, order: null });
       // No order yet ("Hola, quiero hacer un pedido"): ask what they want.
       if (this.stored === null) return only({ type: "ask", question: "what_to_order", line: null, order: null });
-      if (held !== null) return only(this.askName(held, true));
       return only(this.restate());
     }
 
@@ -530,10 +566,11 @@ class BurstApplier {
   /** The next step for an order being built: an open question, pickup or delivery, the place, the readback. */
   private nextStep(): EngineOutcome {
     const order = this.stored!.order;
+    this.dropSettledQuestions(order);
     const pending = this.draft.pending[0];
     if (pending !== undefined) {
       const line = pending.lineId === null ? -1 : order.lines.findIndex((l) => l.lineId === pending.lineId);
-      return this.ask(pending.code, line === -1 ? null : line, "armando");
+      return this.ask(pending.code, line === -1 ? null : line, "armando", pending.options);
     }
     if (order.fulfillment === null) return this.ask("pickup_or_delivery", null, "armando");
     if (order.fulfillment.mode === "delivery" && !hasPlace(order.fulfillment)) {
@@ -546,6 +583,22 @@ class BurstApplier {
     this.draft.shown = true;
     this.save(next);
     return onList ? { type: "order_changed", order: next } : { type: "readback", order: next };
+  }
+
+  /**
+   * Questions the order no longer needs: about a line that's gone, a quantity given some other way
+   * ("que sean tres"), or a line matched since.
+   */
+  private dropSettledQuestions(order: OrderView): void {
+    const kept = this.draft.pending.filter((p) => {
+      if (p.lineId === null) return true;
+      const line = order.lines.find((l) => l.lineId === p.lineId);
+      if (line === undefined) return false;
+      if (p.code === "quantity") return line.quantity === null;
+      if (p.options !== undefined) return line.productId === null;
+      return true;
+    });
+    this.draft.pending.splice(0, this.draft.pending.length, ...kept);
   }
 
   /**
@@ -619,7 +672,7 @@ class BurstApplier {
   /**
    * How the order is received. Pickup drops any place (a place is for delivery only). A pin or a
    * place in words makes it a delivery to that place; "al mismo lugar de siempre" uses the saved
-   * place only when there is one, and asks otherwise. No fee: store settings (#40) don't exist yet.
+   * place only when there is one, and asks otherwise. The fee is added in `setFulfillment`.
    */
   private applyFulfillment(observation: Fulfillment): void {
     if (this.stored === null) return;
@@ -658,14 +711,36 @@ class BurstApplier {
     return false;
   }
 
+  /** A delivery always carries the store's fee as set up (#40), or none when unset. */
   private setFulfillment(fulfillment: NonNullable<OrderView["fulfillment"]>): void {
+    if (fulfillment.mode === "delivery") fulfillment = { ...fulfillment, fee: this.deliveryFee };
+    // "Ya voy" to an order that's already for pickup changes nothing: it must not reopen it.
+    if (sameFulfillment(this.stored!.order.fulfillment, fulfillment)) return;
     this.setOrder({ ...this.stored!.order, fulfillment });
   }
 
-  private ask(question: QuestionCode, line: number | null, orderState: "armando"): EngineOutcome {
+  /**
+   * An answer to "¿Lo recogés en la tienda o te lo llevamos?" that perception read as a plain
+   * answer ("a domicilio", "lo recojo"). Only clear words count; anything else is left alone.
+   */
+  private answerFulfillmentQuestion(answer: string): boolean {
+    if (this.stored === null) return false;
+    if (this.state.lastQuestion.get(this.context.customerId) !== "pickup_or_delivery") return false;
+    const mode = fulfillmentWords(answer);
+    if (mode === null) return false;
+    if (mode === "pickup") this.setFulfillment({ mode: "pickup" });
+    else this.setFulfillment({ mode: "delivery", placeId: null, placeText: null, pin: null, fee: null });
+    return true;
+  }
+
+  private ask(question: QuestionCode, line: number | null, orderState: "armando", optionIds?: readonly string[]): EngineOutcome {
     const order: OrderView = { ...this.stored!.order, state: orderState };
     this.save(order);
-    return { type: "ask", question, line, order };
+    const options = (optionIds ?? []).flatMap((id): ProductOption[] => {
+      const product = this.catalog.find((p) => p.productId === id);
+      return product === undefined ? [] : [{ productId: id, name: product.names[0] ?? id, unitPrice: product.restricted ? null : product.price }];
+    });
+    return options.length > 1 ? { type: "ask", question, line, order, options } : { type: "ask", question, line, order };
   }
 
   /**
@@ -683,7 +758,7 @@ class BurstApplier {
         this.answer ??= {
           type: "answer",
           topic: observation.topic,
-          facts: observation.products.map((asked, n) => answerFact(asked, this.matchOf(index, n))),
+          facts: observation.products.flatMap((asked, n) => this.factsFor(asked, this.matchOf(index, n))),
         };
         return;
       case "store_hours":
@@ -698,16 +773,55 @@ class BurstApplier {
     }
   }
 
+  /**
+   * What the records say about a product asked for. Not matched: the store's products that fit the
+   * words, when a few do ("¿a cómo el aceite?" → each aceite and its price); otherwise unknown.
+   */
+  private factsFor(asked: string, matched: PretendProduct | null): AnswerFact[] {
+    if (matched !== null) return [answerFact(asked, matched)];
+    const found = searchCatalog(asked, this.catalog);
+    if (found.length === 0 || found.length > MAX_OPTIONS) return [answerFact(asked, null)];
+    return found.map((product) => answerFact(product.names[0] ?? asked, product));
+  }
+
   private matchOf(observation: number, line: number): PretendProduct | null {
     const match = this.matches.find((m) => m.observation === observation && m.line === line);
     return match === undefined ? null : (this.catalog.find((product) => product.productId === match.productId) ?? null);
   }
 
+  /**
+   * A new line. Not matched by perception: the store's products that fit its words. One is that
+   * product; a few (up to MAX_OPTIONS) are offered to pick from; none or too many leave it unmatched.
+   * A line with no quantity gets the quantity question: absent is never one.
+   */
   private addLine(line: ItemLine, product: PretendProduct | null): void {
     const order = this.stored?.order ?? this.newOrder();
     const lineId = `${order.orderId}-${order.lines.length + 1}`;
     this.draft.names.set(lineId, line.name);
+    let options: string[] = [];
+    if (product === null && !line.restrictedCategory) {
+      const found = searchCatalog(line.name, this.catalog);
+      if (found.length === 1) product = found[0]!;
+      else if (found.length > 1 && found.length <= MAX_OPTIONS) options = found.map((p) => p.productId);
+    }
     this.setLines([...order.lines, lineView(lineId, line, product)], order);
+    this.added.push({ lineId, options, quantity: line.quantity === null && !line.restrictedCategory });
+  }
+
+  /**
+   * After perception's own questions about the new lines: which product, for a line that fits a few
+   * and wasn't asked about yet, then how many, for a line that said no quantity.
+   */
+  private queueLineQuestions(): void {
+    for (const { lineId, options } of this.added) {
+      if (options.length > 0 && !this.draft.pending.some((p) => p.lineId === lineId)) {
+        this.draft.pending.push({ code: "ambiguous_product", lineId, options });
+      }
+    }
+    for (const { lineId, quantity } of this.added) {
+      if (quantity) this.draft.pending.push({ code: "quantity", lineId });
+    }
+    this.added.splice(0);
   }
 
   /** Issues about a line are asked one at a time; the line index is into the observation's lines. */
@@ -717,30 +831,67 @@ class BurstApplier {
     for (const issue of observation.issues) {
       if (issue.code === "embedded_instructions") continue;
       const line = issue.line === null ? undefined : lines[first + issue.line];
-      this.draft.pending.push({ code: issue.code, lineId: line?.lineId ?? null });
+      const lineId = line?.lineId ?? null;
+      // Perception's question, with the products that fit the line to pick from when a few do.
+      const unclear = issue.code === "ambiguous_size" || issue.code === "ambiguous_product";
+      const fit = this.added.find((a) => a.lineId === lineId)?.options;
+      const found = !unclear || lineId === null ? [] : fit !== undefined && fit.length > 0 ? fit : searchCatalog(this.draft.names.get(lineId) ?? "", this.catalog).map((p) => p.productId);
+      const options = found.length > 1 && found.length <= MAX_OPTIONS ? found : undefined;
+      this.draft.pending.push(options === undefined ? { code: issue.code, lineId } : { code: issue.code, lineId, options });
     }
   }
 
   /**
-   * An answer to the question asked last. For a line's size or product, "<line words> <answer>"
-   * ("aceite clover de litro") is looked up as a product name or alias; otherwise the line stays
-   * unmatched and its price unknown. Either way the question is settled: it is never asked twice.
+   * An answer to the question asked last. A quantity is read from the answer ("dos", "3"). For a
+   * line's size or product: the option's number or words among the options offered ("2", "el
+   * clover de litro"), then "<line words> <answer>" as a product name, alias or words that fit one
+   * product only; otherwise the line stays unmatched and its price unknown. Either way the question
+   * is settled: it is never asked twice.
    */
   private settleQuestion(answer: string): void {
+    if (this.stored !== null) this.dropSettledQuestions(this.stored.order);
     const pending = this.draft.pending.shift();
     if (pending === undefined || this.stored === null) return;
     this.changed = true;
     if (pending.lineId === null) return;
-    const said = normalize(`${this.draft.names.get(pending.lineId) ?? ""} ${answer}`);
-    const found = this.catalog.filter((p) => [...p.names, ...p.aliases].some((name) => normalize(name) === said));
-    const product = found.length === 1 ? found[0]! : null;
+    if (pending.code === "quantity") {
+      const quantity = quantityFrom(answer);
+      if (quantity !== null) {
+        this.setLines(this.stored.order.lines.map((line) => (line.lineId === pending.lineId ? { ...line, quantity } : line)));
+      }
+      return;
+    }
+    const product = this.productForAnswer(pending, answer);
     this.setLines(
       this.stored.order.lines.map((line) =>
         line.lineId !== pending.lineId || product === null
           ? line
-          : { ...line, productId: product.productId, productName: product.names[0] ?? null, unitPrice: line.restricted ? null : product.price },
+          : {
+              ...line,
+              productId: product.productId,
+              productName: product.names[0] ?? null,
+              unitPrice: line.restricted ? null : product.price,
+              availability: soldOutOrUnknown(product),
+            },
       ),
     );
+  }
+
+  /** The product an answer about an unclear line points at, or null when it isn't clear. */
+  private productForAnswer(pending: PendingQuestion, answer: string): PretendProduct | null {
+    const options = (pending.options ?? []).flatMap((id) => this.catalog.filter((p) => p.productId === id));
+    const n = optionNumber(answer);
+    if (n !== null && options[n - 1] !== undefined) return options[n - 1]!;
+    if (options.length > 0) {
+      const among = searchCatalog(answer, options);
+      if (among.length === 1) return among[0]!;
+    }
+    const lineWords = `${this.draft.names.get(pending.lineId ?? "") ?? ""} ${answer}`;
+    const said = normalize(lineWords);
+    const exact = this.catalog.filter((p) => [...p.names, ...p.aliases].some((name) => normalize(name) === said));
+    if (exact.length === 1) return exact[0]!;
+    const fitting = searchCatalog(lineWords, this.catalog);
+    return fitting.length === 1 ? fitting[0]! : null;
   }
 
   private newOrder(): OrderView {
@@ -752,6 +903,7 @@ class BurstApplier {
       fulfillment: null,
       total: null,
       queuePosition: null,
+      code: String(this.state.counter.next++),
     };
   }
 
@@ -805,11 +957,26 @@ function lineView(lineId: string, line: ItemLine, product: PretendProduct | null
     quantity: line.quantity,
     unit: line.unit,
     unitPrice: line.restrictedCategory ? null : (product?.price ?? null),
-    availability: "no_se",
+    availability: product === null ? "no_se" : soldOutOrUnknown(product),
     restricted: line.restrictedCategory,
     mark: null,
     substitute: null,
   };
+}
+
+/**
+ * A line's availability from its product: "se_acabo" when the store says it's out, so the readback
+ * says so; otherwise "no_se". "hay" isn't copied onto a line: the readback claims nothing about it.
+ */
+function soldOutOrUnknown(product: PretendProduct): OrderLineView["availability"] {
+  return product.availability === "se_acabo" ? "se_acabo" : "no_se";
+}
+
+/** Same mode, and for a delivery the same place: setting it again changes nothing. */
+function sameFulfillment(a: OrderView["fulfillment"], b: NonNullable<OrderView["fulfillment"]>): boolean {
+  if (a === null || a.mode !== b.mode) return false;
+  if (a.mode === "pickup" || b.mode === "pickup") return true;
+  return a.placeId === b.placeId && a.placeText === b.placeText && a.fee === b.fee && JSON.stringify(a.pin ?? null) === JSON.stringify(b.pin ?? null);
 }
 
 function hasPlace(fulfillment: Extract<OrderView["fulfillment"], { mode: "delivery" }>): boolean {
@@ -875,7 +1042,7 @@ function apply(stored: StoredOrder, action: OrderAction): { stored: StoredOrder;
       const line = order.lines.find((l) => l.lineId === action.lineId);
       if (line === undefined) return null;
       if (action.mark === "ofrecer_otro" && action.substituteProductId === null) return null;
-      const next: OrderView = {
+      const marked: OrderView = {
         ...order,
         state: "preparando",
         lines: order.lines.map((l) =>
@@ -892,6 +1059,8 @@ function apply(stored: StoredOrder, action: OrderAction): { stored: StoredOrder;
               },
         ),
       };
+      // A line marked "No hay" leaves the total; the customer's notice says the new one.
+      const next: OrderView = { ...marked, total: orderSubtotal(marked) };
       const notices: CustomerNotice[] =
         action.mark === "listo"
           ? []

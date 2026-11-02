@@ -15,7 +15,8 @@
     "simulate": "node scripts/simulate.mjs",
     "chat": "node scripts/chat.mjs",
     "admin:create-store": "node scripts/admin-create-store.mjs",
-    "admin:invite": "node scripts/admin-invite.mjs"
+    "admin:invite": "node scripts/admin-invite.mjs",
+    "qa": "node scripts/qa.mjs"
   },
   "dependencies": {
     "hono": "^4.13.14",

@@ -71,7 +71,7 @@ describe("availability answers", () => {
     };
     const reply = render(outcome);
     expect(reply.body).toBe(
-      ["El arroz: sí hay.", "Leche: se nos acabó.", "Pan: te lo anoto y te confirmo.", "Manteca roja: te lo anoto y te confirmo."].join("\n"),
+      ["El arroz: sí hay.", "Leche: se nos acabó.", "Pan: te confirmo si hay.", "Manteca roja: te confirmo si hay."].join("\n"),
     );
     expect(flattenClaims(reply.claims)).toEqual([
       { type: "availability", productId: "p-arroz", availability: "hay" },
@@ -83,7 +83,7 @@ describe("availability answers", () => {
 
   it("never says 'hay' for a product with no match, whatever availability the outcome carries", () => {
     const outcome: EngineOutcome = { type: "answer", topic: "availability", facts: [fact("arroz", { availability: "hay" })] };
-    expect(render(outcome).body).toBe("Arroz: te lo anoto y te confirmo.");
+    expect(render(outcome).body).toBe("Arroz: te confirmo si hay.");
     expect(render(outcome).claims).toEqual([]);
   });
 
@@ -334,7 +334,7 @@ describe("customer questions end to end", () => {
     );
 
     expect(await t.say("¿Hay arroz, leche y manteca roja?")).toBe(
-      ["Arroz: sí hay.", "Leche: se nos acabó.", "Manteca roja: te lo anoto y te confirmo."].join("\n"),
+      ["Arroz: sí hay.", "Leche: se nos acabó.", "Manteca roja: te confirmo si hay."].join("\n"),
     );
     expect(await t.say("¿A cuánto el arroz y el pan?")).toBe(["El arroz: L 18.", "Pan: el precio te lo confirmo."].join("\n"));
     expect(await t.say("¿A qué hora abren?")).toBe(COPY.hoursUnknown);

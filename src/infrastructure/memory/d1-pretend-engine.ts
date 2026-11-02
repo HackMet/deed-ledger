@@ -13,6 +13,10 @@
  * tap shows "no se guardó" and is tapped again. No update is lost.
  *
  * The store always comes from the context the caller built from the lease or the session.
+ *
+ * Products, prices, "No hay" marks, hours and the delivery fee come from the store's own setup in
+ * D1 (#40, `setup`), read per store on every call; tests and the dev console pass a static catalog
+ * instead.
  */
 import type { CustomerContext, Engine, EngineResult, LineMatch, MemberContext } from "../../application/engine";
 import type { OrderReadingSource } from "../../application/order-reading";
@@ -20,7 +24,9 @@ import type { CatalogProduct } from "../../application/perception/matching";
 import type { Commit, Tenant } from "../../application/ports";
 import type { ActionEnvelope, ConsoleAction, CustomerAction } from "../../domain/contract/actions";
 import type { BurstReading, PerceptionContext } from "../../domain/contract/observation";
+import type { Centavos } from "../../domain/contract/numbers";
 import type { Claim, PreparationCard, StoreHours } from "../../domain/contract/outcomes";
+import type { StoreProduct, StoreSetup } from "../../domain/store-setup";
 import { MemoryEngine, type PretendProduct, type PretendStoreSnapshot } from "./memory-engine";
 
 /** The pretend engine's snapshot moved on since it was read: the batch saved nothing; run it again. */
@@ -31,11 +37,19 @@ export class PretendStateMovedError extends Error {
   }
 }
 
+/** Reads one store's setup (`D1StoreSetupRepository`). */
+export interface StoreSetupSource {
+  read(tenant: Tenant): Promise<StoreSetup>;
+}
+
 export interface D1PretendEngineOptions {
+  /** The store's own products, hours and fee, per store. When set, the static options below are ignored. */
+  readonly setup?: StoreSetupSource;
   /** The products and prices the readback uses. No orders are seeded. */
   readonly catalog?: readonly PretendProduct[];
   /** Store hours as settings would hold them (#40); absent or null means unset ("te confirmo"). */
   readonly storeHours?: StoreHours | null;
+  readonly deliveryFee?: Centavos | null;
 }
 
 interface Loaded {
@@ -75,8 +89,15 @@ export class D1PretendEngine implements Engine, OrderReadingSource {
     return (await this.load(context)).engine.perceptionContext(context);
   }
 
-  async catalog(): Promise<readonly CatalogProduct[]> {
-    return this.options.catalog ?? [];
+  async catalog(tenant: Tenant): Promise<readonly CatalogProduct[]> {
+    return (await this.storeOptions(tenant)).catalog ?? [];
+  }
+
+  /** The catalog, hours and fee for this store: its setup in D1, or the static options. */
+  private async storeOptions(tenant: Tenant): Promise<Omit<D1PretendEngineOptions, "setup">> {
+    if (this.options.setup === undefined) return this.options;
+    const setup = await this.options.setup.read(tenant);
+    return { catalog: setup.products.map(pretendProduct), storeHours: setup.hours, deliveryFee: setup.deliveryFee };
   }
 
   /** Runs a change on the stored state and returns, with its result, the commit that saves it. */
@@ -89,13 +110,17 @@ export class D1PretendEngine implements Engine, OrderReadingSource {
   }
 
   private async load(tenant: Tenant): Promise<Loaded> {
-    const row = await this.db
-      .prepare(`SELECT version, state_json FROM pretend_engine_state WHERE business_id = ?`)
-      .bind(tenant.businessId)
-      .first<{ version: number; state_json: string }>();
+    const [row, options] = await Promise.all([
+      this.db
+        .prepare(`SELECT version, state_json FROM pretend_engine_state WHERE business_id = ?`)
+        .bind(tenant.businessId)
+        .first<{ version: number; state_json: string }>(),
+      this.storeOptions(tenant),
+    ]);
     const engine = new MemoryEngine(() => [], {
-      ...(this.options.catalog === undefined ? {} : { catalog: this.options.catalog }),
-      ...(this.options.storeHours === undefined ? {} : { storeHours: this.options.storeHours }),
+      ...(options.catalog === undefined ? {} : { catalog: options.catalog }),
+      ...(options.storeHours === undefined ? {} : { storeHours: options.storeHours }),
+      ...(options.deliveryFee === undefined ? {} : { deliveryFee: options.deliveryFee }),
     });
     if (row !== null) engine.importStore(tenant, JSON.parse(row.state_json) as PretendStoreSnapshot);
     return { engine, version: row?.version ?? null, json: JSON.stringify(engine.exportStore(tenant)) };
@@ -138,4 +163,16 @@ export class D1PretendEngine implements Engine, OrderReadingSource {
       ],
     };
   }
+}
+
+/** A store product as the pretend engine sees it: "No hay" is "se_acabo"; unmarked is unknown. */
+function pretendProduct(product: StoreProduct): PretendProduct {
+  return {
+    productId: product.productId,
+    names: [product.name],
+    aliases: product.otherNames,
+    barcode: null,
+    price: product.price,
+    ...(product.noHay ? { availability: "se_acabo" as const } : {}),
+  };
 }

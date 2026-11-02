@@ -16,7 +16,7 @@ export interface Config {
   readonly devStorePhoneNumberId: string;
   /**
    * The pretend engine with its state in D1, for a deployed demo before the real engine lands. The
-   * console still needs login. Ignored when devConsole is on.
+   * console still needs login, unless devConsole is also on (the simulator's --store).
    */
   readonly pretendEngine: boolean;
   /** The Meta Model API key. Blank: model calls fail closed. */

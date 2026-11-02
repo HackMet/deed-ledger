@@ -29,7 +29,7 @@ const PAUSE: Option = {
 const OPTIONS: readonly Option[] = [
   { label: "Pedido a mano", hint: "Pedidos que te llegan a otro WhatsApp.", href: null, ownerOnly: false },
   { label: "Empleados", hint: "Invitar, permisos y quitar.", href: "/console/empleados", ownerOnly: true },
-  { label: "Preparar la tienda", hint: "Productos, precios y el conteo inicial.", href: null, ownerOnly: false },
+  { label: "Preparar la tienda", hint: "Productos, precios, horario y envío.", href: "/console/tienda", ownerOnly: true },
   { label: "Cierre del día", hint: "Cuadrar la caja al cerrar.", href: null, ownerOnly: false },
   { label: "Aviso de privacidad", hint: "Lo que ven los clientes.", href: PRIVACY_PATH, ownerOnly: false },
 ];

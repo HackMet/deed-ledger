@@ -856,6 +856,13 @@ export interface OpenPendiente {
   /** Who it's about, when known: the name they gave, and the last four digits of their number. */
   readonly customerName: string | null;
   readonly phoneEnding: string | null;
+  /** The conversation it came from, so the owner can answer in it; null when none. */
+  readonly conversationId?: string | null;
+  /**
+   * What the customer last wrote before it was raised (their own words, up to three messages),
+   * read from the conversation itself, so the owner knows what to answer. Null when nothing typed.
+   */
+  readonly said?: string | null;
 }
 
 export type AnyPendiente =
@@ -876,7 +883,8 @@ export interface CustomerQuestionPendiente {
   readonly customerId: string;
   /** The message that closed the burst holding the question. */
   readonly inboundId: string;
-  readonly topic: "price" | "availability" | "store_hours";
+  /** `order_prices`: a confirmed order holds lines with no confirmed price or product (Nov 2). */
+  readonly topic: "price" | "availability" | "store_hours" | "order_prices";
   /** How many things asked about got "te confirmo" (1 for hours). */
   readonly unknown: number;
 }

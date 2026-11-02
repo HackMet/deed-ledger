@@ -34,6 +34,7 @@ describe("test environment", () => {
       "0016_pretend_engine_state.sql",
       "0017_customer_places.sql",
       "0018_pendientes.sql",
+      "0019_store_setup.sql",
     ]);
   });
 

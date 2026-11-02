@@ -94,8 +94,8 @@ compiling until this is agreed.
    when one exists; `mode: null` with no place changes nothing. A `clarification` answering `same_place` is a yes
    only when it clearly says so (`isYes` in `src/domain/place.ts`); anything else is Otro lugar. A `clarification`
    answering `delivery_place` is the place in words.
-6. **Fee:** `fee` comes from store settings (#40) only, `null` when none is set, and is never part of `total`. Until
-   #40 exists the pretend engine always gives `null`. The readback shows "Envío: L X, aparte del total." only for a
+6. **Fee:** `fee` comes from store settings (#40) only, `null` when none is set, and is never part of `total`. The
+   pretend engine takes it from the store's setup (#40, our stand-in), `null` when unset. The readback shows "Envío: L X, aparte del total." only for a
    fee above zero.
 7. **Saving a place is ours:** on `order_confirmed` for a delivery order, the order handler saves the place in the
    job's batch (new place: one row per order ID, updated if the order is confirmed again; accepted saved place:
@@ -188,3 +188,35 @@ rules (typed yes, typed numbers, greetings and thanks, stop in other words, fail
    operation key; "1"/"2"/"3" alone after a message with buttons is that button's ID; a greeting, thanks or "ok"
    alone is sent as an empty reading (point 1 restates the step); a name answer is checked by code (never "sí",
    a number, an emoji, a product or a sentence) before it reaches the engine.
+
+## Proposed (Nov 2): conversation QA fixes
+
+**Status:** built against the pretend engine after the first scripted QA run (`npm run qa`); proposed to the engine,
+not agreed. All contract additions are optional fields or new union members, so both sides compile.
+
+1. **`LineMatch.how: "label_pick"`.** Perception's pick among the catalog labels code put in the prompt, mapped
+   back to a product by code (the model never supplies an ID). Code matches (barcode, exact name, alias) still
+   come first; a pick only fills a line code couldn't match. The customer confirms the readback, which names the
+   product, before anything is saved.
+2. **Products found by words, inside the engine.** A line nobody matched is searched in the store's catalog by its
+   words (`src/domain/catalog-search.ts`: whole words, plurals and unit words folded, numbers exact). One product
+   fits: that product. Two to `MAX_OPTIONS` (5) fit: the engine asks with **`ask.options`** (proposed:
+   `ProductOption { productId, name, unitPrice }`), and a perception size or product question for that line
+   carries the same options. The answer is read by code: the option's number ("2", "el segundo") or its words
+   among the options ("el clover de litro"). A price or stock question about a product nobody matched answers
+   one fact per fitting product (each a claim), or unknown when none or too many fit.
+3. **The quantity is asked.** A line with no quantity gets `ask quantity` for that line; the answer ("dos", "3",
+   "media docena") is read by code. Absent is never a quantity.
+4. **Pickup or delivery in plain words.** A `clarification` right after `pickup_or_delivery` sets the mode when its
+   words are clear ("a domicilio", "lo recojo"); otherwise nothing changes.
+5. **Setting the same fulfillment again changes nothing.** "Ok ya voy" read as pickup on a ready order must not
+   reopen it (it did: the order went back to `por_confirmar`).
+6. **`OrderView.code`** (proposed): the store's order number, said out loud ("101"), unique per store, assigned
+   when the order is created. Shown in the confirmation, the ready notice and the console.
+7. **A No hay mark recomputes the order total**, and the `line_unavailable` notice says the new total (claimed)
+   when the lines back it.
+8. **Owner answers from Pendientes** (our side only): each card shows what the customer last wrote (read from the
+   conversation, not copied into the item) and a reply box. The answer goes to the customer's conversation as an
+   outbox notice signed with the owner's first name, deduplicated by the item, and the item leaves the list. A
+   confirmed order with lines nobody could price or find raises a `customer_question` item with topic
+   `order_prices`, so every "te confirmo" reaches someone who can answer it.

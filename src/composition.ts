@@ -33,6 +33,7 @@ import { D1JobRepository } from "./infrastructure/d1/job-repository";
 import { D1ButtonsShown, D1OutboxRepository } from "./infrastructure/d1/outbox-repository";
 import { D1Pendientes } from "./infrastructure/d1/pendientes-repository";
 import { D1SpendLedger } from "./infrastructure/d1/spend-repository";
+import { D1StoreSetupRepository } from "./infrastructure/d1/store-setup-repository";
 import { D1TenancyRepository } from "./infrastructure/d1/tenancy-repository";
 import { HmacKeyedHasher } from "./infrastructure/keyed-hasher";
 import { DEMO_CATALOG } from "./infrastructure/memory/demo-catalog";
@@ -56,6 +57,8 @@ export interface Runtime {
   readonly engine: Engine | null;
   /** The burst reader the console's Anotar screen uses (#26). */
   readonly burstReader: BurstReader;
+  /** The store's own products, hours and delivery fee (#40), edited on the console's Tienda screens. */
+  readonly storeSetup: D1StoreSetupRepository;
 }
 
 /** One pretend engine per Worker isolate, so the dev console's taps last between requests. */
@@ -84,11 +87,14 @@ export type RuntimeOverrides = Partial<
 export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtime {
   const config = readConfig(env);
   const db = overrides.db ?? env.DB;
-  // DEV_CONSOLE: in memory, no login, local simulator only. PRETEND_ENGINE: state in D1, shared by
-  // every isolate, console behind login. Neither: no engine until the real one is wired in.
+  const storeSetup = new D1StoreSetupRepository(db);
+  // DEV_CONSOLE: in memory, demo catalog, no login, local simulator only. PRETEND_ENGINE: state in
+  // D1, shared by every isolate, each store's own products and hours (#40), console behind login.
+  // Both (the simulator's --store): the D1 engine, so the Tienda screens feed the chat. Neither: no
+  // engine until the real one is wired in.
   const engine =
     overrides.engine ??
-    (config.devConsole ? devEngine : config.pretendEngine ? new D1PretendEngine(db, { catalog: DEMO_CATALOG }) : null);
+    (config.pretendEngine ? new D1PretendEngine(db, { setup: storeSetup }) : config.devConsole ? devEngine : null);
   const clock = overrides.clock ?? systemClock;
   const log = overrides.log ?? consoleLogger;
   const jobs = new D1JobRepository(db);
@@ -130,6 +136,7 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
   return {
     config,
     engine,
+    storeSetup,
     burstReader:
       overrides.burstReader ??
       buildBurstReader(env, { clock, log }, { db, ...(overrides.modelProvider === undefined ? {} : { provider: overrides.modelProvider }) }),

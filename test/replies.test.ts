@@ -157,14 +157,15 @@ describe("templates", () => {
     expect(reply.body).toBe(
       [
         "Tu pedido:",
-        "1. Aceite Clover 1 L: 1 unidad × L 60 = L 60",
-        "2. Arroz 1 lb: 3 libras × L 30 = L 90",
-        "3. Azúcar 1 lb: 2 libras × L 30 = L 60",
-        "4. Jabón Xtra: 3 unidades × L 35 = L 105",
+        "• 1 × Aceite Clover 1 L · L 60",
+        "• 3 × Arroz 1 lb · L 90",
+        "• 2 × Azúcar 1 lb · L 60",
+        "• 3 × Jabón Xtra · L 105",
         "Lo recogés en la tienda.",
-        "Total: L 315",
-        "¿Está bien así?",
-        "_También podés escribir: confirmar, corregir o cancelar._",
+        "*Total: L 315*",
+        "Pagás cuando lo recogés.",
+        "¿Te lo preparo así?",
+        "_O escribí: confirmar, corregir o cancelar._",
       ].join("\n"),
     );
     expect(reply.claims).toEqual([
@@ -190,10 +191,10 @@ describe("templates", () => {
       total: null,
     };
     const reply = render({ type: "readback", order });
-    expect(reply.body).toContain("1. Aceite Clover 1 L: 1 unidad, el precio te lo confirmo.");
-    expect(reply.body).toContain("2. Arroz 1 lb: 1.5 libras × L 30 = L 45");
-    expect(reply.body).toContain("3. Azúcar 1 lb: no nos queda.");
-    expect(reply.body).toContain("4. un six de Salva Vida: eso solo lo vendemos aquí en la tienda.");
+    expect(reply.body).toContain("• 1 × Aceite Clover 1 L: el precio te lo confirmo.");
+    expect(reply.body).toContain("• 1.5 libras de Arroz 1 lb · L 45");
+    expect(reply.body).toContain("• Azúcar 1 lb: no nos queda.");
+    expect(reply.body).toContain("• un six de Salva Vida: eso solo lo vendemos aquí en la tienda.");
     expect(reply.body).toContain("El total te lo confirmo.");
     expect(reply.body).not.toContain("Total:");
     expect(reply.claims.flatMap((c) => c.anyOf).map((c) => c.type)).toEqual(["order_state"]);
@@ -206,24 +207,23 @@ describe("templates", () => {
     };
     const body = render({ type: "readback", order }).body;
     expect(body).toContain("Te lo llevamos a: frente a la iglesia, casa verde.");
-    expect(body).toContain("Envío: L 20, aparte del total.");
-    expect(body).toContain("Total: L 315, más el envío");
+    expect(body).toContain("*Total: L 335* (L 315 + L 20 de envío)");
     // No fee set: none is mentioned.
     const free = render({ type: "readback", order: { ...order, fulfillment: { mode: "delivery", placeId: "p1", placeText: null, fee: null } } }).body;
-    expect(free).not.toContain("Envío");
+    expect(free).not.toContain("envío");
   });
 
   it("reads back a change after confirming as a new version with its own buttons", () => {
     const reply = render(orderChanged);
     expect(reply.body.startsWith("Listo, así queda tu pedido:\n")).toBe(true);
-    expect(reply.body).toContain("3. Azúcar 1 lb: 3 libras × L 30 = L 90");
-    expect(reply.body).toContain("Total: L 345");
+    expect(reply.body).toContain("• 3 × Azúcar 1 lb · L 90");
+    expect(reply.body).toContain("*Total: L 345*");
     expect(reply.buttons.map((b) => b.id)).toEqual(["confirm:order-0001:v2", "correct:order-0001:v2", "cancel:order-0001:v2"]);
   });
 
   it("confirms only what's on the list, and accepts any state that means it's on the list", () => {
     const reply = render(orderConfirmed);
-    expect(reply.body).toBe("Listo, tu pedido ya está en la lista de preparación. Te aviso cuando esté listo.");
+    expect(reply.body).toBe("Listo 🙌 Tu pedido quedó anotado. Total: L 315. Te aviso cuando esté listo.");
     expect(reply.claims).toEqual([
       {
         anyOf: (["confirmado", "preparando", "listo"] as const).map((state) => ({
@@ -233,6 +233,8 @@ describe("templates", () => {
           state,
         })),
       },
+      // The confirmation now says the total, so it claims it too.
+      { anyOf: [{ type: "order_total", orderId: ids.order, version: 1, total: 31500 }] },
     ]);
   });
 
@@ -255,23 +257,26 @@ describe("templates", () => {
     const status = (order: OrderView | null) => render({ type: "order_status", order }).body;
     expect(status({ ...readbackOrder, state: "armando" })).toBe("Todavía estamos armando tu pedido.");
     expect(status(readbackOrder)).toBe(
-      "Todavía estamos armando tu pedido. Falta que lo confirmés. Respondé Confirmar, Corregir o Cancelar.",
+      "Tu pedido está armado, solo falta que me lo confirmés. Respondé Confirmar, Corregir o Cancelar.",
     );
-    expect(status(confirmedOrder)).toBe("Vas tercero en la lista. Te aviso apenas esté listo.");
-    expect(status({ ...confirmedOrder, state: "preparando", queuePosition: 1 })).toBe("Vas primero en la lista. Te aviso apenas esté listo.");
+    expect(status(confirmedOrder)).toBe("Vas tercero en la fila. Te aviso apenas esté listo.");
+    expect(status({ ...confirmedOrder, state: "preparando", queuePosition: 1 })).toBe("Vas primero en la fila. Te aviso apenas esté listo.");
     expect(status({ ...confirmedOrder, queuePosition: null })).toBe(COPY.statusOnList);
-    expect(status(readyOrder)).toBe("Tu pedido ya está listo.");
+    expect(status(readyOrder)).toBe("Tu pedido ya está listo. Te esperamos 🙌");
     expect(status({ ...readyOrder, state: "entregado" })).toBe("Tu pedido ya fue entregado.");
     expect(status({ ...readyOrder, state: "cancelado" })).toBe(COPY.statusCancelled);
     expect(status(null)).toBe(COPY.noOpenOrder);
-    expect(queuePlace(12)).toBe("Vas en el lugar 12 de la lista.");
+    expect(queuePlace(12)).toBe("Vas en el lugar 12 de la fila.");
   });
 
   it("asks one question at a time, naming the line it's about", () => {
     const ask = (question: Extract<EngineOutcome, { type: "ask" }>["question"], line: number | null = null) =>
       render({ type: "ask", question, line, order: readbackOrder }).body;
-    expect(ask("ambiguous_size", 0)).toBe("¿De qué tamaño querés Aceite Clover 1 L?");
-    expect(ask("pickup_or_delivery")).toBe("¿Lo recogés en la tienda o te lo llevamos?");
+    // A question about one line echoes the others first.
+    expect(ask("ambiguous_size", 0)).toBe("Anotado ✅ 3 × Arroz 1 lb, 2 × Azúcar 1 lb, 3 × Jabón Xtra.\n¿De qué tamaño querés Aceite Clover 1 L?");
+    expect(ask("pickup_or_delivery")).toBe(
+      "Anotado ✅ 1 × Aceite Clover 1 L, 3 × Arroz 1 lb, 2 × Azúcar 1 lb, 3 × Jabón Xtra.\n¿Lo recogés en la tienda o te lo llevamos?",
+    );
     expect(ask("customer_name")).toBe("¡Va! ¿A nombre de quién lo anoto?");
     // Without a saved place in the context there's nothing to echo and no buttons: the typed choices only.
     expect(ask("same_place")).toBe("¿Te lo llevamos al mismo lugar de siempre?\nRespondé Sí u Otro lugar.");
@@ -306,7 +311,7 @@ describe("templates", () => {
         { asked: "pan", productId: "p-pan", unitPrice: null, availability: "no_se", restricted: false },
       ],
     });
-    expect(stock.body).toBe(["Huevos: sí hay.", "Leche: se nos acabó.", "Pan: te lo anoto y te confirmo."].join("\n"));
+    expect(stock.body).toBe(["Huevos: sí hay.", "Leche: se nos acabó.", "Pan: te confirmo si hay."].join("\n"));
   });
 
   it("quotes customer words flat and capped, as data", () => {
@@ -342,14 +347,14 @@ describe("templates", () => {
 describe("notices", () => {
   it("says listo with the total and its claims, as the contract fixture expects", () => {
     const reply = renderNotice(readyNotice.notice);
-    expect(reply.body).toBe("Tu pedido ya está listo. Total L 345. Ya podés pasar a traerlo.");
+    expect(reply.body).toBe("¡Tu pedido ya está listo! 🙌 Total: L 345. Ya podés pasar por él.");
     expect(flattenClaims(reply.claims)).toEqual(readyClaims);
   });
 
   it("names what's missing when it's ready without a line", () => {
     const order: OrderView = { ...soldOutLine1, state: "listo", total: 28500 };
     expect(renderNotice({ type: "order_ready", order }).body).toBe(
-      "Tu pedido ya está listo. Total L 285, sin Aceite Clover 1 L. Ya podés pasar a traerlo.",
+      "¡Tu pedido ya está listo! 🙌 Total: L 285, sin Aceite Clover 1 L. Ya podés pasar por él.",
     );
   });
 

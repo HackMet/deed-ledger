@@ -4,6 +4,8 @@ import { LoggingPendientes } from "../logging-pendientes";
 
 /** The most items the console lists at once. */
 const MAX_OPEN = 100;
+/** The customer's words shown on a card are capped. */
+const MAX_SAID_CHARS = 300;
 
 /**
  * Pendientes kept in D1 for the console (wireframe C5), and still logged as before. Raising never
@@ -42,7 +44,12 @@ export class D1Pendientes implements Pendientes, PendientesBoard {
   async listOpen(tenant: Tenant): Promise<readonly OpenPendiente[]> {
     const { results } = await this.db
       .prepare(
-        `SELECT p.id, p.kind, p.detail, p.item_count, p.urgent, p.raised_at_ms, cu.name, cu.phone
+        `SELECT p.id, p.kind, p.detail, p.item_count, p.urgent, p.raised_at_ms, p.conversation_id, cu.name, cu.phone,
+                (SELECT group_concat(t, ' · ') FROM (SELECT t FROM (
+                   SELECT i.text_body AS t, i.received_at_ms AS r FROM inbound_messages i
+                   WHERE i.business_id = p.business_id AND i.conversation_id = p.conversation_id
+                     AND i.kind = 'text' AND i.text_body IS NOT NULL AND i.received_at_ms <= p.raised_at_ms
+                   ORDER BY i.received_at_ms DESC LIMIT 3) ORDER BY r)) AS said
          FROM conversation_pendientes p
          LEFT JOIN conversations c ON c.business_id = p.business_id AND c.id = p.conversation_id
          LEFT JOIN customers cu ON cu.business_id = c.business_id AND cu.id = c.customer_id
@@ -58,8 +65,10 @@ export class D1Pendientes implements Pendientes, PendientesBoard {
         item_count: number | null;
         urgent: number;
         raised_at_ms: number;
+        conversation_id: string | null;
         name: string | null;
         phone: string | null;
+        said: string | null;
       }>();
     return results.map((r) => ({
       id: r.id,
@@ -70,6 +79,8 @@ export class D1Pendientes implements Pendientes, PendientesBoard {
       raisedAtMs: r.raised_at_ms,
       customerName: r.name,
       phoneEnding: r.phone === null ? null : r.phone.slice(-4),
+      conversationId: r.conversation_id,
+      said: r.said === null ? null : r.said.slice(0, MAX_SAID_CHARS),
     }));
   }
 

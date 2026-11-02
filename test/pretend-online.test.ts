@@ -82,7 +82,7 @@ describe("the pretend engine with its state in D1", () => {
     const ready = await save(await staffSide.onConsoleAction(member(store.businessId), tap({ type: "mark_ready", orderId, version: 1 })));
     expect(ready.outcome).toMatchObject({ type: "action_saved", order: { state: "listo" } });
     expect(ready.notices).toMatchObject([{ customerId: "cust-1", notice: { type: "order_ready" } }]);
-    expect(renderNotice(ready.notices[0]!.notice).body).toBe("Tu pedido ya está listo. Total L 18. Ya podés pasar a traerlo.");
+    expect(renderNotice(ready.notices[0]!.notice).body).toBe("¡Tu pedido #101 ya está listo! 🙌 Total: L 18. Ya podés pasar por él.");
 
     // The consumer's isolate sees the staff tap, for the claim check and for "¿ya está?".
     expect((await consumer.preparationList(store))[0]!.order.state).toBe("listo");
@@ -93,7 +93,7 @@ describe("the pretend engine with its state in D1", () => {
     const store = await seedStore({ members: [] });
     const [engine] = twoIsolates();
     expect(await engine.preparationList(store)).toEqual([]);
-    expect((await engine.catalog()).map((product) => product.productId)).toContain("demo-arroz");
+    expect((await engine.catalog(store)).map((product) => product.productId)).toContain("demo-arroz");
     expect(await rows(`SELECT 1 FROM pretend_engine_state WHERE business_id = ?`, store.businessId)).toEqual([]);
   });
 
@@ -154,9 +154,10 @@ describe("the pretend engine with its state in D1", () => {
 });
 
 describe("PRETEND_ENGINE in the Worker", () => {
-  it("picks the engine: D1 with PRETEND_ENGINE, memory with DEV_CONSOLE, none without either", () => {
+  it("picks the engine: D1 with PRETEND_ENGINE (alone or with DEV_CONSOLE), memory with DEV_CONSOLE alone, none without either", () => {
     expect(buildRuntime(pretendEnv()).engine).toBeInstanceOf(D1PretendEngine);
-    expect(buildRuntime(pretendEnv({ DEV_CONSOLE: "1" })).engine).toBeInstanceOf(MemoryEngine);
+    expect(buildRuntime(pretendEnv({ DEV_CONSOLE: "1" })).engine).toBeInstanceOf(D1PretendEngine);
+    expect(buildRuntime(testEnv({ DEV_CONSOLE: "1" } as unknown as Partial<Env>)).engine).toBeInstanceOf(MemoryEngine);
     expect(buildRuntime(testEnv()).engine).toBeNull();
     expect(buildRuntime(pretendEnv()).config).toMatchObject({ pretendEngine: true, devConsole: false });
   });
@@ -190,7 +191,7 @@ describe("PRETEND_ENGINE in the Worker", () => {
     expect(response.status).toBe(303);
     expect(response.headers.get("location")).not.toContain("aviso=guardar");
 
-    const READY = "Tu pedido ya está listo. Total L 18. Ya podés pasar a traerlo.";
+    const READY = "¡Tu pedido #101 ya está listo! 🙌 Total: L 18. Ya podés pasar por él.";
     expect(await rows(`SELECT body_text FROM outbound_messages WHERE business_id = ? AND operation_key = 'k-ready'`, store.businessId)).toEqual([
       { body_text: READY },
     ]);

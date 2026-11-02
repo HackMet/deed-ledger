@@ -371,8 +371,8 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
 - **Saved on Confirmar only.** On `order_confirmed` for a delivery, the place is saved in the job's batch (one row
   per order ID; an accepted saved place is marked used). Pickup and cancelled orders keep no place. Customer deletion
   deletes the places and clears the pins on their messages.
-- **Fee:** shown only when the order's `fee` is above zero ("Envío: L X, aparte del total."). Store settings (#40)
-  don't exist yet, so it's always `null` today. The preparation card shows the place, a map link built from the
+- **Fee:** shown only when the order's `fee` is above zero ("Envío: L X, aparte del total."). The pretend engine sets
+  it on every delivery from the store's setup (#40), `null` when the owner hasn't set one. The preparation card shows the place, a map link built from the
   pin's numbers, and the fee when set.
 
 ### Customer controls: first message, ALTO, handoff, deletion (#30)
@@ -419,7 +419,8 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
 - **Pretend engine online** (`PRETEND_ENGINE=1`, a `vars` entry, blank by default; `DEV_CONSOLE` wins when both are
   set). For a deployed demo before the real engine lands: the same pretend engine, with each store's state kept as
   one JSON snapshot in `pretend_engine_state` (migration 0016), so the queue consumer and the console share it
-  across isolates. No orders are seeded; prices come from `DEMO_CATALOG`. The console still needs login. Each call
+  across isolates. No orders are seeded; products, prices, "No hay"
+  marks, hours and the fee come from the store's setup (#40, below), read per store on every call. The console still needs login. Each call
   loads the snapshot for the store in the lease or session, runs `MemoryEngine` on it, and returns the new snapshot
   as a `Commit` guarded on the version it read (rule 6): it lands in the job's completion batch or the console
   action's batch, or not at all. A lost race fails that batch with `PretendStateMovedError`; the job is deferred and
@@ -450,6 +451,16 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
   person as a member if needed and prints a link. The raw code is only printed, never written to disk.
 - **Dev mode** (`DEV_CONSOLE=1`, local simulator only) skips login and CSRF: it acts as the owner of the store on
   `DEV_STORE_PHONE_NUMBER_ID`, or else a fixed demo staff member ("Rosa") of an empty demo store.
+- **Store setup (#40), a temporary stand-in for the Monday pilot.** Owner-only screens under `/console/tienda`, reached from Más
+  (`tienda.ts`): products (add, edit, "No hay" / "Sí hay", remove), a paste box that previews before saving
+  (`parsePasteBox` in `domain/store-setup.ts`; exact centavos, an unreadable price is listed, never guessed), hours
+  per day and the delivery fee. Stored in `store_products` and `store_setup_settings` (migration 0019) through
+  `D1StoreSetupRepository`, every query scoped by the session's store. The D1 pretend engine maps a product to
+  `names: [name]`, `aliases: other names`, `availability: "se_acabo"` when marked "No hay" (unmarked is unknown,
+  never "hay"); an ordered "No hay" product keeps `se_acabo` on its line, so the readback says "no nos queda" and
+  leaves it out of the total. The spec's catalog (`products`, `product_names`, `prices`, `availability_evidence`)
+  and spoken setup session live in the teammate's engine and replace these tables once ready. The dev console keeps
+  `DEMO_CATALOG`.
 - **Screens** live in `src/interfaces/http/console/`, one file each, rendered through the shared layout in
   `layout.ts`: a top bar (title, a short subtitle, and who is logged in, "Nombre · Dueño/Empleado"), the notice,
   and the tab bar (Pedidos, Anotar, Pendientes for the owner, Más). The owner's pages put the open Pendientes count

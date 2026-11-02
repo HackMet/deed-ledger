@@ -53,6 +53,9 @@ async function queueReply(h: Harness, phoneNumberId: string, phone: string, body
   h.channel.configured = true;
 }
 
+/** The confirmation of confirmedOrder: no order number, its total said. */
+const CONFIRMED = "Listo 🙌 Tu pedido quedó anotado. Total: L 315. Te aviso cuando esté listo.";
+
 async function outboxRows(businessId: string) {
   return rows<{ status: string; body_text: string; claims_json: string | null; buttons_json: string | null; claims_blocked_at_ms: number | null; last_error: string | null }>(
     `SELECT status, body_text, claims_json, buttons_json, claims_blocked_at_ms, last_error FROM outbound_messages WHERE business_id = ? ORDER BY seq`,
@@ -76,8 +79,9 @@ describe("the second claim check, right before sending", () => {
     const { h, phone, store, tenant } = await setup({ engine, outcome: () => ({ type: "order_confirmed", order: confirmedOrder }) });
     await queueReply(h, store.phoneNumberId, phone);
     const [queued] = await outboxRows(store.businessId);
-    expect(queued).toMatchObject({ status: "pending", body_text: COPY.confirmed });
-    expect(JSON.parse(queued!.claims_json!)).toHaveLength(1);
+    expect(queued).toMatchObject({ status: "pending", body_text: CONFIRMED });
+    // Its state, and the total it now says.
+    expect(JSON.parse(queued!.claims_json!)).toHaveLength(2);
 
     // The customer cancels after the reply was queued.
     expect((await engine.onCustomerAction(customer(tenant), cancelTap(confirmedOrder))).outcome.type).toBe("order_cancelled");
@@ -106,7 +110,7 @@ describe("the second claim check, right before sending", () => {
     expect(started.outcome.type).toBe("action_saved");
 
     await h.runCron();
-    expect(h.sentTo(phone)).toEqual([COPY.confirmed]);
+    expect(h.sentTo(phone)).toEqual([CONFIRMED]);
     expect((await outboxRows(store.businessId))[0]!.claims_blocked_at_ms).toBeNull();
     expect(h.log.events()).not.toContain("pendiente_raised");
   });
@@ -136,7 +140,7 @@ describe("the second claim check, right before sending", () => {
     expect((await outboxRows(store.businessId))[0]).toMatchObject({ status: "pending", last_error: "claim_check_unavailable" });
 
     await h.runCron();
-    expect(h.sentTo(phone)).toEqual([COPY.confirmed]);
+    expect(h.sentTo(phone)).toEqual([CONFIRMED]);
   });
 
   it("treats stored claims it can't read as claims that don't hold", async () => {
@@ -201,9 +205,9 @@ describe("reply buttons", () => {
     await h.runCron();
 
     const [sent] = h.channel.sent.filter((s) => s.toPhone === phone);
-    expect(sent!.body).toContain("Total: L 315");
+    expect(sent!.body).toContain("*Total: L 315*");
     // The typed fallback stays, as the soft last line under the buttons (PRD §6.1).
-    expect(sent!.body.split("\n").at(-1)).toBe("_También podés escribir: confirmar, corregir o cancelar._");
+    expect(sent!.body.split("\n").at(-1)).toBe(COPY.typedFallbackSoft);
     expect(sent!.buttons).toEqual([
       { id: "confirm:order-0001:v1", title: "Confirmar" },
       { id: "correct:order-0001:v1", title: "Corregir" },
@@ -285,7 +289,9 @@ describe("order-dependent replies that aren't readbacks", () => {
     const { h, phone, store } = await setup({ engine, outcome: () => ask });
     await queueReply(h, store.phoneNumberId, phone, "quiero agregar algo");
     await h.runCron();
-    expect(h.sentTo(phone)).toEqual(["¿Lo recogés en la tienda o te lo llevamos?"]);
+    expect(h.sentTo(phone)).toEqual([
+      "Anotado ✅ 1 × Aceite Clover 1 L, 3 × Arroz 1 lb, 2 × Azúcar 1 lb, 3 × Jabón Xtra.\n¿Lo recogés en la tienda o te lo llevamos?",
+    ]);
   });
 });
 
@@ -330,7 +336,7 @@ describe("when the second check runs", () => {
       "send",
       "markSent",
     ]);
-    expect(h.sentTo(phone)).toEqual([COPY.confirmed]);
+    expect(h.sentTo(phone)).toEqual([CONFIRMED]);
   });
 
   it("doesn't send when the check itself outlasts the claim's confirmation budget", async () => {

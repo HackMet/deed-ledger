@@ -13,7 +13,7 @@ import { CommitEngine, ensureLinesTable, StaleOrderError, savedLines } from "./h
 import { harness, rows } from "./helpers/harness";
 import { newPhone, type SeededStore, seedCustomer } from "./helpers/seed";
 
-const READY = "Tu pedido ya está listo. Total L 90. Ya podés pasar a traerlo.";
+const READY = "¡Tu pedido ya está listo! 🙌 Total: L 90. Ya podés pasar por él.";
 
 class RecordingPendientes implements Pendientes {
   readonly items: Parameters<Pendientes["raise"]>[1][] = [];

@@ -13,6 +13,9 @@ export const NAME_MAX_WORDS = 4;
 /** Lead-ins dropped from a name answer. */
 const LEAD_IN = /^(?:(?:es |va )?a nombre de|mi nombre es|me llamo|me dicen|soy)\s+/iu;
 
+/** An agreement before the name, followed by a comma or a pause: dropped, the name stays. */
+const AGREEMENT = /^(?:(?:ok(?:ey)?|okay|va|vaya|dale|bueno|bien|si|sí|ta bien|está bien|esta bien|listo|claro|perdón|perdon|ah)[\s,.!]+)+/iu;
+
 /** Words that answer something else, never a name. */
 const NOT_NAMES = new Set(
   ["no", "nada", "nadie", "ninguno", "yo", "mio", "jaja", "jeje", "ja", "ah", "eh", "mmm", "que", "como", "ya", "aja", "ahorita", "luego"].map(
@@ -34,6 +37,8 @@ const NOT_FIRST_WORDS = new Set(
 export function nameFrom(text: string | null, products: ReadonlySet<string> = new Set()): string | null {
   if (text === null || /[?¿]/u.test(text)) return null;
   let name = text.replace(/[\p{Cc}\p{Cf}]/gu, " ").replace(/\s+/g, " ").trim();
+  // "Ta bien, Luis", "ok, a nombre de Luis": the agreement in front isn't part of the name.
+  name = name.replace(AGREEMENT, "");
   name = name.replace(LEAD_IN, "");
   name = name.replace(/^[\s"'“”«¡¿.,;:!-]+|[\s"'“”».,;:!?-]+$/gu, "").trim();
   if (name === "" || [...name].length > NAME_MAX_CHARS) return null;

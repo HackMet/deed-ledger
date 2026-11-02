@@ -388,7 +388,7 @@ async function handleBurst(deps: OrderHandlerDeps, lease: Lease, job: Job, facts
 
   let read: BurstRead;
   try {
-    read = await deps.reader.read({ lease, messages, context: customerContext });
+    read = (await typedNameAnswer(deps, lease, customer, messages, customerContext)) ?? (await deps.reader.read({ lease, messages, context: customerContext }));
   } catch (error) {
     if (!(error instanceof BurstMediaUnreadableError) || !givesUpOnMedia(job, error)) throw error;
     return unreadableMediaOutcome(deps, lease, job, error, nowMs);
@@ -485,6 +485,30 @@ async function productWords(deps: OrderHandlerDeps, lease: Lease): Promise<Reado
   if (source === null) return new Set();
   const catalog = await source.catalog({ businessId: lease.businessId });
   return new Set(catalog.flatMap((product) => [...product.names, ...product.aliases]).map(foldShortText));
+}
+
+/**
+ * The name question asked last, answered with one typed message that can only be a name ("Luis",
+ * "ta bien, Luis"): read by code, with no model call, like a typed yes. Anything else is null and
+ * goes to perception as usual.
+ */
+async function typedNameAnswer(
+  deps: OrderHandlerDeps,
+  lease: Lease,
+  customer: ConversationCustomer,
+  messages: readonly Job[],
+  customerContext: CustomerContextWithName,
+): Promise<BurstRead | null> {
+  if (customer.name !== null || messages.length !== 1 || messages[0]!.kind !== "text") return null;
+  const text = messages[0]!.textBody ?? "";
+  const source = readingSourceOf(deps.engine);
+  if (source === null) return null;
+  const { pendingQuestion } = await source.perceptionContext(customerContext);
+  if (pendingQuestion !== "customer_name") return null;
+  const name = nameFrom(text, await productWords(deps, lease));
+  if (name === null) return null;
+  const evidence = { source: "text", message: 0, start: 0, end: text.length } as const;
+  return { reading: { observations: [{ kind: "customer_name", name, evidence, issues: [] }], calls: [] }, matches: [], pendingQuestion };
 }
 
 /** The reading with every `customer_name` that can't be a name dropped, and the rest tidied. */
@@ -703,7 +727,7 @@ async function raiseUnanswered(
 ): Promise<void> {
   const unknown = unansweredCount(outcome);
   if (unknown === 0) return;
-  const topic = outcome.type === "answer" ? outcome.topic : "store_hours";
+  const topic = outcome.type === "answer" ? outcome.topic : outcome.type === "order_confirmed" ? "order_prices" : "store_hours";
   await deps.pendientes.raise(lease, {
     kind: "customer_question",
     conversationId: lease.conversationId,

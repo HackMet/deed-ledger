@@ -56,6 +56,11 @@ export interface OrderView {
   readonly total: Centavos | null;
   /** Place in the preparation list, 1 is next. Null unless confirmado or preparando. */
   readonly queuePosition: number | null;
+  /**
+   * Proposed (Nov 2), not agreed yet: the short number the customer and the store say out loud
+   * ("101"), unique within the store. Optional until agreed; absent means none.
+   */
+  readonly code?: string;
 }
 
 /** One order on the staff's preparation list. */
@@ -68,6 +73,17 @@ export interface PreparationCard {
   /** Lines that changed in the current version, highlighted for whoever is packing. */
   readonly changedLineIds: readonly string[];
 }
+
+/** Proposed (Nov 2): one product offered for an unclear line. Its price is a claim when shown. */
+export interface ProductOption {
+  readonly productId: string;
+  readonly name: string;
+  /** The store's confirmed price; null when none is confirmed. */
+  readonly unitPrice: Centavos | null;
+}
+
+/** At most this many products are offered for one unclear line. */
+export const MAX_OPTIONS = 5;
 
 /** The one question to ask next. `line` points into the order's lines when it's about one. */
 export type QuestionCode =
@@ -104,7 +120,17 @@ export interface StoreHoursEntry {
 export type StoreHours = readonly StoreHoursEntry[];
 
 export type EngineOutcome =
-  | { readonly type: "ask"; readonly question: QuestionCode; readonly line: number | null; readonly order: OrderView | null }
+  | {
+      readonly type: "ask";
+      readonly question: QuestionCode;
+      readonly line: number | null;
+      readonly order: OrderView | null;
+      /**
+       * Proposed (Nov 2), not agreed yet: the products that fit an unclear line, at most
+       * MAX_OPTIONS, from the store's catalog, so the customer picks one by number or name.
+       */
+      readonly options?: readonly ProductOption[];
+    }
   | { readonly type: "readback"; readonly order: OrderView }
   | { readonly type: "order_confirmed"; readonly order: OrderView }
   /**

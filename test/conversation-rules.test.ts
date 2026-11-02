@@ -44,8 +44,8 @@ const READ = {
   },
 } as const;
 
-const ASK_HOW = "¿Lo recogés en la tienda o te lo llevamos?";
-const CONFIRMED_CARLA = "Listo, Carla, tu pedido ya está en la lista de preparación. Te aviso cuando esté listo.";
+const ASK_HOW = "Anotado ✅ 2 × Arroz 1 lb.\n¿Lo recogés en la tienda o te lo llevamos?";
+const CONFIRMED_CARLA = "Listo, Carla 🙌 Tu pedido #101 quedó anotado. Total: L 60. Te aviso cuando esté listo.";
 
 class RecordedProvider implements ModelProvider {
   readonly model = "muse-spark-1.3";
@@ -186,6 +186,17 @@ describe("the name, asked at the end", () => {
     expect(await c.tap("Confirmar")).toBe(CONFIRMED_CARLA);
     expect(c.sent().map((s) => s.body)).not.toContain(COPY.askName);
   });
+
+  it("'ta bien, Luis' after the name question is read by code, with no model call, and confirms", async () => {
+    const c = await customer([READ.arroz, READ.pickup]);
+    await toReadback(c);
+    expect(await c.tap("Confirmar")).toBe(COPY.askName);
+    const calls = c.provider.requests.length;
+    expect(await c.say("ta bien, Luis")).toMatch(/^Listo, Luis 🙌 Tu pedido #\d+ quedó anotado\./u);
+    expect(c.provider.requests).toHaveLength(calls);
+    expect(await c.savedName()).toBe("Luis");
+    expect(await c.confirmedCount()).toBe(1);
+  });
 });
 
 describe("a typed yes under a readback", () => {
@@ -273,7 +284,7 @@ describe("a question and an order in one message", () => {
   it.each(ENGINES)("answers the question first, then the order's next step, in one reply (%s)", async (_label, makeEngine) => {
     const c = await customer([READ.priceAndOrder], { name: "Carla", makeEngine });
     const reply = await c.say("¿a cómo la leche? y mandame 2 libras de arroz");
-    expect(reply.split("\n")).toEqual(["La leche: L 32.", ASK_HOW]);
+    expect(reply.split("\n")).toEqual(["La leche: L 32.", ...ASK_HOW.split("\n")]);
     expect(c.sent()).toHaveLength(1);
   });
 });
