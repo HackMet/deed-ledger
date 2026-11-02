@@ -42,7 +42,7 @@ const ownerName = args["owner-name"] === undefined ? null : name(args["owner-nam
 const phoneNumberId = digits(args["phone-number-id"], "phone-number-id", 1, 32);
 const ownerPhone = digits(args["owner-phone"], "owner-phone", 6, 15);
 
-const ids = { business: randomUUID(), location: randomUUID(), channelAccount: randomUUID(), user: randomUUID() };
+const ids = { business: randomUUID(), location: randomUUID(), channelAccount: randomUUID(), user: randomUUID(), product: randomUUID() };
 const now = Date.now();
 
 const statements = [
@@ -57,6 +57,9 @@ const statements = [
    ON CONFLICT (phone) DO NOTHING;`,
   `INSERT INTO memberships (business_id, user_id, location_id, role, created_at_ms)
    SELECT ${sql(ids.business)}, id, ${sql(ids.location)}, 'owner', ${now} FROM users WHERE phone = ${sql(ownerPhone)};`,
+  // One synthetic product until the catalog exists, so stock movements have a product to name.
+  `INSERT INTO products (id, business_id, canonical_name, created_at_ms)
+   VALUES (${sql(ids.product)}, ${sql(ids.business)}, ${sql("Producto de prueba (sintético)")}, ${now});`,
 ];
 
 mkdirSync(".wrangler/tmp", { recursive: true });
@@ -73,7 +76,7 @@ try {
 console.log(
   JSON.stringify(
     {
-      created: { businessId: ids.business, locationId: ids.location, channelAccountId: ids.channelAccount },
+      created: { businessId: ids.business, locationId: ids.location, channelAccountId: ids.channelAccount, productId: ids.product },
       database: args.remote === true ? "remote" : "local",
     },
     null,

@@ -36,7 +36,8 @@ against the types and the fixtures; `npm run typecheck` fails when a fixture sto
   one is open adds to it.
 - **Every action has an operation key and an actor** from the session or conversation; order actions carry the
   version on screen. A reused key returns `duplicate` with the first outcome; a stale version returns `rejected`.
-  Typed "confirmar" and the button share one key: `confirm:<order>:v<version>`.
+  Typed "confirmar" and the button share one key: `confirm:<order>:v<version>`. The engine derives the key from the
+  action and rejects any other as `not_allowed`: `cancel:<order>:v<version>`, `remove:<order>:v<version>:<lineId>`.
 - **The engine saves nothing itself.** It returns `{ outcome, notices, commits }`. For a customer message the commits
   run in the job's completion batch (`JobOutcome.commits`); for a console action, in one guarded batch.
 - **The claim check runs twice.** Before the save, against the outcome (the records it names aren't saved yet).
@@ -56,8 +57,8 @@ against the types and the fixtures; `npm run typecheck` fails when a fixture sto
 - Operation keys as above. The `operations` table is the single anchor for idempotency; the engine's facts reference
   it. A repeated key is answered from `operations` before any commit is built (`duplicate` with the first outcome);
   the UNIQUE rule only settles races.
-- A `Commit` may carry `post` guards, checked after its statements in the same batch. Until the fence runs them,
-  `completeJob` refuses a commit that has any.
+- A `Commit` may carry `post` guards, checked after its statements in the same batch, so they can read what the
+  statements wrote. One that doesn't hold rolls the whole batch back: no fact, no reply, the job stays open.
 - `Commit` naming D1 types in the application layer is a decision (D-40), not debt.
 - Tables use `business_id` (existing schema), not Tech Spec v3's `store_id`.
 
