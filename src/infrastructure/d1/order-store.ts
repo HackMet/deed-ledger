@@ -99,6 +99,35 @@ export class D1OrderStore implements OrderStore {
     return row ?? null;
   }
 
+  async preparationOrders(tenant: Tenant): Promise<readonly StoredOrder[]> {
+    const { results } = await this.db
+      .prepare(
+        `${ORDER_SELECT} WHERE o.business_id = ? AND o.state IN ('confirmado', 'preparando', 'listo')
+           AND o.first_confirmed_at_ms IS NOT NULL
+         ORDER BY o.first_confirmed_at_ms, o.id`,
+      )
+      .bind(tenant.businessId)
+      .all<OrderRow>();
+    return Promise.all(results.map((row) => this.load(tenant, row)));
+  }
+
+  async changedLineIds(tenant: Tenant, orderId: string, version: number): Promise<readonly string[]> {
+    if (version <= 1) return [];
+    const { results } = await this.db
+      .prepare(
+        `SELECT c.line_no FROM order_lines c
+         LEFT JOIN order_lines p ON p.business_id = c.business_id AND p.order_id = c.order_id
+           AND p.version = c.version - 1 AND p.line_no = c.line_no
+         WHERE c.business_id = ? AND c.order_id = ? AND c.version = ?
+           AND (p.line_no IS NULL OR c.product_id IS NOT p.product_id OR c.customer_text IS NOT p.customer_text
+             OR c.qty_milli IS NOT p.qty_milli OR c.unit IS NOT p.unit)
+         ORDER BY c.line_no`,
+      )
+      .bind(tenant.businessId, orderId, version)
+      .all<{ line_no: number }>();
+    return results.map((row) => labelOf(row.line_no - 1));
+  }
+
   async queuePosition(tenant: Tenant, orderId: string, confirmedAtMs: number): Promise<number> {
     const row = await this.db
       .prepare(

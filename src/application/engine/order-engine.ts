@@ -61,6 +61,13 @@ export interface OrderStore {
   productNames(tenant: Tenant, productIds: readonly string[]): Promise<ReadonlyMap<string, string>>;
   /** The current version's number, state and total of an order in this store; null when absent. */
   orderHead(tenant: Tenant, orderId: string): Promise<OrderHead | null>;
+  /** Orders confirmado, preparando or listo, oldest first confirmation first (ties by id). */
+  preparationOrders(tenant: Tenant): Promise<readonly StoredOrder[]>;
+  /**
+   * Labels of the lines of `version` that differ from the same line of the version before it
+   * (product, words, quantity or unit) or have no counterpart there. Empty for version 1.
+   */
+  changedLineIds(tenant: Tenant, orderId: string, version: number): Promise<readonly string[]>;
   /** 1 is next, counting orders holding a place in line confirmed before `confirmedAtMs`. */
   queuePosition(tenant: Tenant, orderId: string, confirmedAtMs: number): Promise<number>;
   commitFor(tenant: Tenant, write: OrderWrite): Commit;
@@ -270,8 +277,18 @@ export class OrderEngine implements Engine {
     return Promise.all(claims.map((claim) => this.verifyClaim(tenant, claim)));
   }
 
-  async preparationList(_tenant: Tenant): Promise<readonly PreparationCard[]> {
-    throw new Error("not implemented: issue #12");
+  async preparationList(tenant: Tenant): Promise<readonly PreparationCard[]> {
+    const { store } = this.deps;
+    const orders = await store.preparationOrders(tenant);
+    return Promise.all(
+      orders.map(async ({ view, firstConfirmedAtMs }) => ({
+        order: view,
+        // PENDING: the customer's name, once the customers table is on main.
+        customerName: null,
+        confirmedAtMs: firstConfirmedAtMs ?? 0,
+        changedLineIds: await store.changedLineIds(tenant, view.orderId, view.version),
+      })),
+    );
   }
 
   /** True only when the records back the claim now. Absent means unknown: anything not stored is false. */
