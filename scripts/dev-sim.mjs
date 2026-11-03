@@ -15,6 +15,9 @@
 //
 // With --store, the chat uses the store's own products, prices and hours from Más → Preparar la
 // tienda (the D1 pretend engine) instead of the in-memory demo list.
+//
+// With --planner (and --ai), the planner decides each conversation step (CONVERSATION=planner,
+// D-45): two Muse Spark calls per customer message instead of one.
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -45,7 +48,12 @@ if (args.ai === true && aiKey === null) {
 mkdirSync(dirname(SIM.envFile), { recursive: true });
 writeFileSync(
   SIM.envFile,
-  `${Object.entries({ ...SIM_SECRETS, ...SIM_VARS, ...(args.store === true ? { PRETEND_ENGINE: "1" } : {}) })
+  `${Object.entries({
+    ...SIM_SECRETS,
+    ...SIM_VARS,
+    ...(args.store === true ? { PRETEND_ENGINE: "1" } : {}),
+    CONVERSATION: args.planner === true ? "planner" : "classic",
+  })
     .map(([name, value]) => `${name}=${value}`)
     .join("\n")}\n`,
 );
@@ -85,5 +93,6 @@ const dev = spawn(
   { stdio: "inherit", env: aiKey === null ? simChildEnv() : { ...simChildEnv(), MODEL_API_KEY: aiKey } },
 );
 if (aiKey !== null) console.log("AI mode: customer messages are read by Muse Spark (spends Meta credits).");
+if (args.planner === true) console.log("Planner mode: a second Muse Spark call per message decides the next step.");
 dev.on("exit", (code) => process.exit(code ?? 0));
 for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => dev.kill(signal));

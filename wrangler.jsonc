@@ -22,6 +22,9 @@
     // "1" turns on the pretend engine with its state in D1 (migration 0016), for a deployed demo until
     // the real engine lands. The console still needs login. DEV_CONSOLE wins when both are set.
     "PRETEND_ENGINE": "",
+    // "planner" lets the planner (a second Muse Spark call per burst) decide each conversation step
+    // (D-45); "classic" (the default) keeps the engine's own questions. The simulator's --planner sets it.
+    "CONVERSATION": "classic",
     // The Worker's public origin (https://…, no trailing slash), for the privacy link in the first
     // message. Blank: the link is left out. Set it before customers write.
     "PUBLIC_BASE_URL": ""
@@ -35,6 +38,9 @@
 
   // Voice notes: opus-decoder's libopus Wasm is extracted before bundling, because Workers can't
   // compile Wasm at runtime; its unused Web Worker variant is stubbed out (src/integrations/audio).
+  // The planner's instruction layers are Markdown files Angel edits (src/application/planner/instructions/),
+  // bundled as text.
+  "rules": [{ "type": "Text", "globs": ["**/*.md"], "fallthrough": true }],
   "build": { "command": "node scripts/extract-opus-wasm.mjs" },
   "alias": { "@eshaz/web-worker": "./src/integrations/audio/no-web-worker.ts" },
 

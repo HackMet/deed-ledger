@@ -19,6 +19,11 @@ export interface Config {
    * console still needs login, unless devConsole is also on (the simulator's --store).
    */
   readonly pretendEngine: boolean;
+  /**
+   * Who decides each conversation step: "planner" (a second Muse Spark call per burst, D-45) or
+   * "classic" (the engine's own questions). Anything but "planner" is classic.
+   */
+  readonly conversation: "planner" | "classic";
   /** The Meta Model API key. Blank: model calls fail closed. */
   readonly modelApiKey: string;
   /** The Worker's public origin (https://…), for links customers get. Blank: links are left out. */
@@ -36,6 +41,7 @@ export function readConfig(env: Env): Config {
     devConsole: String(env.DEV_CONSOLE ?? "") === "1",
     devStorePhoneNumberId: String(env.DEV_STORE_PHONE_NUMBER_ID ?? ""),
     pretendEngine: String(env.PRETEND_ENGINE ?? "") === "1",
+    conversation: String(env.CONVERSATION ?? "") === "planner" ? "planner" : "classic",
     modelApiKey: env.MODEL_API_KEY ?? "",
     publicBaseUrl: String(env.PUBLIC_BASE_URL ?? "").replace(/\/+$/u, ""),
   };

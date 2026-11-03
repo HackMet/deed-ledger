@@ -11,13 +11,12 @@ import { isSupportedImage, type BurstMessage } from "../../domain/perception/bur
 import { validateReading } from "../../domain/perception/validate";
 import { READING_SCHEMA_NAME, readingSchema, type Audience } from "../../domain/perception/wire";
 import type { LineMatch } from "../engine";
+import { meteredCall } from "../metered-call";
 import type { Clock, Logger, ModelProvider, ModelRequest, SpendLedger, Tenant } from "../ports";
 import { labelCatalog, matchLines, resolvePicks, type CatalogProduct, type LabelMatch } from "./matching";
-import { PROMPT_VERSION, SYSTEM_PROMPT, userContent } from "./prompt";
+import { PLANNER_MODE_PROMPT, PROMPT_VERSION, SYSTEM_PROMPT, userContent } from "./prompt";
 
-/** Muse Spark 1.3 list prices in micro-dollars per token ($1.25 and $4.25 per million). */
-const INPUT_MICRO_USD_PER_TOKEN = 1.25;
-const OUTPUT_MICRO_USD_PER_TOKEN = 4.25;
+export { boundMicroUsd, DEFAULT_DAILY_CAP_MICRO_USD, inputTokenBound } from "../metered-call";
 
 /**
  * The output cap, sent as Chat Completions `max_tokens`. Meta's reasoning docs: on Chat Completions
@@ -26,20 +25,6 @@ const OUTPUT_MICRO_USD_PER_TOKEN = 4.25;
  * invoice without starving the reasoning. A cut-off answer reads as invalid output, never as data.
  */
 export const MAX_OUTPUT_TOKENS = 8_192;
-
-/**
- * Input upper bound. Text: one token per UTF-8 byte of everything sent (system prompt, user parts,
- * schema), which holds for a byte-level BPE tokenizer: every token covers at least one byte. The
- * live order request is about 16,600 bytes and was billed 3,956 tokens. Plus Meta's chat formatting (about 110
- * tokens for a short request, per its docs) with margin. A photo is about 1,300-1,500 tokens at
- * 1280 px (Meta's docs) but the model may resize it, so the per-photo figure is a generous estimate,
- * not a proven bound.
- */
-const REQUEST_OVERHEAD_TOKENS = 1_024;
-const TOKENS_PER_IMAGE = 4_096;
-
-/** US$2 a day per store unless the caller says otherwise. */
-export const DEFAULT_DAILY_CAP_MICRO_USD = 2_000_000;
 
 export type ReadOutcome =
   | {
@@ -66,6 +51,11 @@ export interface ReadRequest {
   readonly context: PerceptionContext;
   /** The store's catalog, already scoped to the tenant by the caller's repository. */
   readonly catalog: readonly CatalogProduct[];
+  /**
+   * Planner mode (D-45): no catalog labels and no pick rules in the prompt, so the reader only says
+   * what was said; code still matches lines exactly across the whole catalog. Absent: classic.
+   */
+  readonly withoutLabels?: boolean;
 }
 
 export class BurstReader {
@@ -80,9 +70,10 @@ export class BurstReader {
   ) {}
 
   async read(tenant: Tenant, request: ReadRequest): Promise<ReadOutcome> {
-    const { provider, spend, clock, log } = this.deps;
+    const { log } = this.deps;
     const messages = request.messages.map(sendable);
-    const catalog = labelCatalog(request.catalog);
+    const plannerMode = request.withoutLabels === true && request.audience === "customer";
+    const catalog = labelCatalog(plannerMode ? [] : request.catalog);
     const context = { ...request.context, catalogLabels: catalog.labels };
 
     if (messages.length === 0) {
@@ -90,81 +81,31 @@ export class BurstReader {
     }
 
     const modelRequest: ModelRequest = {
-      system: SYSTEM_PROMPT[request.audience],
-      user: userContent(messages, context),
+      system: plannerMode ? PLANNER_MODE_PROMPT.text : SYSTEM_PROMPT[request.audience],
+      user: userContent(messages, context, { catalogSection: !plannerMode }),
       schemaName: READING_SCHEMA_NAME,
       schema: readingSchema(request.audience),
       maxOutputTokens: MAX_OUTPUT_TOKENS,
     };
-    // The reservation is the most this call can cost, so a call admitted near the cap can't pass it.
-    const bound = boundMicroUsd(modelRequest);
-    const reservation = await spend.reserve(tenant, clock.now(), bound, this.deps.dailyCapMicroUsd ?? DEFAULT_DAILY_CAP_MICRO_USD);
-    if (!reservation) {
-      log.warn("perception.spend_cap", { businessId: tenant.businessId, reason: "spend_cap" });
-      return { ok: false, reason: "spend_cap", calls: [] };
-    }
+    const promptVersion = plannerMode ? PLANNER_MODE_PROMPT.version : PROMPT_VERSION[request.audience];
+    const called = await meteredCall(this.deps, tenant, modelRequest, { promptVersion, logPrefix: "perception" });
+    if (!called.ok) return { ok: false, reason: called.reason, calls: called.calls };
 
-    const result = await provider.complete(modelRequest);
-    const call: ModelCall = {
-      model: provider.model,
-      promptVersion: PROMPT_VERSION[request.audience],
-      latencyMs: result.latencyMs,
-      inputTokens: result.inputTokens,
-      outputTokens: result.outputTokens,
-    };
-
-    // A refused request costs nothing; an unknown outcome keeps the bound; otherwise the usage.
-    const actual = !result.ok && result.error === "rejected" ? 0 : (actualMicroUsd(result.inputTokens, result.outputTokens) ?? bound);
-    if (actual > reservation.microUsd) {
-      // The bound was wrong (a photo bigger than estimated, or usage over max_tokens). The ledger
-      // records what was spent, so the next reservation sees it; the overshoot (micro-USD) is logged.
-      log.warn("perception.spend_over_bound", { businessId: tenant.businessId, reason: "over_bound", count: actual - reservation.microUsd });
-    }
-    await spend.settle(reservation, actual);
-
-    if (!result.ok) {
-      const reason = result.error === "invalid_json" ? "invalid_output" : result.error;
-      log.warn("perception.failed", { businessId: tenant.businessId, reason, status: result.status ?? "none" });
-      return { ok: false, reason, calls: [call] };
-    }
-
-    const validated = validateReading(result.json, request.audience, messages, context);
+    const validated = validateReading(called.json, request.audience, messages, context);
     if (!validated.ok) {
       // Not the mismatch path: an unexpected key is the model's text, and logs carry no content.
       log.warn("perception.invalid_output", { businessId: tenant.businessId, reason: "schema" });
-      return { ok: false, reason: "invalid_output", calls: [call] };
+      return { ok: false, reason: "invalid_output", calls: [called.call] };
     }
 
     const matches = matchLines(validated.observations, request.catalog);
     const labelMatches = resolvePicks(validated.picks, catalog, matches);
     log.info("perception.read", { businessId: tenant.businessId, count: validated.observations.length, outcome: "ok" });
-    return { ok: true, reading: { observations: validated.observations, calls: [call] }, matches, labelMatches };
+    return { ok: true, reading: { observations: validated.observations, calls: [called.call] }, matches, labelMatches };
   }
 }
 
 /** Photos Meta can't read keep their place in the burst but aren't sent. */
 function sendable(message: BurstMessage): BurstMessage {
   return message.type === "image" && message.bytes && !isSupportedImage(message.mimeType) ? { ...message, bytes: null } : message;
-}
-
-/** The most a request can cost: its input upper bound plus the full output cap, in micro-dollars. */
-export function boundMicroUsd(request: ModelRequest): number {
-  return Math.ceil(inputTokenBound(request) * INPUT_MICRO_USD_PER_TOKEN + request.maxOutputTokens * OUTPUT_MICRO_USD_PER_TOKEN);
-}
-
-export function inputTokenBound(request: ModelRequest): number {
-  let tokens = REQUEST_OVERHEAD_TOKENS + utf8Bytes(request.system) + utf8Bytes(request.schemaName) + utf8Bytes(JSON.stringify(request.schema));
-  for (const part of request.user) tokens += part.type === "text" ? utf8Bytes(part.text) : TOKENS_PER_IMAGE;
-  return tokens;
-}
-
-const encoder = new TextEncoder();
-
-function utf8Bytes(value: string): number {
-  return encoder.encode(value).byteLength;
-}
-
-function actualMicroUsd(inputTokens: number | null, outputTokens: number | null): number | null {
-  if (inputTokens === null || outputTokens === null) return null;
-  return Math.ceil(inputTokens * INPUT_MICRO_USD_PER_TOKEN + outputTokens * OUTPUT_MICRO_USD_PER_TOKEN);
 }

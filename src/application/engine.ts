@@ -6,6 +6,7 @@
 import type { ActionEnvelope, ConsoleAction, CustomerAction } from "../domain/contract/actions";
 import type { BurstReading } from "../domain/contract/observation";
 import type { Claim, CustomerNotice, EngineOutcome, PreparationCard } from "../domain/contract/outcomes";
+import type { TurnPlan } from "../domain/planner/types";
 import type { Commit, Tenant } from "./ports";
 
 /**
@@ -19,7 +20,8 @@ export interface LineMatch {
   /** Index into that observation's lines (or edits, for order_change). */
   readonly line: number;
   readonly productId: string;
-  readonly how: "barcode" | "exact_name" | "known_alias" | "customer_history" | "label_pick";
+  /** `planner_pick` (proposed, Nov 2): a candidate the planner chose for a new item, mapped by code. */
+  readonly how: "barcode" | "exact_name" | "known_alias" | "customer_history" | "label_pick" | "planner_pick";
 }
 
 export interface CustomerContext extends Tenant {
@@ -63,8 +65,13 @@ export interface Engine {
    * refused here whatever perception said. A customer has at most one open order (not entregado or
    * cancelado): a new customer_order while one is open adds to it. Order-line labels ("L2") are the engine's: line N of the
    * open order's current version is "LN".
+   *
+   * Proposed (Nov 2, planner): with a validated `plan`, the engine skips its own questions, applies
+   * the plan's changes and assumed quantities, and asks the plan's question or reads back; it keeps
+   * the last word on readiness (`missingFor`): a readback it can't allow comes back as the first
+   * missing question. Without a plan, nothing changes.
    */
-  onBurst(context: CustomerContext, reading: BurstReading, matches: readonly LineMatch[]): Promise<EngineResult>;
+  onBurst(context: CustomerContext, reading: BurstReading, matches: readonly LineMatch[], plan?: TurnPlan): Promise<EngineResult>;
   onCustomerAction(context: CustomerContext, action: ActionEnvelope<CustomerAction>): Promise<EngineResult>;
   onConsoleAction(context: MemberContext, action: ActionEnvelope<ConsoleAction>): Promise<EngineResult>;
   /**

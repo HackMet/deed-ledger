@@ -11,6 +11,7 @@ import type { CustomerAction, OrderRef } from "./contract/actions";
 import { type Centavos, type DecimalString, formatLempiras, isDecimalString } from "./contract/numbers";
 import type {
   AnswerFact,
+  AskQuestions,
   Claim,
   CustomerNotice,
   EngineOutcome,
@@ -24,6 +25,7 @@ import type {
 import { countedLineAmount, countsTowardTotal, orderSubtotal } from "./money";
 import type { SavedPlace } from "./place";
 import { formatStoreHours, isUsableStoreHours, storeHoursKey } from "./store-hours";
+import { isWeightUnit } from "./planner/validate";
 
 // ---------------------------------------------------------------------------------------------
 // Types
@@ -170,6 +172,13 @@ export const COPY = {
   pickOption: "¿Cuál te mando? Respondé con el número.",
   /** Before the next question, what the order holds so far: the customer sees it was understood. */
   noted: "Anotado ✅",
+  /** Planner path (D-47): every missing quantity in one question. */
+  quantitiesTitle: "¿Cuántos querés de estos?",
+  /** Planner path: under the options of one or more lines. */
+  pickOptionByName: "¿Cuál te mando? Respondé con el número o el nombre.",
+  /** Planner path (D-46): after "Te puse 1 de…". */
+  assumedMore: "Si querés más, decime.",
+  assumedOther: "Si querés otra cantidad, decime.",
 } as const;
 
 /** "Se lo dejo anotado a Johan, te escribe por aquí." The owner's first name, as the console has it. */
@@ -304,6 +313,7 @@ export function renderOutcome(outcome: EngineOutcome, context: RenderContext): R
   switch (outcome.type) {
     case "ask":
       if (outcome.question === "same_place") return samePlaceReply(outcome.order, context.savedPlace ?? null);
+      if (outcome.questions !== undefined && outcome.order !== null) return plannedAskReply(outcome.order, outcome.questions, outcome.assumed ?? []);
       // A question about an order holds only while that version is still open: once it's
       // cancelled or delivered, asking about it would be wrong.
       if (outcome.options !== undefined && outcome.options.length > 1 && outcome.order !== null) {
@@ -475,6 +485,106 @@ function shortLine(line: OrderLineView): string {
   return quantity === null ? lineName(line) : `${quantity} ${lineName(line)}`;
 }
 
+// --- Planner path (D-46, D-47): blocks in a fixed order, echo → assumed → step, in one message.
+
+/**
+ * One question about one kind of thing, after what was understood: the lines the question doesn't
+ * name ("Anotado ✅ 1 × Arroz 1 lb, Piña y 3 más."), then what was assumed ("Te puse 1 de piña."),
+ * then the question, which names its own lines. Every line the customer sent is accounted for
+ * exactly once: the echo's count never silently leaves out the one being asked about.
+ */
+function plannedAskReply(order: OrderView, questions: AskQuestions, assumedIds: readonly string[]): RenderedReply {
+  const claims: ClaimCheck[] = [stateIn(order, OPEN_STATES)];
+  const asked = new Set(
+    questions.kind === "options" ? questions.lineIds.filter((id) => (questions.options?.[id] ?? []).length > 0) : questions.lineIds,
+  );
+  const assumed = order.lines.filter((line) => assumedIds.includes(line.lineId) && !asked.has(line.lineId));
+  const echoed = order.lines.filter((line) => !asked.has(line.lineId) && !assumedIds.includes(line.lineId));
+  const blocks: string[] = [];
+  if (echoed.length > 0) blocks.push(echoBlock(echoed));
+  if (assumed.length > 0) blocks.push(assumedBlock(assumed));
+  blocks.push(plannedStepText(order, questions, claims));
+  return reply("ask", blocks.join("\n"), claims);
+}
+
+/** "Anotado ✅ 2 × Arroz 1 lb, Piña, Catsup y 6 más." Up to four lines by name, the rest counted. */
+export function echoBlock(lines: readonly OrderLineView[]): string {
+  const named = lines.slice(0, 4).map(shortLine).join(", ");
+  const rest = lines.length - 4;
+  return `${COPY.noted} ${rest > 0 ? `${named} y ${rest} más` : named}.`;
+}
+
+/** "Te puse 1 de piña y catsup. Si querés más, decime." Names only, never a price. */
+export function assumedBlock(lines: readonly OrderLineView[]): string {
+  const amounts = new Set(lines.map((line) => line.quantity));
+  const said =
+    amounts.size === 1
+      ? `${formatQuantity(lines[0]!.quantity!, null)} de ${spokenList(lines.map(lineName))}`
+      : spokenList(lines.map((line) => `${formatQuantity(line.quantity!, null)} de ${lineName(line)}`));
+  return `Te puse ${said}. ${amounts.size === 1 && lines[0]!.quantity === "1" ? COPY.assumedMore : COPY.assumedOther}`;
+}
+
+/** "a, b y c". */
+function spokenList(items: readonly string[]): string {
+  return items.length <= 1 ? (items[0] ?? "") : `${items.slice(0, -1).join(", ")} y ${items.at(-1)}`;
+}
+
+function plannedStepText(order: OrderView, questions: AskQuestions, claims: ClaimCheck[]): string {
+  const lines = questions.lineIds.flatMap((id) => order.lines.filter((line) => line.lineId === id));
+  const weighed = (line: OrderLineView) => (questions.byWeight ?? []).includes(line.lineId) || isWeightUnit(line.unit);
+  switch (questions.kind) {
+    case "quantities": {
+      if (lines.length === 1) {
+        const line = lines[0]!;
+        return weighed(line) ? `¿Cuántas libras querés de ${lineName(line)}?` : `¿Cuánto querés de ${lineName(line)}?`;
+      }
+      const shown = lines.slice(0, 12).map((line) => `• ${lineName(line)}${weighed(line) ? " (¿cuántas libras?)" : ""}`);
+      if (lines.length > 12) shown.push(`…y ${lines.length - 12} más`);
+      const example = lines
+        .slice(0, 2)
+        .map((line, n) => {
+          const name = lineName(line).toLocaleLowerCase("es");
+          return weighed(line) ? `${n === 0 ? "2 libras" : "1 libra"} de ${name}` : `${n === 0 ? 2 : 1} ${name}`;
+        })
+        .join(", ");
+      return [COPY.quantitiesTitle, ...shown, `Escribime todo junto, por ejemplo: «${example}».`].join("\n");
+    }
+    case "options": {
+      const rows: string[] = [];
+      let n = 0;
+      for (const line of lines) {
+        const options = questions.options?.[line.lineId] ?? [];
+        if (options.length === 0) continue;
+        rows.push(`Para ${lineName(line)} tengo:`);
+        for (const option of options) {
+          n += 1;
+          if (option.unitPrice === null) {
+            rows.push(`${n}. ${quote(option.name)}`);
+          } else {
+            claims.push(one({ type: "unit_price", productId: option.productId, price: option.unitPrice }));
+            rows.push(`${n}. ${quote(option.name)} · ${formatLempiras(option.unitPrice)}`);
+          }
+        }
+      }
+      return [...rows, COPY.pickOptionByName].join("\n");
+    }
+    case "unreadable": {
+      if (lines.length === 0) return askText("illegible", null, null);
+      return lines.length === 1
+        ? `No alcancé a leer bien ${lineName(lines[0]!)}. ¿Me lo escribís?`
+        : `No alcancé a leer bien ${spokenList(lines.map(lineName))}. ¿Me los escribís?`;
+    }
+    case "fulfillment":
+      return askText("pickup_or_delivery", null, order);
+    case "delivery_place":
+      return askText("delivery_place", null, order);
+    case "what_to_order":
+      return WHAT_TO_ORDER;
+    default:
+      return unreachable(questions.kind);
+  }
+}
+
 /** An unclear line's options, numbered, each with its confirmed price (a claim) when there is one. */
 function optionsReply(order: OrderView, lineIndex: number | null, options: readonly ProductOption[]): RenderedReply {
   const line = lineIndex === null ? undefined : order.lines[lineIndex];
@@ -617,7 +727,9 @@ function readbackLine(line: OrderLineView): string {
   if (line.restricted) return `• ${name}: eso solo lo vendemos aquí en la tienda.`;
   if (!countsTowardTotal(line)) return `• ${name}: no nos queda.`;
   if (line.quantity === null) return `• ${name}: falta la cantidad.`;
-  const item = `${quantityShown(line)} ${name}`;
+  // A quantity nobody said is shown openly (D-46): "1 × Piña (te puse 1)".
+  const assumed = line.quantitySource === "suggested" || line.quantitySource === "store_usual" ? ` (te puse ${formatQuantity(line.quantity, null)})` : "";
+  const item = `${quantityShown(line)} ${name}${assumed}`;
   const amount = countedLineAmount(line);
   if (line.productId === null) return `• ${item}: te confirmo si hay y el precio.`;
   if (line.unitPrice === null || amount === null) return `• ${item}: el precio te lo confirmo.`;
@@ -928,7 +1040,7 @@ export function backedClaims(source: ReplySource): Claim[] {
   switch (outcome.type) {
     case "ask":
       order(outcome.order);
-      for (const option of outcome.options ?? []) {
+      for (const option of [...(outcome.options ?? []), ...Object.values(outcome.questions?.options ?? {}).flat()]) {
         if (option.unitPrice !== null) claims.push({ type: "unit_price", productId: option.productId, price: option.unitPrice });
       }
       break;

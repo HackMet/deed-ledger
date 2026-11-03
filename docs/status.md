@@ -3,9 +3,17 @@
 Shared state for every agent: what's true now, what's next, what's open, what bit us. Keep it short. Anything a
 command can tell you (git log, test results, CI) doesn't belong here. Decisions go in [decisions.md](decisions.md).
 
-Last updated: Sat Oct 31, 2026, morning Honduras time, by Claude Code (Angel's side built against the pretend engine).
+Last updated: Mon Nov 2, 2026, evening Honduras time, by Claude Code (lane L0, the planner spine).
 
 ## Now
+
+- **Planner (Nov 2, D-45 to D-51, behind `CONVERSATION=planner`, default `classic`):** a second Muse Spark call per
+  burst decides the next step from two instruction files (`src/application/planner/instructions/`); code checks it
+  (`src/domain/planner/validate.ts`), the readiness gate (`src/domain/readiness.ts`) has the last word, and the
+  pretend engine applies the plan. Simulator: `npm run dev:sim -- --ai --store --planner`. Retrieval is an interim
+  adapter until lane L1's lands; the real engine runs classic until it has what contract.md "Proposed (Nov 2):
+  planner" lists. The flag flips only when the eval suite (lane L2) says the planner path is at least as good with
+  zero truth failures.
 
 - The product is an order assistant: customers order on WhatsApp, Johan and staff work from a phone console, and
   both end in the same engine. Two-person team (D-37): Angel owns conversations, perception, replies, the console

@@ -95,7 +95,8 @@ export type LogFields = {
     | "delaySeconds"
     | "reason"
     | "outcome"
-    | "status"]?: string | number | boolean;
+    | "status"
+    | "latencyMs"]?: string | number | boolean;
 };
 
 export interface Logger {

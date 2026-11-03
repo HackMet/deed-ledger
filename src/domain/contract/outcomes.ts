@@ -5,6 +5,7 @@
 import type { LineMark } from "./actions";
 import type { Centavos, DecimalString } from "./numbers";
 import type { ObservationIssue } from "./observation";
+import type { AskKind, QuantitySource } from "../planner/types";
 
 export type OrderState = "armando" | "por_confirmar" | "confirmado" | "preparando" | "listo" | "entregado" | "cancelado";
 
@@ -28,6 +29,11 @@ export interface OrderLineView {
   readonly mark: LineMark | null;
   /** Offered by staff, waiting on the customer's answer. */
   readonly substitute: { readonly productId: string; readonly productName: string; readonly unitPrice: Centavos | null } | null;
+  /**
+   * Proposed (Nov 2, planner, D-46): where the quantity came from. Absent means said. A suggested
+   * or store-usual quantity is shown openly ("te puse 1") and becomes the agreed one on Confirmar.
+   */
+  readonly quantitySource?: QuantitySource;
 }
 
 export interface OrderView {
@@ -85,6 +91,20 @@ export interface ProductOption {
 /** At most this many products are offered for one unclear line. */
 export const MAX_OPTIONS = 5;
 
+/**
+ * Proposed (Nov 2, planner, D-47): one kind of question about several lines in one message: every
+ * missing quantity together, or every "which one" together. Never one question per product.
+ */
+export interface AskQuestions {
+  readonly kind: Exclude<AskKind, "none">;
+  /** The lines asked about, in order. Empty for pickup or delivery, the place, what to order. */
+  readonly lineIds: readonly string[];
+  /** For `options`: each line's products, numbered on from one line to the next. */
+  readonly options?: Readonly<Record<string, readonly ProductOption[]>>;
+  /** For `quantities`: lines sold by weight ("¿cuántas libras?"). */
+  readonly byWeight?: readonly string[];
+}
+
 /** The one question to ask next. `line` points into the order's lines when it's about one. */
 export type QuestionCode =
   | ObservationIssue["code"]
@@ -132,6 +152,10 @@ export type EngineOutcome =
        * MAX_OPTIONS, from the store's catalog, so the customer picks one by number or name.
        */
       readonly options?: readonly ProductOption[];
+      /** Proposed (Nov 2, planner, D-47): one kind of question about several lines. */
+      readonly questions?: AskQuestions;
+      /** Proposed (Nov 2, planner, D-46): lines whose quantity was assumed in this burst. */
+      readonly assumed?: readonly string[];
     }
   | { readonly type: "readback"; readonly order: OrderView }
   | { readonly type: "order_confirmed"; readonly order: OrderView }

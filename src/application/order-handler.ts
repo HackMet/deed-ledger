@@ -37,6 +37,7 @@ import { ANSWER_NEW_READBACK, WHAT_TO_CORRECT } from "../domain/order-copy";
 import { FAILURE_REPLY_TTL_MS, PLACEHOLDER_TTL_MS } from "../domain/outbox";
 import { attemptsExhausted } from "../domain/processing";
 import type { SavedPlace } from "../domain/place";
+import type { TurnPlan } from "../domain/planner/types";
 import { INTRO_BUTTON_IDS } from "../domain/customer-controls";
 import {
   actionFromButtonId,
@@ -108,6 +109,8 @@ export interface BurstRead {
   readonly matches: readonly LineMatch[];
   /** The question the engine had asked last, as perception was told; null when none. */
   readonly pendingQuestion: QuestionCode | null;
+  /** The planner's validated plan for this burst (D-45); absent: the classic path. */
+  readonly plan?: TurnPlan | null;
 }
 
 /**
@@ -400,7 +403,8 @@ async function handleBurst(deps: OrderHandlerDeps, lease: Lease, job: Job, facts
   // Confirmar held for it completes now.
   const name = customer.name === null ? givenName(reading, pendingQuestion, products) : null;
   const engineContext: CustomerContextWithName = { ...customerContext, customerName: customer.name ?? name };
-  const result = await deps.engine.onBurst(engineContext, reading, matches);
+  const plan = read.plan ?? null;
+  const result = plan === null ? await deps.engine.onBurst(engineContext, reading, matches) : await deps.engine.onBurst(engineContext, reading, matches, plan);
   deps.log.info("burst_read", {
     businessId: lease.businessId,
     conversationId: lease.conversationId,
@@ -410,7 +414,9 @@ async function handleBurst(deps: OrderHandlerDeps, lease: Lease, job: Job, facts
   });
   const nameCommits = name === null ? [] : [deps.customers.saveNameCommit(lease, customer.id, name, nowMs)];
   const named: JobFacts = { ...facts, customer: { ...customer, name: customer.name ?? name } };
-  return complete(deps, lease, job, named, messages, result, null, closesBurst, nowMs, nameCommits);
+  // The planner's one connecting sentence (already checked: no facts) goes before the step.
+  const say = plan === null || plan.say === "" ? null : plan.say;
+  return complete(deps, lease, job, named, messages, result, null, closesBurst, nowMs, nameCommits, null, say);
 }
 
 /**
