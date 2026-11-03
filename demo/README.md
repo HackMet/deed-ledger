@@ -56,7 +56,5 @@ Muse `reading` exactly as perception produced it (a `BurstReading`), and the cod
 (`[]` if none). A `muse` recording replaces the fixture for the same text; no code changes. The label's
 counts (`n fixture, m muse`) follow the files.
 
-## `--json`
-
-Per step: customer, message, outbox reply, fact counts by kind before and after, the delta, the
+`--json <file>`, per step: customer, message, outbox reply, fact counts by kind before and after, the delta, the
 expectation and pass/fail; plus E's orderId and trail path and the totals. K8 and K11 read it.
