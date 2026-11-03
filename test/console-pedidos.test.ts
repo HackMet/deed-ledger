@@ -264,6 +264,8 @@ describe("K5: the Orders screen reads the ledger", () => {
     expect(await orderCode(null)).toBeNull();
     const after = await (await get(h, "/console/pedidos", cookie)).text();
     expect(after).toContain(`<strong>${code}</strong>`);
+    const detail = await (await get(h, `/console/pedidos/${pending.orderId}`, cookie)).text();
+    expect(detail).toContain(code);
     expect(await (await get(h, "/console/pedidos", cookie)).text()).toContain(`<strong>${code}</strong>`);
   });
 
@@ -288,6 +290,21 @@ describe("K5: the Orders screen reads the ledger", () => {
     expect(page).toContain("Cliente · Por confirmar");
     const trail = await (await get(h, `/console/pedidos/${orderId}`, cookie)).text();
     expect(trail).toContain("Por confirmar · Versión 2 · Cambió");
+  });
+
+  it("ignores orders.current_version: a tampered cache changes neither version, lines nor state", async () => {
+    const h = harness();
+    const s = await storeWithSession();
+    const orderId = await confirmed(s);
+    await env.DB.prepare(`UPDATE orders SET current_version = 2 WHERE id = ?`).bind(orderId).run();
+    const cookie = await login(h, s);
+    const page = await (await get(h, "/console/pedidos", cookie)).text();
+    expect(page).toContain("Cliente · Nuevo");
+    expect(page).not.toContain("Por confirmar");
+    expect(row(page, orderId)).toBe("none");
+    const trail = await (await get(h, `/console/pedidos/${orderId}`, cookie)).text();
+    expect(trail).toContain("Nuevo · Versión 1");
+    expect(trail).not.toContain("Versión 2");
   });
 
   it("does not count a delivered tap whose confirm was closed: no check, state from live facts", async () => {

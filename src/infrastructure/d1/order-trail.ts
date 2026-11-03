@@ -106,6 +106,12 @@ function standingOf(rows: readonly FactRow[]): Standing {
   };
 }
 
+/** The current version is the highest live version fact; the `orders.current_version` cache is only a last resort. */
+const currentVersionOf = (rows: readonly FactRow[], cached: number): number => {
+  const live = rows.filter((row) => row.kind === "order_version" && row.live === 1).map((row) => toOrderFact(row).version);
+  return live.length === 0 ? cached : Math.max(...live);
+};
+
 const colourOf = (s: Standing): OrderColour => (s.cancelled ? "red" : s.delivered ? "check" : s.changed ? "yellow" : "none");
 
 /** The code comes from the order's latest confirm fact, live or not, so a change does not blank it. */
@@ -143,14 +149,15 @@ export class D1OrderTrail {
       const mine = factsByOrder.get(order.id) ?? [];
       const hasLiveVersion = mine.some((row) => row.kind === "order_version" && row.live === 1);
       if (!hasLiveVersion) continue;
+      const currentVersion = currentVersionOf(mine, order.current_version);
       rows.push({
         orderId: order.id,
         code: await orderCode(confirmIdOf(mine)),
         customerLabel: "Cliente",
         lines: lines.results
-          .filter((line) => line.order_id === order.id && line.version === order.current_version)
+          .filter((line) => line.order_id === order.id && line.version === currentVersion)
           .map((line) => ({ text: line.canonical_name ?? line.customer_text, quantity: quantityText(line.qty_milli) })),
-        state: deriveOrderState(mine.map(toOrderFact), order.current_version, order.state),
+        state: deriveOrderState(mine.map(toOrderFact), currentVersion, order.state),
         colour: colourOf(standingOf(mine)),
       });
     }
@@ -194,10 +201,11 @@ export class D1OrderTrail {
         blocks: ids.filter((id) => edges.results.some((e) => e.depends_on_fact_id === row.id && e.fact_id === id)),
       };
     });
+    const currentVersion = currentVersionOf(rows, order.current_version);
     return {
       code: await orderCode(confirmIdOf(rows)),
-      state: deriveOrderState(rows.map(toOrderFact), order.current_version, order.state),
-      version: order.current_version,
+      state: deriveOrderState(rows.map(toOrderFact), currentVersion, order.state),
+      version: currentVersion,
       ...standingOf(rows),
       facts: entries,
     };
