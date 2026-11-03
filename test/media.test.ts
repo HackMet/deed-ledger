@@ -82,7 +82,7 @@ describe("media downloads", () => {
     expect(media.fetched).toEqual(["m-gone", "m-gone", "m-gone"]);
     expect((await assetOf(store.businessId)).state).toBe("pending");
     expect(h.sentTo(phone)).toEqual([couldNotDownload("image")]);
-    expect(couldNotDownload("image")).toBe("No pude descargar la foto. ¿Me la mandás otra vez?");
+    expect(couldNotDownload("image")).toBe("No pude descargar la foto. ¿Me la mandás otra vez o me escribís lo que necesitás?");
   });
 
   it("treats a download that throws the same way", async () => {
@@ -128,6 +128,6 @@ describe("media downloads", () => {
     ]);
     expect(media.fetched).toEqual([]);
     expect(h.sentTo(phone)).toEqual([COULD_NOT_OPEN_MEDIA]);
-    expect(COULD_NOT_OPEN_MEDIA).toBe("No pude abrir ese archivo. ¿Me lo mandás otra vez?");
+    expect(COULD_NOT_OPEN_MEDIA).toBe("No pude abrir ese archivo. ¿Me lo mandás otra vez o me escribís lo que necesitás?");
   });
 });

@@ -344,7 +344,7 @@ describe("transcribeVoiceNote", () => {
       { job_state: "failed", attempts: 3, last_error: "attempt_failed" },
     ]);
     expect(h.sentTo(phone)).toEqual([couldNotProcess("audio")]);
-    expect(couldNotProcess("audio")).toBe("Perdón, no pude escuchar tu nota de voz. ¿Me la mandás otra vez?");
+    expect(couldNotProcess("audio")).toBe("Perdón, no pude escuchar tu nota de voz. ¿Me la mandás otra vez o me escribís lo que necesitás?");
   });
 
   it("treats a note with no words in it as a failure", async () => {
