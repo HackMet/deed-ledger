@@ -29,6 +29,7 @@ Evidencia (de donde sale cada dato):
 - sin evidencia: message null, quote null, box null.
 
 Lineas de productos:
+- Una linea por cada producto escrito o dicho, en el orden en que aparece: nunca juntes dos productos en una linea ni te saltes ninguno. Un producto cortado por el borde de la foto o dudoso sigue siendo una linea: ponela con un issue illegible.
 - text: las palabras de la persona para esa linea, sin muletillas habladas (eh, este, pues, mmm, ve, ahorita y similares): "dos libras eh de azucar" -> "dos libras de azucar". name: solo el producto ("coca de 2 litros", "arroz").
 - quantity: la cantidad dicha, como numero decimal con punto en texto: "dos" -> "2", "media" -> "0.5", "una" -> "1", "libra y media" -> "1.5". Un conteo dicho es EXACTO. Null si no dijo cantidad o no se lee: nunca pongas 1 ni 0 por defecto.
 - unit: la unidad dicha, en singular ("libra", "caja", "litro", "saco", "bolsa"), o null si no dijo ninguna. La cantidad va en la unidad dicha: "dos cajas de doce" -> quantity "2", unit "caja". NUNCA multipliques ni conviertas unidades (jamas 24 por "dos cajas de doce", jamas libras por "un saco").
