@@ -125,6 +125,35 @@ Kept as written on `main`. In this merge the default `jobHandler` is the order h
 - Two independent reviews of Tech Spec v3 (Oct 30) both said "build with changes". The contract draft takes in their
   fixes for line references, multi-part messages, staff-only kinds, confirmed prices and the claim check.
 
+- K12, change requests (Nov 3, `claude/change-requests`, local D1 only, **not deployed**): after `confirmado`, a
+  customer's change is a `change_request` fact on the live confirm (key `chg:<order>:<job>`); owner or staff answer
+  in Pedidos with Aprobar ✓ / Rechazar ✗ and a required reason (`change_review`, key `rev:<request>`). Approve
+  writes the new version (superseding the old, resting on the review) and its confirm in the same batch; decline
+  closes the request. Window: `confirmado` and `preparando` (Q1 default). Migration `0024_change_requests.sql`
+  rebuilds `facts` with `change_request`, `change_review` and `receipt_review` (K14). The contract additions are
+  Proposed in [contract.md](contract.md) and need Angel's OK before merging. The Pedidos buttons save through
+  `runConsoleAction` (#63), post guards included, since `claude/demo-on-main`.
+- K13, dispatch (Nov 3, `claude/dispatch`, local D1 only, **not deployed**): a ready delivery order is dispatched
+  from Pedidos with a courier picked from the store's active members (`en_camino`, blue, the courier's name in the
+  row and the trail), then marked delivered; pickup goes `listo → entregado`. Each step is an `order_status` fact
+  resting on the one before; a `null` fulfillment is refused, and the customer can't cancel once it is on its way.
+  Migration `0025_dispatch.sql` widens `orders.state`. The contract additions are Proposed in
+  [contract.md](contract.md) and need Angel's OK; as with K12, taps save through `runConsoleAction` (#63).
+- K6, K15 and K14 on main (Nov 3, `claude/owner-on-main`, from `claude/demo-on-main`, local only): Productos,
+  Mi tienda (`/console/negocio`) and Facturas are registered in `console/index.ts`; the invoice upload sets its own
+  size limit there, like Anotar. Those three screens still draw their own pages, not the shared layout, and "Más"
+  doesn't link them yet. Productos overlaps #40's Tienda (products and prices): which one the owner uses is open.
+- K14, supplier invoices (Nov 3, `claude/facturas`, local D1 only, **not deployed**): the owner uploads an invoice
+  photo at `/console/facturas/nueva` (≤ 10 MB, JPG/PNG/WEBP by its bytes; PDF refused with a Spanish message, no PDF
+  library), stored through `putImmutable`. It is read through the `ReceiptReader` port, today only by
+  `RecordedReceiptReader` (synthetic fixtures by SHA-256); every other photo is refused as unreadable. The draft
+  matches each line by exact name or known alias (no alias table yet, so names only) or marks it "nuevo"; edits bump
+  the revision; Aprobar ✓ is one guarded batch (new products, `receipt` fact with member + photo evidence and the
+  revision, movements, balances); Rechazar ✗ is one `receipt_review` fact with the reason; "Anular factura" is a
+  `cancellation` with compensating movements, refused when stock already left. Migration `0026_console_receipts.sql`
+  rebuilds `drafts` for console uploads. **Pending:** the Muse Spark adapter waits on PR #63 (`MuseSparkProvider`)
+  and decision Q2; its prompt draft is [prompts/receipt-reading.md](prompts/receipt-reading.md), for Angel's review.
+
 ## Next
 
 | # | Task | Owner | Notes |
@@ -148,6 +177,19 @@ Gate: Saturday Oct 31, 8:00 PM Honduras time.
 | Repository license, and when it goes public (right before submitting) | Team | Oct 26 |
 | Decisions made since Oct 28 aren't in [decisions.md](decisions.md) yet | Angel → Claude Code | Oct 28 |
 | Product and team name: "Johan AI" is a working title | Team | Oct 27 |
+| K12 contract additions (`review_change`, `change_approved`, `change_declined`, `OrderView.openChangeRequest`, `OrderView.lastReview`) are Proposed and need Angel's OK | Angel | Nov 3 |
+| K12 touched two of Angel's files: `src/domain/copy.ts` gains the owner-facing copy `CHANGE_AFTER_READY` (new copy, not compile-only), and `test/secrets.test.ts` lists `0024_change_requests.sql` (compile-only); both need Angel's OK | Angel | Nov 3 |
+| K13 contract additions (`en_camino`, `dispatch`, `order_dispatched`) are Proposed and need Angel's OK | Angel | Nov 3 |
+| K14 Muse Spark receipt reader: needs PR #63's `MuseSparkProvider` and Q2; prompt draft in [prompts/receipt-reading.md](prompts/receipt-reading.md). K14 touched Angel's `test/secrets.test.ts` (lists `0026_console_receipts.sql`, compile-only) and `LogFields` (`draftId`) | Angel | Nov 3 |
+| K13 touched Angel's files: `memory-engine.ts` gains `case "dispatch"` returning null like `match_line` (compile-only), `copy.ts` gains `CANCEL_AFTER_DISPATCH` (new copy), `test/secrets.test.ts` lists `0025_dispatch.sql`; a delivery order at `listo` can no longer be marked delivered from Preparación (it needs a dispatch first) | Angel | Nov 3 |
+| D-41 (fact memory under `Commit`) and D-42 (read before every guard) are Proposed and need Angel's acceptance | Angel | Oct 30 |
+| D-43 (customer cancel refused once preparando; re-confirm returns to the interrupted state) and D-44 (operation keys derived from the customer's own order and action) are Proposed and need Angel's acceptance | Angel | Oct 30 |
+| Issue #12: `preparationList`, `verifyClaims` and the console taps are not built | Teammate | Oct 30 |
+| Order engine is wired only through the fixture perception adapter (T6b); `dev:sim` and `simulate` not run | Teammate | Oct 30 |
+| Perception questions (ambiguous size, missing fulfillment) not asked; unit prices null, so totals null | Teammate, with Angel's perception | Oct 30 |
+| Order tables lack some guards: no FK between order tables, no version-immutability trigger, no partial UNIQUE for one open order, `facts.operation_key` has no FK to `operations` | Teammate | Oct 30 |
+| `operations` rows do not store `customer_id`; ownership is checked through the order instead | Teammate | Oct 30 |
+| Trace shas for T1 to T5 and T7 (e.g. `137ec35`, `6c92127`) are on `claude/fact-memory`, not on `claude/fact-ledger`; the same work is committed here under other shas | Team | Oct 30 |
 
 ## Traps
 

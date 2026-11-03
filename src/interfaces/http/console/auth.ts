@@ -138,8 +138,13 @@ export const requireMember: MiddlewareHandler<ConsoleEnv> = async (c, next) => {
 };
 
 const MAX_FORM_BYTES = 16 * 1024;
+/** The invoice upload (K14): a 10 MB photo and the multipart framing around it. */
+export const INVOICE_UPLOAD_PATH = "/console/facturas/nueva";
+const MAX_UPLOAD_FORM_BYTES = 10 * 1024 * 1024 + 64 * 1024;
 const crossSiteCheck = csrf();
 const sizeCheck = bodyLimit({ maxSize: MAX_FORM_BYTES, onError: (c) => formRefused(c, 413) });
+/** Mounted in `index.ts` before the CSRF check, which reads the whole body. */
+export const invoiceUploadLimit = bodyLimit({ maxSize: MAX_UPLOAD_FORM_BYTES, onError: (c) => c.redirect(`${INVOICE_UPLOAD_PATH}?aviso=tamano`, 303) });
 
 /**
  * Refuses form posts from another site, the login form included (its invite would otherwise let a

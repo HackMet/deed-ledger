@@ -1,0 +1,30 @@
+{
+  "source": "fixture",
+  "description": "Synthetic invoice: two known products, one new, one without a printed cost.",
+  "imageText": "SYNTHETIC INVOICE 001 - Distribuidora Ejemplo",
+  "sha256": "d3f9e46b35fe3ac1e66772a8ad1ff8ed0586712cb33daf36938aef3bfacaa9a9",
+  "reading": {
+    "supplier": "Distribuidora Ejemplo",
+    "date": "2026-11-02",
+    "lines": [
+      {
+        "name": "Coca-Cola 600 ml",
+        "qtyMilli": 12000,
+        "unit": "unidad",
+        "unitCostCentavos": 1500
+      },
+      {
+        "name": "agua cristal 600 ML",
+        "qtyMilli": 24000,
+        "unit": "unidad",
+        "unitCostCentavos": 600
+      },
+      {
+        "name": "Galletas Ejemplo",
+        "qtyMilli": 6000,
+        "unit": "paquete",
+        "unitCostCentavos": null
+      }
+    ]
+  }
+}

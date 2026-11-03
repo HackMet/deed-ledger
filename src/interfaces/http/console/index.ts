@@ -5,25 +5,37 @@
  */
 import { Hono } from "hono";
 import { anotarBodyLimit, anotarScreen } from "./anotar";
-import { type ConsoleEnv, registerEntryRoutes, requireCsrf, requireMember, sameSiteForms } from "./auth";
+import {
+  type ConsoleEnv,
+  INVOICE_UPLOAD_PATH,
+  invoiceUploadLimit,
+  registerEntryRoutes,
+  requireCsrf,
+  requireMember,
+  sameSiteForms,
+} from "./auth";
 import { bienvenidaScreen } from "./bienvenida";
 import { empleadosScreen } from "./empleados";
+import { facturasScreen } from "./facturas";
 import { masScreen } from "./mas";
+import { negocioScreen } from "./negocio";
 import { pedidosScreen } from "./pedidos";
 import { pendientesScreen } from "./pendientes";
 import { preparacionScreen } from "./preparacion";
+import { productosScreen } from "./productos";
 import { tiendaScreen } from "./tienda";
 
 export function consoleRoutes() {
   const app = new Hono<ConsoleEnv>();
 
-  // Cross-site and oversized form posts are refused, the login form included. Anotar takes photos
-  // and sets its own limit below.
-  app.use("*", sameSiteForms(["/console/anotar"]));
+  // Cross-site and oversized form posts are refused, the login form included. Anotar and the
+  // invoice upload take photos and set their own limits below.
+  app.use("*", sameSiteForms(["/console/anotar", INVOICE_UPLOAD_PATH]));
   registerEntryRoutes(app);
   app.use("*", requireMember);
-  // Before the CSRF check, which reads the whole body: Anotar's uploads have a size limit.
+  // Before the CSRF check, which reads the whole body: uploads have a size limit.
   app.use("/anotar", anotarBodyLimit);
+  app.use("/facturas/nueva", invoiceUploadLimit);
   app.use("*", requireCsrf);
 
   app.get("/", (c) => c.redirect("/console/preparacion", 302));
@@ -37,6 +49,9 @@ export function consoleRoutes() {
   pendientesScreen(app);
   masScreen(app);
   tiendaScreen(app);
+  productosScreen(app);
+  negocioScreen(app);
+  facturasScreen(app);
 
   return app;
 }

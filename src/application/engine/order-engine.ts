@@ -11,7 +11,7 @@
  * exactly one fact, under the same operation key, in the same batch. The order commit goes first so
  * its guards report first; the fact commit's G4 refuses a transition resting on a dead fact.
  */
-import type { ActionEnvelope, ConsoleAction, CustomerAction, OrderRef } from "../../domain/contract/actions";
+import { type ActionEnvelope, type ConsoleAction, type CustomerAction, OWNER_ACTIONS, type OrderRef } from "../../domain/contract/actions";
 import { CHANGE_WINDOW, changeRequestKey, lineDiff, reviewKey, reviewReason } from "../../domain/change-request";
 import { toThousandths } from "../../domain/contract/numbers";
 import { type BurstReading, type ItemLine, isCustomerKind, type OrderChange } from "../../domain/contract/observation";
@@ -28,6 +28,7 @@ import type {
 import { deriveOrderState, type OrderFact } from "../../domain/order-state";
 import { totalOf } from "../../domain/order-total";
 import { indexOfLabel, labelOf, nextVersion } from "../../domain/orders";
+import { isPrice, priceKey } from "../../domain/price";
 import type { EvidenceRef, FactCommit } from "../../domain/facts";
 import type { CustomerContext, Engine, EngineResult, LineMatch, MemberContext } from "../engine";
 import type { Commit, IdSource, Tenant } from "../ports";
@@ -117,6 +118,16 @@ export interface OrderFactLedger {
   statementsFor(scope: Tenant, commit: FactCommit, nowMs: number): Commit;
 }
 
+/** What the records say about one product's price (K6): the live confirmed price and a proposal waiting after it. */
+export interface PriceState {
+  /** The newest confirmed price fact not closed; null when the product has no price. */
+  readonly confirmed: { readonly factId: string; readonly price: number } | null;
+  /** The newest live proposal recorded after the live confirmed price (or any, when none): what a confirm rests on. */
+  readonly proposal: { readonly factId: string; readonly price: number } | null;
+  /** True when a fact already used this operation key. */
+  readonly keyUsed: boolean;
+}
+
 export interface OrderStore {
   /** The outcome saved first under this key, or null when the key is unused. */
   firstOutcome(tenant: Tenant, operationKey: string): Promise<EngineOutcome | null>;
@@ -146,6 +157,8 @@ export interface OrderStore {
   /** 1 is next, counting orders holding a place in line confirmed before `confirmedAtMs`. */
   queuePosition(tenant: Tenant, orderId: string, confirmedAtMs: number): Promise<number>;
   commitFor(tenant: Tenant, write: OrderWrite): Commit;
+  /** Price facts of one product of this store, and whether `operationKey` is already used (K6). */
+  priceState(tenant: Tenant, productId: string, operationKey: string): Promise<PriceState>;
 }
 
 /** A customer can change these; listo waits at the counter, and a change then needs a person. */
@@ -410,6 +423,7 @@ export class OrderEngine implements Engine {
       return refused("not_allowed", null);
     }
     if (action.type === "review_change") return this.review(member, envelope.operationKey, action);
+    if (action.type === "propose_price" || action.type === "confirm_price") return this.price(member, envelope.operationKey, action);
     // Payments, fiado, prices, stock, observations, pause and replies: not in this cut, and never a throw.
     if (!isStaffAction(action)) return refused("not_allowed", null);
 
@@ -534,6 +548,7 @@ export class OrderEngine implements Engine {
   private async verifyClaim(tenant: Tenant, claim: Claim): Promise<boolean> {
     try {
       if (typeof claim !== "object" || claim === null) return false;
+      if (claim.type === "unit_price") return await this.verifyPrice(tenant, claim);
       if (claim.type !== "order_state" && claim.type !== "order_total") return false;
       if (typeof claim.orderId !== "string" || !Number.isInteger(claim.version)) return false;
       const { store } = this.deps;
@@ -546,13 +561,60 @@ export class OrderEngine implements Engine {
         return claim.type === "order_state" && claim.state === "cancelado" && deriveOrderState(facts, claim.version, head.state) === "cancelado";
       }
       if (!facts.some((fact) => fact.kind === "order_version" && fact.version === claim.version && fact.live)) return false;
-      // unit_price, availability, payment_confirmed, balance and store hours aren't stored in this cut.
+      // availability, payment_confirmed, balance and store hours aren't stored in this cut.
       if (claim.type === "order_state") return deriveOrderState(facts, claim.version, head.state) === claim.state;
       return head.total !== null && head.total === claim.total;
     } catch {
       // A claim the records can't back right now isn't sent.
       return false;
     }
+  }
+
+  /** A unit price is backed only by the live confirmed price fact of that product: a proposal backs nothing. */
+  private async verifyPrice(tenant: Tenant, claim: Extract<Claim, { type: "unit_price" }>): Promise<boolean> {
+    if (typeof claim.productId !== "string" || !isPrice(claim.price)) return false;
+    const { confirmed } = await this.deps.store.priceState(tenant, claim.productId, "");
+    return confirmed !== null && confirmed.price === claim.price;
+  }
+
+  /**
+   * K6: a staff proposal or the owner's confirmation of a product's price, one `price` fact resting on
+   * the member. Reads first (D-42): who may, the key the engine derives, the product, a used key.
+   * A confirmation rests on the newest live proposal when there is one and closes the confirmed price it
+   * replaces `superseded`; an owner confirming with no proposal confirms directly. The product's order
+   * versions keep the totals they were confirmed with: a price is read when a line is priced, never later.
+   */
+  private async price(
+    member: MemberContext,
+    operationKey: string,
+    action: Extract<ConsoleAction, { type: "propose_price" | "confirm_price" }>,
+  ): Promise<EngineResult> {
+    const { store, ids, ledger } = this.deps;
+    const refused = (reason: "not_allowed" | "not_found") => result({ type: "rejected", reason, order: null });
+    const confirming = action.type === "confirm_price";
+    if (member.role !== "owner" && (OWNER_ACTIONS as readonly string[]).includes(action.type)) return refused("not_allowed");
+    if (typeof action.productId !== "string" || action.productId.length === 0 || action.productId.length > 64) return refused("not_found");
+    if (!isPrice(action.price)) return refused("not_allowed");
+    if (operationKey !== priceKey(action.productId, member.nowMs, action.type)) return refused("not_allowed");
+    if ((await store.productNames(member, [action.productId])).size === 0) return refused("not_found");
+    const state = await store.priceState(member, action.productId, operationKey);
+    // The first save's outcome is the same for everyone: the price was saved.
+    if (state.keyUsed) return result({ type: "duplicate", first: { type: "action_saved", order: null } });
+
+    const fact: FactCommit = {
+      factId: ids.newId(),
+      kind: "price",
+      operationKey,
+      draft: null,
+      actorUserId: member.memberId,
+      validFromMs: member.nowMs,
+      body: { productId: action.productId, price: action.price, status: confirming ? "confirmed" : "proposed" },
+      evidence: [{ kind: "member", refId: member.memberId, contentSha256: null }],
+      dependsOn: confirming && state.proposal !== null ? [state.proposal.factId] : [],
+      closes: confirming && state.confirmed !== null ? { factId: state.confirmed.factId, reason: "superseded" } : null,
+      movements: [],
+    };
+    return result({ type: "action_saved", order: null }, [ledger.statementsFor(member, fact, member.nowMs)]);
   }
 
   /** New content: the next version in por_confirmar, read back. After confirming, D-38. */
