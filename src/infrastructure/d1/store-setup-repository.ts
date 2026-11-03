@@ -1,8 +1,9 @@
+import { fromThousandths } from "../../application/engine/order-engine";
 import type { Tenant } from "../../application/ports";
-import type { Centavos } from "../../domain/contract/numbers";
+import { type Centavos, toThousandths } from "../../domain/contract/numbers";
 import type { StoreHours, StoreHoursEntry } from "../../domain/contract/outcomes";
 import { isUsableStoreHours } from "../../domain/store-hours";
-import { productNameKey, type StoreProduct, type StoreSetup } from "../../domain/store-setup";
+import { type ProductSelling, productNameKey, type StoreProduct, type StoreSetup } from "../../domain/store-setup";
 
 export interface ProductFields {
   readonly name: string;
@@ -16,7 +17,14 @@ interface ProductRow {
   other_names_json: string;
   price_centavos: number | null;
   no_hay: number;
+  sold_by: "unit" | "weight" | null;
+  usual_quantity_milli: number | null;
 }
+
+/** A product with how it's sold (0011): no selling row reads as both unknown. */
+const PRODUCT_COLUMNS = `p.id, p.name, p.other_names_json, p.price_centavos, p.no_hay, s.sold_by, s.usual_quantity_milli
+  FROM store_products p
+  LEFT JOIN store_product_selling s ON s.business_id = p.business_id AND s.product_id = p.id`;
 
 /**
  * The store's own setup (#40, migration 0019): products, hours and delivery fee. Every read and
@@ -37,10 +45,7 @@ export class D1StoreSetupRepository {
 
   async listProducts(tenant: Tenant): Promise<StoreProduct[]> {
     const { results } = await this.db
-      .prepare(
-        `SELECT id, name, other_names_json, price_centavos, no_hay FROM store_products
-         WHERE business_id = ? ORDER BY name_key, id`,
-      )
+      .prepare(`SELECT ${PRODUCT_COLUMNS} WHERE p.business_id = ? ORDER BY p.name_key, p.id`)
       .bind(tenant.businessId)
       .all<ProductRow>();
     return results.map(productOf);
@@ -48,7 +53,7 @@ export class D1StoreSetupRepository {
 
   async product(tenant: Tenant, productId: string): Promise<StoreProduct | null> {
     const row = await this.db
-      .prepare(`SELECT id, name, other_names_json, price_centavos, no_hay FROM store_products WHERE business_id = ? AND id = ?`)
+      .prepare(`SELECT ${PRODUCT_COLUMNS} WHERE p.business_id = ? AND p.id = ?`)
       .bind(tenant.businessId, productId)
       .first<ProductRow>();
     return row === null ? null : productOf(row);
@@ -98,8 +103,17 @@ export class D1StoreSetupRepository {
     );
   }
 
-  /** "missing" when the product isn't this store's; "name_taken" when another product has the name. */
-  async updateProduct(tenant: Tenant, productId: string, fields: ProductFields, nowMs: number): Promise<"saved" | "missing" | "name_taken"> {
+  /**
+   * "missing" when the product isn't this store's; "name_taken" when another product has the name.
+   * With `selling`, how it's sold is saved in the same batch: all of it lands, or none.
+   */
+  async updateProduct(
+    tenant: Tenant,
+    productId: string,
+    fields: ProductFields,
+    nowMs: number,
+    selling?: ProductSelling,
+  ): Promise<"saved" | "missing" | "name_taken"> {
     const key = productNameKey(fields.name);
     const clash = await this.db
       .prepare(`SELECT 1 FROM store_products WHERE business_id = ? AND name_key = ? AND id <> ?`)
@@ -107,19 +121,33 @@ export class D1StoreSetupRepository {
       .first();
     if (clash !== null) return "name_taken";
     try {
-      const result = await this.db
+      const update = this.db
         .prepare(
           `UPDATE store_products SET name = ?, name_key = ?, other_names_json = ?, price_centavos = ?, updated_at_ms = ?
            WHERE business_id = ? AND id = ?`,
         )
-        .bind(fields.name, key, JSON.stringify(fields.otherNames), fields.price, nowMs, tenant.businessId, productId)
-        .run();
-      return result.meta.changes === 1 ? "saved" : "missing";
+        .bind(fields.name, key, JSON.stringify(fields.otherNames), fields.price, nowMs, tenant.businessId, productId);
+      const [result] = await this.db.batch(selling === undefined ? [update] : [update, this.sellingStatement(tenant, productId, selling, nowMs)]);
+      return result!.meta.changes === 1 ? "saved" : "missing";
     } catch (error) {
       // A rename racing another save of the same name: the UNIQUE rule refused it.
       if (String(error).includes("UNIQUE")) return "name_taken";
       throw error;
     }
+  }
+
+  /** Only a product of this store gets a row: another store's ID writes nothing. */
+  private sellingStatement(tenant: Tenant, productId: string, selling: ProductSelling, nowMs: number): D1PreparedStatement {
+    const milli = selling.usualQuantity === null ? null : toThousandths(selling.usualQuantity);
+    if (milli === 0 || (selling.usualQuantity !== null && milli === null)) throw new Error("usual quantity is not a positive decimal");
+    return this.db
+      .prepare(
+        `INSERT INTO store_product_selling (business_id, product_id, sold_by, usual_quantity_milli, updated_at_ms)
+         SELECT business_id, id, ?, ?, ? FROM store_products WHERE business_id = ? AND id = ?
+         ON CONFLICT (business_id, product_id) DO UPDATE
+           SET sold_by = excluded.sold_by, usual_quantity_milli = excluded.usual_quantity_milli, updated_at_ms = excluded.updated_at_ms`,
+      )
+      .bind(selling.soldBy, milli, nowMs, tenant.businessId, productId);
   }
 
   async setNoHay(tenant: Tenant, productId: string, noHay: boolean, nowMs: number): Promise<boolean> {
@@ -130,12 +158,14 @@ export class D1StoreSetupRepository {
     return result.meta.changes === 1;
   }
 
+  /** Its aliases and how it's sold go with it (0011, ON DELETE CASCADE). */
   async removeProduct(tenant: Tenant, productId: string): Promise<boolean> {
     const result = await this.db
       .prepare(`DELETE FROM store_products WHERE business_id = ? AND id = ?`)
       .bind(tenant.businessId, productId)
       .run();
-    return result.meta.changes === 1;
+    // D1 also counts the rows the cascade removed, so any change means this product was removed.
+    return result.meta.changes > 0;
   }
 
   async settings(tenant: Tenant): Promise<{ readonly hours: StoreHours | null; readonly deliveryFee: Centavos | null }> {
@@ -178,6 +208,8 @@ function productOf(row: ProductRow): StoreProduct {
     otherNames: otherNamesOf(row.other_names_json),
     price: row.price_centavos,
     noHay: row.no_hay === 1,
+    soldBy: row.sold_by,
+    usualQuantity: row.usual_quantity_milli === null ? null : fromThousandths(row.usual_quantity_milli),
   };
 }
 

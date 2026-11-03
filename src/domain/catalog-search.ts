@@ -28,7 +28,7 @@ const UNITS: Readonly<Record<string, string>> = {
 };
 
 /** One word in every form it may take: itself, and its singular when it looks plural. */
-function forms(word: string): string[] {
+export function forms(word: string): string[] {
   const out = [word];
   if (word.length > 4 && word.endsWith("es")) out.push(word.slice(0, -2));
   if (word.length > 3 && word.endsWith("s")) out.push(word.slice(0, -1));
@@ -71,7 +71,7 @@ export function searchCatalog<P extends SearchableProduct>(said: string, product
 }
 
 /** Two long words one typing slip apart (a letter changed, missing, extra, or two swapped), same first letter. */
-function oneSlip(a: string, b: string): boolean {
+export function oneSlip(a: string, b: string): boolean {
   // Long words only, same first letter: "aciete" is aceite, but "pollo" is never "rollo".
   if (a.length < 6 || b.length < 6 || a[0] !== b[0] || /\d/u.test(a) || /\d/u.test(b) || Math.abs(a.length - b.length) > 1) return false;
   // Optimal string alignment distance, stopped as soon as it can't be 1 or less.

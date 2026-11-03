@@ -5,8 +5,9 @@
  * Money is parsed from text exactly, never through a float. An absent price stays absent: nothing
  * here defaults a price, a fee or a stock state to zero.
  */
-import type { Centavos } from "./contract/numbers";
+import { type Centavos, type DecimalString, isDecimalString, toThousandths } from "./contract/numbers";
 import type { StoreHours } from "./contract/outcomes";
+import type { SoldBy } from "./planner/types";
 import { isUsableStoreHours } from "./store-hours";
 
 export const MAX_PRODUCT_NAME = 80;
@@ -26,6 +27,16 @@ export interface StoreProduct {
   readonly price: Centavos | null;
   /** The owner marked it "No hay": the bot says it's out. Unmarked is unknown, never "hay". */
   readonly noHay: boolean;
+  /** One at a time or by the pound; null until the owner says. */
+  readonly soldBy: SoldBy | null;
+  /** The amount most customers take (D-46: offered openly, never applied silently); null when none. */
+  readonly usualQuantity: DecimalString | null;
+}
+
+/** How a product is sold, as the owner sets it on the edit screen. */
+export interface ProductSelling {
+  readonly soldBy: SoldBy | null;
+  readonly usualQuantity: DecimalString | null;
 }
 
 /** Everything the store set up, read per store. */
@@ -65,6 +76,25 @@ export function parseOtherNames(raw: string, ownName: string): string[] | null {
     out.push(name);
   }
   return out.length > MAX_OTHER_NAMES ? null : out;
+}
+
+/** The edit form's "Cómo se vende": unidad, libra, or blank (not said). Null when it's none of them. */
+export function parseSoldBy(raw: string): { readonly soldBy: SoldBy | null } | null {
+  if (raw === "") return { soldBy: null };
+  if (raw === "unidad") return { soldBy: "unit" };
+  if (raw === "libra") return { soldBy: "weight" };
+  return null;
+}
+
+/**
+ * The usual amount as typed: "1", "2", "0.5". Blank is none. Exact, never through a float; a
+ * comma, zero or anything unreadable is refused (null) rather than guessed.
+ */
+export function parseUsualQuantity(raw: string): { readonly quantity: DecimalString | null } | null {
+  const text = raw.trim();
+  if (text === "") return { quantity: null };
+  const milli = isDecimalString(text) ? toThousandths(text) : null;
+  return milli === null || milli === 0 ? null : { quantity: text };
 }
 
 export type PriceProblem = "no_price" | "comma" | "unreadable" | "zero" | "too_big";
