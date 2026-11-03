@@ -86,7 +86,7 @@ export function preparacionScreen(app: Hono<ConsoleEnv>) {
     if (card === undefined) return c.redirect(`${PATH}?aviso=falta`, 302);
     return c.html(
       shell(c, {
-        title: card.customerName ?? "Cliente sin nombre",
+        title: `${orderLabel(card.order)}${card.customerName ?? "Cliente sin nombre"}`,
         subtitle: `Versión ${card.order.version} · ${fulfillmentKind(card.order)}`,
         back: PATH,
         path: orderPath(card.order.orderId),
@@ -199,9 +199,14 @@ function listCard(card: PreparationCard, nowMs: number) {
   const count = order.lines.length;
   const when = `${card.changedLineIds.length > 0 ? "cambió" : "confirmado"} ${formatStoreTime(card.confirmedAtMs, nowMs)}`;
   return html`<a class="card order${PACKING.has(order.state) ? "" : " packed"}" id="${order.orderId}" href="${orderPath(order.orderId)}">
-<span class="row"><strong class="name">${card.customerName ?? "Cliente sin nombre"}</strong><span class="${chip.tone === "" ? "chip" : `chip ${chip.tone}`}">${chip.label}</span></span>
+<span class="row"><strong class="name">${orderLabel(order)}${card.customerName ?? "Cliente sin nombre"}</strong><span class="${chip.tone === "" ? "chip" : `chip ${chip.tone}`}">${chip.label}</span></span>
 <span class="muted">${count === 1 ? "1 producto" : `${count} productos`} · ${fulfillmentLine(order)} · <span class="when">${when}</span></span>
 </a>`;
+}
+
+/** "#101 · " before the customer's name: the number the customer was given. Empty without one. */
+export function orderLabel(order: OrderView): string {
+  return order.code === undefined ? "" : `#${order.code} · `;
 }
 
 /** The one thing to notice about an order: ready, changed by the customer, waiting too long, or its state. */

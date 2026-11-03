@@ -453,6 +453,10 @@ function withEcho(question: QuestionCode, order: OrderView | null, text: string,
   const aboutLine: readonly QuestionCode[] = ["quantity", "ambiguous_size", "ambiguous_product", "illegible"];
   if (order === null || order.lines.length === 0) return text;
   if (echoed.includes(question)) return `${echoLine(order.lines)}\n${text}`;
+  if (question === "quantities") {
+    const known = order.lines.filter((line) => line.quantity !== null);
+    return known.length > 0 ? `${echoLine(known)}\n${text}` : `${COPY.noted} ${order.lines.length} productos.\n${text}`;
+  }
   if (aboutLine.includes(question) && lineIndex !== null && order.lines[lineIndex] !== undefined) {
     const others = order.lines.filter((_, n) => n !== lineIndex);
     if (others.length > 0) return `${echoLine(others)}\n${text}`;
@@ -520,6 +524,8 @@ function askText(question: QuestionCode, lineIndex: number | null, order: OrderV
       return "Te ayudo con tu pedido. ¿Qué te mando?";
     case "quantity":
       return name === null ? "¿Cuántos querés?" : `¿Cuánto querés de ${name}?`;
+    case "quantities":
+      return quantitiesText(order);
     case "pickup_or_delivery":
       return "¿Lo recogés en la tienda o te lo llevamos?";
     case "what_to_order":
@@ -533,6 +539,22 @@ function askText(question: QuestionCode, lineIndex: number | null, order: OrderV
     default:
       return unreachable(question);
   }
+}
+
+/**
+ * One question for every line still without a quantity (a list from a photo), with an example built
+ * from the first two, so the customer answers them all in one message.
+ */
+function quantitiesText(order: OrderView | null): string {
+  const waiting = (order?.lines ?? []).filter((line) => line.quantity === null && !line.restricted);
+  if (waiting.length === 0) return "¿Cuántos querés de cada uno?";
+  const shown = waiting.slice(0, 12).map((line) => `• ${lineName(line)}`);
+  if (waiting.length > 12) shown.push(`…y ${waiting.length - 12} más`);
+  const example = waiting
+    .slice(0, 2)
+    .map((line, n) => `${n === 0 ? 2 : 1} ${lineName(line).toLocaleLowerCase("es")}`)
+    .join(", ");
+  return ["¿Cuántos querés de cada uno?", ...shown, `Escribime, por ejemplo: «${example}».`].join("\n");
 }
 
 /**

@@ -21,6 +21,8 @@ import { dirname } from "node:path";
 import { parseArgs, queryLocal, SIM, SIM_SECRETS, SIM_VARS, simChildEnv, wrangler } from "./lib/sim.mjs";
 
 const args = parseArgs(process.argv.slice(2));
+// --port runs a second simulator beside one already on the default port (each folder keeps its own state).
+const port = typeof args.port === "string" ? Number(args.port) : SIM.port;
 
 /** The model key for --ai, read without printing it; null when there is none. */
 function modelKey() {
@@ -75,10 +77,10 @@ if (existing.length === 0) {
   if (code !== 0) process.exit(code ?? 1);
 }
 
-console.log(`Starting the Worker on http://127.0.0.1:${SIM.port} (fake secrets, no WhatsApp sends)…`);
+console.log(`Starting the Worker on http://127.0.0.1:${port} (fake secrets, no WhatsApp sends)…`);
 const dev = spawn(
   "npx",
-  ["wrangler", "dev", "--env-file", SIM.envFile, "--persist-to", SIM.persistTo, "--port", String(SIM.port), "--ip", "127.0.0.1"],
+  ["wrangler", "dev", "--env-file", SIM.envFile, "--persist-to", SIM.persistTo, "--port", String(port), "--ip", "127.0.0.1"],
   // The key travels only in the child's environment, never in the env file on disk.
   { stdio: "inherit", env: aiKey === null ? simChildEnv() : { ...simChildEnv(), MODEL_API_KEY: aiKey } },
 );

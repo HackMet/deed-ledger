@@ -94,7 +94,9 @@ export type QuestionCode =
   | "same_place"
   | "customer_name"
   // Proposed, not agreed: no order yet, so the next step is what they want.
-  | "what_to_order";
+  | "what_to_order"
+  // Proposed (Nov 2): several lines with no quantity, asked together in one question.
+  | "quantities";
 
 export interface AnswerFact {
   /** As the customer named it. */

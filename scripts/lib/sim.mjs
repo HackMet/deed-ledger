@@ -111,3 +111,24 @@ export async function postWebhook(url, message, { from, to = SIM.phoneNumberId }
     body,
   });
 }
+
+/**
+ * Uploads a local photo or voice note to the simulator (dev only) and returns the media ID a webhook
+ * can name, as WhatsApp's would. The simulator serves it back when the Worker downloads that media.
+ */
+export async function uploadSimMedia(url, path) {
+  const { readFileSync } = await import("node:fs");
+  const bytes = readFileSync(path);
+  const type = /\.(ogg|opus)$/i.test(path) ? "audio/ogg; codecs=opus" : /\.png$/i.test(path) ? "image/png" : "image/jpeg";
+  const response = await fetch(`${url}/dev/sim-media`, { method: "POST", headers: { "content-type": type }, body: bytes });
+  if (!response.ok) throw new Error(`upload refused (${response.status}): is the simulator running with this version?`);
+  const { id } = await response.json();
+  return { id, type };
+}
+
+/** The webhook message for an uploaded photo or voice note. */
+export function mediaMessage({ id, type }, caption) {
+  return type.startsWith("audio/")
+    ? { type: "audio", audio: { id, mime_type: type, sha256: "c2lt", voice: true } }
+    : { type: "image", image: { id, mime_type: type, sha256: "c2lt", ...(caption ? { caption } : {}) } };
+}

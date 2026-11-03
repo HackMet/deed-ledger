@@ -48,14 +48,14 @@ const CUSTOMER = `Sos el lector de pedidos de una pulperia hondurena. Lees lo qu
 
 Observaciones (una por cada cosa que dijo, en el orden en que la dijo; "agregale un jabon y lo paso a traer" son dos):
 - customer_order: pide productos. Una linea por producto.
-- order_change: cambia el PEDIDO ABIERTO del contexto (lineas con etiquetas L1, L2...). op add = suma una linea nueva o mas de algo ("agregale", "ponele otro"; llena text, name, quantity, unit, restricted, pick). op remove = quita ("quitale"). op set_quantity = fija la cantidad ("que sean tres" -> quantity "3"). Para remove y set_quantity: ref = la etiqueta que claramente corresponde, o null si ninguna calza claro; said = como la nombro. Nunca inventes etiquetas. Si no hay pedido abierto, un pedido nuevo es customer_order.
+- order_change: cambia el PEDIDO ABIERTO del contexto (lineas con etiquetas L1, L2...). op add = suma una linea nueva o mas de algo ("agregale", "ponele otro"; llena text, name, quantity, unit, restricted, pick). op remove = quita ("quitale"). op set_quantity = fija la cantidad ("que sean tres" -> quantity "3"). Para remove y set_quantity: ref = la etiqueta que claramente corresponde, o null si ninguna calza claro; said = como la nombro. Nunca inventes etiquetas. Si la PREGUNTA PENDIENTE es quantities, cada cantidad que diga ("6 platanos, 1 piña") es un set_quantity con el ref de su linea. Si no hay pedido abierto, un pedido nuevo es customer_order.
 - order_cancel: cancela el pedido.
 - fulfillment: como lo recibe. mode pickup ("lo paso a traer", "lo recojo"), delivery ("me lo manda", "a domicilio"), unknown si no lo dijo. place_text: el lugar en palabras ("donde la iglesia, casa verde") o null. same_as_before: true si dice "al mismo lugar de siempre". Una ubicacion compartida ya la tiene la app.
 - payment_receipt: foto de comprobante de pago: monto en centavos, banco, fecha y referencia tal cual impresos (sin reformatear), cada uno con su evidencia; null lo que no se lee.
 - question: pregunta. topic order_status sobre SU pedido ("a que hora esta", "ya esta"), price ("a cuanto", "cuanto vale"), availability ("hay", "tienen"), balance ("cuanto debo"), store_hours sobre la tienda ("a que hora abren", "hasta que hora atienden", "abren el domingo"), other (algo que no es de la tienda). products: los productos que nombra, en sus palabras; vacio si no nombra ninguno.
 - handoff: quiere hablar con una persona.
 - stop: dice ALTO o pide que borren sus datos (delete_requested true en ese caso).
-- clarification: responde la PREGUNTA PENDIENTE del contexto ("de litro", "si", "Carla"). answer tal cual.
+- clarification: responde la PREGUNTA PENDIENTE del contexto ("de litro", "si", "Carla"). answer tal cual. pick: si el contexto trae OPCIONES (O1, O2...), la etiqueta de la opcion que la persona eligio, como sea que lo diga ("mazola porfavor", "la de 34", "el segundo", "esa grande"); null si no hay opciones o no queda claro cual. Nunca inventes etiquetas. quantity: si la PREGUNTA PENDIENTE es quantity, cuantos pidio como texto decimal: "dos" -> "2", "media docena" -> "6"; nombrar el producto o su empaque en singular sin otro numero ("el paquete", "una bolsa", "una", "solo uno", "si, el paquete de 10") -> "1". Un numero que es parte del nombre del producto ("paquete de 10", "de 400 g") nunca es la cantidad. null solo si de verdad no dijo cuantos.
 - customer_name: dice su nombre ("soy Carla"). name tal cual.
 - other: cualquier otra cosa (saludos, charla). Si el burst no trae nada de lo anterior, una sola observacion other.`;
 
@@ -91,6 +91,9 @@ export function userContent(messages: readonly BurstMessage[], context: ReadingC
       text: [
         "CONTEXTO (lo da la app):",
         `PREGUNTA PENDIENTE: ${context.pendingQuestion ?? "ninguna"}`,
+        ...(context.pendingOptions !== undefined && context.pendingOptions.length > 0
+          ? [`OPCIONES:\n${context.pendingOptions.map((option) => `${option.label}: ${JSON.stringify(option.text)}`).join("\n")}`]
+          : []),
         `PEDIDO ABIERTO:\n${order}`,
         `CATALOGO:\n${catalog}`,
         "",

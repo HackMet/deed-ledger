@@ -370,7 +370,7 @@ describe("contract rules on a response that fits the schema", () => {
   });
 
   it("a clarification answer that isn't what its quote says is not an answer", async () => {
-    const recorded = authored("customer", [text("de litro")], [{ kind: "clarification", answer: "de medio", evidence: quote(0, "de litro"), issues: [] }]);
+    const recorded = authored("customer", [text("de litro")], [{ kind: "clarification", answer: "de medio", pick: null, quantity: null, evidence: quote(0, "de litro"), issues: [] }]);
     expect(observationsOf((await readRecorded(recorded)).outcome)).toEqual([{ kind: "other", issues: [{ code: "illegible", line: null, evidence: null }] }]);
   });
 
@@ -420,7 +420,7 @@ describe("contract rules on a response that fits the schema", () => {
   });
 
   it("a clarification whose words aren't in the burst is not an answer", async () => {
-    const recorded = authored("customer", [text("de litro")], [{ kind: "clarification", answer: "de medio", evidence: quote(0, "de medio"), issues: [] }]);
+    const recorded = authored("customer", [text("de litro")], [{ kind: "clarification", answer: "de medio", pick: null, quantity: null, evidence: quote(0, "de medio"), issues: [] }]);
     expect(observationsOf((await readRecorded(recorded)).outcome)).toEqual([{ kind: "other", issues: [{ code: "illegible", line: null, evidence: null }] }]);
   });
 });

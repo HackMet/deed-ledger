@@ -162,6 +162,17 @@ export interface Clarification {
   readonly kind: "clarification";
   /** As written or said. */
   readonly answer: string;
+  /**
+   * Proposed (Nov 2): when the question offered options (`PerceptionContext.pendingOptions`), the
+   * label of the one the customer chose ("mazola porfavor" -> "O3"); null when it isn't clear. Only
+   * a label code offered survives validation; code maps it to the product.
+   */
+  readonly pick?: string | null;
+  /**
+   * Proposed (Nov 2): when the pending question is `quantity`, the amount the customer gave as an
+   * exact decimal ("el paquete" -> "1", "media docena" -> "6"); null when they gave none.
+   */
+  readonly quantity?: DecimalString | null;
   readonly evidence: Evidence;
 }
 
@@ -240,6 +251,11 @@ export interface BurstReading {
 export interface PerceptionContext {
   readonly openOrder: { readonly lines: readonly { readonly ref: string; readonly text: string }[] } | null;
   readonly pendingQuestion: QuestionCode | null;
+  /**
+   * Proposed (Nov 2): the options the pending question offered, labelled "O1", "O2"… in the order
+   * the customer saw them, so perception can say which one an answer chose. Absent means none.
+   */
+  readonly pendingOptions?: readonly { readonly label: string; readonly text: string }[];
 }
 
 export function isCustomerKind(kind: ObservationKind): boolean {

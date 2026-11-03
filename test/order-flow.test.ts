@@ -502,7 +502,7 @@ const READINGS = {
       },
     ],
   },
-  deLitro: { observations: [{ kind: "clarification", answer: "de litro", evidence: quote(0, "de litro"), ...none }] },
+  deLitro: { observations: [{ kind: "clarification", answer: "de litro", pick: null, quantity: null, evidence: quote(0, "de litro"), ...none }] },
   pickup: { observations: [{ kind: "fulfillment", mode: "pickup", place_text: null, same_as_before: false, ...none }] },
   whenReady: { observations: [{ kind: "question", topic: "order_status", products: [], ...none }] },
 } as const;

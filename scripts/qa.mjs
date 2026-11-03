@@ -12,7 +12,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseArgs, postWebhook, queryLocal, SIM } from "./lib/sim.mjs";
+import { mediaMessage, parseArgs, postWebhook, queryLocal, SIM, uploadSimMedia } from "./lib/sim.mjs";
 import { QA_CATALOG, QA_FEE, QA_HOURS, QA_NO_HAY, QA_UNPRICED, SCENARIOS } from "./qa-scenarios.mjs";
 
 const args = parseArgs(process.argv.slice(2));
@@ -146,6 +146,14 @@ class Customer {
     await this.collect();
   }
 
+  /** A photo or voice note from a synthetic file, as WhatsApp would deliver it. */
+  async media(path, caption) {
+    const uploaded = await uploadSimMedia(url, path);
+    this.log.push({ who: "customer", text: `[${uploaded.type.startsWith("audio/") ? "nota de voz" : "foto"}: ${path.split("/").at(-1)}]${caption ? ` ${caption}` : ""}` });
+    await this.send(mediaMessage(uploaded, caption));
+    await this.collect();
+  }
+
   async tap(title) {
     const button = this.buttons.find((b) => b.title.toLowerCase().startsWith(String(title).toLowerCase()));
     if (!button) {
@@ -229,6 +237,8 @@ async function run(scenario, phones) {
   for (const step of scenario.steps) {
     if (step.say !== undefined) await customer.say(step.say);
     else if (step.tap !== undefined) await customer.tap(step.tap);
+    else if (step.photo !== undefined) await customer.media(step.photo, step.caption);
+    else if (step.voice !== undefined) await customer.media(step.voice);
     else if (step.staff !== undefined) await customer.staff(step.staff);
     else if (step.ownerReply !== undefined) await customer.ownerReply(step.ownerReply);
     else if (step.wait !== undefined) await sleep(step.wait * 1000);

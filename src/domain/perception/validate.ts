@@ -84,6 +84,7 @@ class ObservationReader {
   readonly picks: LinePick[] = [];
   private readonly orderRefs: ReadonlySet<string>;
   private readonly catalogLabels: ReadonlySet<string>;
+  private readonly optionLabels: ReadonlySet<string>;
 
   constructor(
     private readonly messages: readonly BurstMessage[],
@@ -91,6 +92,7 @@ class ObservationReader {
   ) {
     this.orderRefs = new Set(context.openOrder?.lines.map((line) => line.ref) ?? []);
     this.catalogLabels = new Set(context.catalogLabels.map((entry) => entry.label));
+    this.optionLabels = new Set((context.pendingOptions ?? []).map((entry) => entry.label));
   }
 
   read(wire: WireObservation, index: number): Observation {
@@ -133,8 +135,12 @@ class ObservationReader {
         const source = evidence ? spanText(evidence, this.messages) : null;
         if (!evidence || source === null || !saysWords(source, said)) return { kind: "other", issues: [UNPLACED] };
         const issues = this.issues(wire.issues, null);
+        // A pick is kept only when it names one of the options the question offered.
+        const pick = wire.kind === "clarification" && wire.pick !== null && this.optionLabels.has(wire.pick) ? wire.pick : null;
+        // A quantity is kept only as an exact, positive decimal; anything else is no quantity.
+        const quantity = wire.kind === "clarification" ? positiveDecimal(wire.quantity) : null;
         return wire.kind === "clarification"
-          ? { kind: "clarification", answer: said, evidence, issues }
+          ? { kind: "clarification", answer: said, pick, quantity, evidence, issues }
           : { kind: "customer_name", name: said, evidence, issues };
       }
       case "other":
@@ -357,6 +363,13 @@ class ObservationReader {
 function text(value: string | null): string | null {
   const trimmed = value?.trim() ?? "";
   return trimmed === "" ? null : trimmed;
+}
+
+/** A positive exact decimal, or null for anything else (zero, negative, a word, a float). */
+function positiveDecimal(value: string | null): DecimalString | null {
+  if (value === null) return null;
+  const trimmed = value.trim();
+  return isDecimalString(trimmed) && /[1-9]/u.test(trimmed) && !trimmed.startsWith("-") ? trimmed : null;
 }
 
 /** A quantity as a DecimalString, or null; `bad` when the model wrote something that isn't one. */

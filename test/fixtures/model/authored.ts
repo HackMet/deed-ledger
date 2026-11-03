@@ -29,7 +29,7 @@ export const contractBursts: Record<
   sizeAnswer: authored(
     "customer",
     [text("de litro")],
-    [{ kind: "clarification", answer: "de litro", evidence: quote(0, "de litro"), ...noIssues }],
+    [{ kind: "clarification", answer: "de litro", pick: null, quantity: null, evidence: quote(0, "de litro"), ...noIssues }],
     { openOrder: null, pendingQuestion: "ambiguous_size" },
   ),
   pickup: authored("customer", [text("lo paso a traer")], [

@@ -24,3 +24,6 @@ docs/source/official-rules-*.pdf
 
 # Database exports hold real data
 backup-*.sql
+
+# Voice notes recorded by a real person stay local (sim tests read them from disk)
+scripts/sim-media/*.ogg

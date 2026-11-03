@@ -41,8 +41,8 @@ const READ = {
   jabon: { observations: [{ kind: "customer_order", lines: [line("1 jabon xtra", "jabon xtra", "1", null, quote(0, "1 jabon xtra"))], ...none }] },
   delivery: { observations: [{ kind: "fulfillment", mode: "delivery", place_text: null, same_as_before: false, ...none }] },
   pickup: { observations: [{ kind: "fulfillment", mode: "pickup", place_text: null, same_as_before: false, ...none }] },
-  placeAnswer: { observations: [{ kind: "clarification", answer: PLACE_TEXT, evidence: quote(0, PLACE_TEXT), ...none }] },
-  yes: { observations: [{ kind: "clarification", answer: "Sí", evidence: quote(0, "Sí"), ...none }] },
+  placeAnswer: { observations: [{ kind: "clarification", answer: PLACE_TEXT, pick: null, quantity: null, evidence: quote(0, PLACE_TEXT), ...none }] },
+  yes: { observations: [{ kind: "clarification", answer: "Sí", pick: null, quantity: null, evidence: quote(0, "Sí"), ...none }] },
 } as const;
 
 const NOTED_ARROZ = "Anotado ✅ 2 × Arroz 1 lb.";

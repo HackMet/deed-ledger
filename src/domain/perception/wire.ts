@@ -87,7 +87,13 @@ export type WireObservation = WithIssues &
       }
     | { readonly kind: "handoff" }
     | { readonly kind: "stop"; readonly delete_requested: boolean }
-    | { readonly kind: "clarification"; readonly answer: string; readonly evidence: WireEvidence }
+    | {
+        readonly kind: "clarification";
+        readonly answer: string;
+        readonly pick: string | null;
+        readonly quantity: string | null;
+        readonly evidence: WireEvidence;
+      }
     | { readonly kind: "customer_name"; readonly name: string; readonly evidence: WireEvidence }
     | { readonly kind: "other" }
     | { readonly kind: "sale_report"; readonly lines: readonly WirePricedLine[] }
@@ -198,7 +204,7 @@ const CUSTOMER_VARIANTS: readonly JsonSchema[] = [
   }),
   variant("handoff"),
   variant("stop", { delete_requested: bool }),
-  variant("clarification", { answer: str, evidence }),
+  variant("clarification", { answer: str, pick: nstr, quantity: nstr, evidence }),
   variant("customer_name", { name: str, evidence }),
   variant("other"),
 ];

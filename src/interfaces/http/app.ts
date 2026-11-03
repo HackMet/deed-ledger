@@ -80,6 +80,15 @@ export function createHttpApp(makeRuntime: (env: Env) => Runtime) {
     return c.text("ok", 200);
   });
 
+  // The simulator's media uploads (`npm run chat` /foto, /audio). Not found outside the simulator.
+  app.post("/dev/sim-media", async (c) => {
+    const sim = c.get("runtime").simMedia;
+    if (sim === null) return c.text("Not found", 404);
+    const type = (c.req.header("content-type") ?? "").toLowerCase();
+    const id = await sim.upload(type, await c.req.arrayBuffer());
+    return id === null ? c.text("Unsupported media", 415) : c.json({ id });
+  });
+
   app.route("/console", consoleRoutes());
   app.route(PRIVACY_PATH, privacyRoutes());
 

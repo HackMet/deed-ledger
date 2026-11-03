@@ -46,9 +46,10 @@ import type {
   StoreHours,
 } from "../../domain/contract/outcomes";
 import { orderSubtotal } from "../../domain/money";
+import { formatLempiras } from "../../domain/contract/numbers";
 import { isYes, type SavedPlace, tidyPlaceText } from "../../domain/place";
 import { storeHoursKey } from "../../domain/store-hours";
-import { searchCatalog } from "../../domain/catalog-search";
+import { productWords, searchCatalog } from "../../domain/catalog-search";
 import { fulfillmentWords, optionNumber, quantityFrom } from "../../domain/answer-words";
 import { MAX_OPTIONS, type ProductOption } from "../../domain/contract/outcomes";
 
@@ -144,7 +145,16 @@ interface PendingQuestion {
   readonly code: QuestionCode;
   readonly lineId: string | null;
   readonly options?: readonly string[];
+  /** Asked a second time because the first answer didn't settle it; never a third. */
+  readonly again?: boolean;
+  /** For `quantities`: the lines still waiting for one. */
+  readonly lines?: readonly string[];
+  /** How many times it was asked. */
+  readonly asks?: number;
 }
+
+/** A question about several quantities is asked at most this many times, then the order moves on. */
+export const MAX_QUANTITIES_ASKS = 2;
 
 interface DraftSnapshot {
   readonly pending: readonly PendingQuestion[];
@@ -196,7 +206,24 @@ export class MemoryEngine implements Engine, OrderReadingSource {
           ? null
           : { lines: open.order.lines.map((line, n) => ({ ref: `L${n + 1}`, text: `${line.productName ?? line.text}: ${line.quantity ?? "?"}` })) },
       pendingQuestion: state.lastQuestion.get(context.customerId) ?? null,
+      ...this.pendingOptionsOf(state, open),
     };
+  }
+
+  /** The options the open order's next question offers, labelled as the customer saw them. */
+  private pendingOptionsOf(state: StoreState, open: StoredOrder | null): { pendingOptions?: { label: string; text: string }[] } {
+    const pending = open === null ? undefined : state.drafts.get(open.order.orderId)?.pending[0];
+    const ids = pending?.options ?? [];
+    const catalog = this.options.catalog ?? [];
+    const options = ids.flatMap((id, n) => {
+      const product = catalog.find((p) => p.productId === id);
+      // As the customer saw it, price included: "la de 34" names the price.
+      if (product === undefined) return [];
+      const name = product.names[0] ?? id;
+      const price = product.restricted === true || product.price === null ? "" : ` · ${formatLempiras(product.price)}`;
+      return [{ label: `O${n + 1}`, text: `${name}${price}` }];
+    });
+    return options.length > 1 ? { pendingOptions: options } : {};
   }
 
   async catalog(): Promise<readonly CatalogProduct[]> {
@@ -495,7 +522,7 @@ class BurstApplier {
       case "clarification":
         if (this.answerPlaceQuestion(observation.answer)) return;
         if (this.answerFulfillmentQuestion(observation.answer)) return;
-        this.settleQuestion(observation.answer);
+        this.settleQuestion(observation.answer, observation.pick ?? null, observation.quantity ?? null);
         return;
       case "customer_name":
         this.named = observation.name;
@@ -538,6 +565,8 @@ class BurstApplier {
 
     if (this.stored === null || !this.changed) {
       if (this.statusAsked) {
+        // "¿Ya anotaste…?" while it's being built: what's noted and the open question, not a status.
+        if (this.stored !== null && this.stored.order.state === "armando") return only(this.restate());
         const order = this.stored === null ? null : { ...this.stored.order, queuePosition: queuePosition(state, this.stored.order.orderId) };
         return only({ type: "order_status", order });
       }
@@ -567,7 +596,10 @@ class BurstApplier {
   private nextStep(): EngineOutcome {
     const order = this.stored!.order;
     this.dropSettledQuestions(order);
+    // Asked enough: the order moves on with those lines' quantities unknown, never made up.
+    if (this.draft.pending[0]?.code === "quantities" && (this.draft.pending[0].asks ?? 0) >= MAX_QUANTITIES_ASKS) this.draft.pending.shift();
     const pending = this.draft.pending[0];
+    if (pending?.code === "quantities") this.draft.pending[0] = { ...pending, asks: (pending.asks ?? 0) + 1 };
     if (pending !== undefined) {
       const line = pending.lineId === null ? -1 : order.lines.findIndex((l) => l.lineId === pending.lineId);
       return this.ask(pending.code, line === -1 ? null : line, "armando", pending.options);
@@ -597,6 +629,10 @@ class BurstApplier {
       if (p.code === "quantity") return line.quantity === null;
       if (p.options !== undefined) return line.productId === null;
       return true;
+    }).flatMap((p): PendingQuestion[] => {
+      if (p.code !== "quantities") return [p];
+      const waiting = (p.lines ?? []).filter((id) => order.lines.some((l) => l.lineId === id && l.quantity === null));
+      return waiting.length === 0 ? [] : [{ ...p, lines: waiting }];
     });
     this.draft.pending.splice(0, this.draft.pending.length, ...kept);
   }
@@ -818,9 +854,10 @@ class BurstApplier {
         this.draft.pending.push({ code: "ambiguous_product", lineId, options });
       }
     }
-    for (const { lineId, quantity } of this.added) {
-      if (quantity) this.draft.pending.push({ code: "quantity", lineId });
-    }
+    // Several lines with no quantity (a list from a photo): one question for all of them.
+    const missing = this.added.filter((a) => a.quantity).map((a) => a.lineId);
+    if (missing.length > 1) this.draft.pending.push({ code: "quantities", lineId: null, lines: missing });
+    else if (missing.length === 1) this.draft.pending.push({ code: "quantity", lineId: missing[0]! });
     this.added.splice(0);
   }
 
@@ -848,20 +885,29 @@ class BurstApplier {
    * product only; otherwise the line stays unmatched and its price unknown. Either way the question
    * is settled: it is never asked twice.
    */
-  private settleQuestion(answer: string): void {
+  private settleQuestion(answer: string, pick: string | null = null, saidQuantity: string | null = null): void {
     if (this.stored !== null) this.dropSettledQuestions(this.stored.order);
     const pending = this.draft.pending.shift();
     if (pending === undefined || this.stored === null) return;
     this.changed = true;
+    if (pending.code === "quantities") {
+      this.settleQuantities(pending, answer);
+      return;
+    }
     if (pending.lineId === null) return;
     if (pending.code === "quantity") {
-      const quantity = quantityFrom(answer);
+      // Perception's reading first; then code's, leaving out numbers that are the product's own name.
+      const line = this.stored.order.lines.find((l) => l.lineId === pending.lineId);
+      const quantity = saidQuantity ?? quantityFrom(withoutNameNumbers(answer, line?.productName ?? null));
       if (quantity !== null) {
         this.setLines(this.stored.order.lines.map((line) => (line.lineId === pending.lineId ? { ...line, quantity } : line)));
+      } else if (pending.again !== true) {
+        // No quantity in the answer: asked once more, then never again (absent is never one).
+        this.draft.pending.unshift({ ...pending, again: true });
       }
       return;
     }
-    const product = this.productForAnswer(pending, answer);
+    const product = this.productForAnswer(pending, answer, pick);
     this.setLines(
       this.stored.order.lines.map((line) =>
         line.lineId !== pending.lineId || product === null
@@ -877,14 +923,44 @@ class BurstApplier {
     );
   }
 
+  /**
+   * "6 plátanos, 1 piña y una sandía" answering the question about several quantities, read by
+   * code when perception gave it as one answer (it usually sets them line by line). Each part is
+   * matched to one waiting line by its words; what doesn't match stays waiting, and the question
+   * stays for the rest (at most MAX_QUANTITIES_ASKS times).
+   */
+  private settleQuantities(pending: PendingQuestion, answer: string): void {
+    const waiting = (pending.lines ?? []).flatMap((id) => this.stored!.order.lines.filter((l) => l.lineId === id && l.quantity === null));
+    const asLines = waiting.map((l) => ({ productId: l.lineId, names: [l.productName ?? l.text], aliases: [this.draft.names.get(l.lineId) ?? l.text] }));
+    const set = new Map<string, string>();
+    for (const part of answer.split(/,|;|\n|\s+y\s+/u)) {
+      const found = searchCatalog(part.replace(/\d+(?:[.,]\d+)?/gu, " "), asLines);
+      const line = found.length === 1 ? waiting.find((l) => l.lineId === found[0]!.productId) : undefined;
+      const quantity = line === undefined ? null : quantityFrom(withoutNameNumbers(part, line.productName));
+      if (line !== undefined && quantity !== null && !set.has(line.lineId)) set.set(line.lineId, quantity);
+    }
+    if (set.size > 0) {
+      this.setLines(this.stored!.order.lines.map((l) => (set.has(l.lineId) ? { ...l, quantity: set.get(l.lineId)! } : l)));
+    }
+    const left = (pending.lines ?? []).filter((id) => !set.has(id));
+    if (left.length > 0) this.draft.pending.unshift({ ...pending, lines: left });
+  }
+
   /** The product an answer about an unclear line points at, or null when it isn't clear. */
-  private productForAnswer(pending: PendingQuestion, answer: string): PretendProduct | null {
+  private productForAnswer(pending: PendingQuestion, answer: string, pick: string | null): PretendProduct | null {
     const options = (pending.options ?? []).flatMap((id) => this.catalog.filter((p) => p.productId === id));
+    // Perception's pick among the labels offered ("O3"), then code's own reading of the words.
+    const picked = pick === null ? null : /^O([1-9])$/u.exec(pick);
+    if (picked !== null && options[Number(picked[1]) - 1] !== undefined) return options[Number(picked[1]) - 1]!;
     const n = optionNumber(answer);
     if (n !== null && options[n - 1] !== undefined) return options[n - 1]!;
     if (options.length > 0) {
       const among = searchCatalog(answer, options);
       if (among.length === 1) return among[0]!;
+      // "Mazola porfavor", "la de clover grande": a word said that only one option holds picks it.
+      const byWord = productWords(answer).map((word) => searchCatalog(word, options));
+      const singled = [...new Set(byWord.filter((found) => found.length === 1).map((found) => found[0]!))];
+      if (singled.length === 1) return singled[0]!;
     }
     const lineWords = `${this.draft.names.get(pending.lineId ?? "") ?? ""} ${answer}`;
     const said = normalize(lineWords);
@@ -970,6 +1046,12 @@ function lineView(lineId: string, line: ItemLine, product: PretendProduct | null
  */
 function soldOutOrUnknown(product: PretendProduct): OrderLineView["availability"] {
   return product.availability === "se_acabo" ? "se_acabo" : "no_se";
+}
+
+/** "el paquete de 10" asked about "Tortillas paquete 10": the 10 is the product, not the quantity. */
+function withoutNameNumbers(answer: string, productName: string | null): string {
+  const numbers = new Set((productName ?? "").match(/\d+(?:[.,]\d+)?/gu) ?? []);
+  return numbers.size === 0 ? answer : answer.replace(/\d+(?:[.,]\d+)?/gu, (n) => (numbers.has(n) ? " " : n));
 }
 
 /** Same mode, and for a delivery the same place: setting it again changes nothing. */

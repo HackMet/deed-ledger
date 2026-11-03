@@ -13,7 +13,9 @@ function normalize(value: string): string {
 /** Words that carry no product meaning in an order line. */
 const FILLER = new Set([
   "de", "del", "la", "el", "los", "las", "un", "una", "unos", "unas", "y", "con", "para", "por", "porfa",
-  "favor", "me", "mi", "lo", "le", "que", "ese", "esa", "este", "esta", "eso", "otro", "otra", "marca",
+  "favor", "porfavor", "porfis", "plis", "please", "xfa", "xfavor", "pf", "gracias", "ok", "va", "si", "sí",
+  "quiero", "deme", "dame", "mande", "mandame", "mandeme", "ponga", "pongame",
+  "me", "mi", "lo", "le", "que", "ese", "esa", "este", "esta", "eso", "otro", "otra", "marca",
 ]);
 
 /** Unit words customers write, folded to how product names usually write them. */
@@ -54,8 +56,41 @@ export interface SearchableProduct {
 export function searchCatalog<P extends SearchableProduct>(said: string, products: readonly P[]): P[] {
   const asked = productWords(said);
   if (asked.length === 0) return [];
-  return products.filter((product) => {
-    const own = new Set([...product.names, ...product.aliases].flatMap(productWords).flatMap(forms));
+  const ownWords = (product: P) => new Set([...product.names, ...product.aliases].flatMap(productWords).flatMap(forms));
+  const exact = products.filter((product) => {
+    const own = ownWords(product);
     return asked.every((word) => forms(word).some((form) => own.has(form)));
   });
+  if (exact.length > 0) return exact;
+  // Nothing fits as written: one slip in a long word ("aciete", "detergete") is forgiven, never in a
+  // number or a short word, and only when the words as written found nothing.
+  return products.filter((product) => {
+    const own = [...ownWords(product)];
+    return asked.every((word) => forms(word).some((form) => own.some((mine) => mine === form || oneSlip(form, mine))));
+  });
+}
+
+/** Two long words one typing slip apart (a letter changed, missing, extra, or two swapped), same first letter. */
+function oneSlip(a: string, b: string): boolean {
+  // Long words only, same first letter: "aciete" is aceite, but "pollo" is never "rollo".
+  if (a.length < 6 || b.length < 6 || a[0] !== b[0] || /\d/u.test(a) || /\d/u.test(b) || Math.abs(a.length - b.length) > 1) return false;
+  // Optimal string alignment distance, stopped as soon as it can't be 1 or less.
+  const rows: number[][] = [];
+  for (let i = 0; i <= a.length; i++) {
+    rows.push(new Array<number>(b.length + 1).fill(0));
+    rows[i]![0] = i;
+  }
+  for (let j = 0; j <= b.length; j++) rows[0]![j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    let best = Infinity;
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      let d = Math.min(rows[i - 1]![j]! + 1, rows[i]![j - 1]! + 1, rows[i - 1]![j - 1]! + cost);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d = Math.min(d, rows[i - 2]![j - 2]! + 1);
+      rows[i]![j] = d;
+      best = Math.min(best, d);
+    }
+    if (best > 1) return false;
+  }
+  return rows[a.length]![b.length]! <= 1;
 }

@@ -43,6 +43,7 @@ import { MemoryEngine } from "./infrastructure/memory/memory-engine";
 import { QueueDoorbell } from "./infrastructure/queue-doorbell";
 import { R2MediaEraser } from "./infrastructure/r2-media-eraser";
 import { R2MediaStore } from "./infrastructure/r2-media-store";
+import { SimMediaSource } from "./infrastructure/sim-media-source";
 import { consoleLogger, randomIds, realSleep, systemClock } from "./infrastructure/runtime";
 import { OpusAudioDecoder } from "./integrations/audio";
 import { MuseSparkProvider } from "./integrations/meta/spark";
@@ -52,6 +53,8 @@ import { WhatsAppMediaSource } from "./integrations/whatsapp/media";
 
 export interface Runtime {
   readonly config: Config;
+  /** The simulator's media uploads (dev console with no WhatsApp token only); null everywhere else. */
+  readonly simMedia: SimMediaSource | null;
   readonly deps: Deps;
   /** Null until the real engine is wired in, except for the pretend engines (DEV_CONSOLE, PRETEND_ENGINE). */
   readonly engine: Engine | null;
@@ -88,6 +91,9 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
   const config = readConfig(env);
   const db = overrides.db ?? env.DB;
   const storeSetup = new D1StoreSetupRepository(db);
+  // The simulator downloads the synthetic photos and voice notes it was sent (`npm run chat`): only with
+  // the dev console on and no WhatsApp token, so a deployed Worker never serves uploads.
+  const simMedia = config.devConsole && config.whatsappToken === "" ? new SimMediaSource(env.MEDIA) : null;
   // DEV_CONSOLE: in memory, demo catalog, no login, local simulator only. PRETEND_ENGINE: state in
   // D1, shared by every isolate, each store's own products and hours (#40), console behind login.
   // Both (the simulator's --store): the D1 engine, so the Tienda screens feed the chat. Neither: no
@@ -135,6 +141,7 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
         });
   return {
     config,
+    simMedia,
     engine,
     storeSetup,
     burstReader:
@@ -163,6 +170,7 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
         }),
       mediaSource:
         overrides.mediaSource ??
+        simMedia ??
         new WhatsAppMediaSource({
           token: config.whatsappToken,
           apiVersion: config.graphApiVersion,

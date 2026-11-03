@@ -10,12 +10,16 @@ import { describe, expect, it } from "vitest";
 import type { CustomerContext } from "../src/application/engine";
 import { fulfillmentWords, optionNumber, quantityFrom } from "../src/domain/answer-words";
 import { productWords, searchCatalog } from "../src/domain/catalog-search";
+import { validateReading } from "../src/domain/perception/validate";
 import { formatLempiras } from "../src/domain/contract/numbers";
 import type { BurstReading, ItemLine, Observation } from "../src/domain/contract/observation";
 import type { EngineOutcome } from "../src/domain/contract/outcomes";
 import { nameFrom } from "../src/domain/customer-name";
 import { firstName, renderNotice, renderOutcome } from "../src/domain/replies";
 import { MemoryEngine, type PretendProduct } from "../src/infrastructure/memory/memory-engine";
+import { SimMediaSource } from "../src/infrastructure/sim-media-source";
+import { buildRuntime } from "../src/composition";
+import { orderLabel } from "../src/interfaces/http/console/preparacion";
 import { csrfFor, login, send, storeWithStaff } from "./helpers/console";
 import { harness, rows } from "./helpers/harness";
 import { newPhone } from "./helpers/seed";
@@ -31,6 +35,7 @@ const CATALOG: readonly PretendProduct[] = [
   { productId: "p-salsa", names: ["Salsa de tomate Naturas 400 g"], aliases: [], barcode: null, price: 2800 },
   { productId: "p-tortillas", names: ["Tortillas paquete 10"], aliases: [], barcode: null, price: 2000 },
   { productId: "p-detergente", names: ["Detergente Xedex 500 g"], aliases: [], barcode: null, price: 4200 },
+  { productId: "p-papel", names: ["Papel higiénico 4 rollos"], aliases: [], barcode: null, price: 4800 },
 ];
 
 const none = { issues: [] } as const;
@@ -74,6 +79,13 @@ describe("finding products by the customer's words", () => {
     expect(ids("clover de 500")).toEqual(["p-clover-500"]);
     expect(ids("coca cola de 3 litros")).toEqual([]);
     expect(productWords("el de la marca")).toEqual([]);
+    // One slip in a long word, only when nothing fits as written; never in short words or numbers.
+    expect(ids("un aciete")).toEqual(["p-clover-1l", "p-clover-500", "p-mazola"]);
+    expect(ids("detergete")).toEqual(["p-detergente"]);
+    expect(ids("sall")).toEqual([]);
+    expect(ids("clover de 50")).toEqual([]);
+    // A short word one letter from another is a different word: "pollo" is never "rollos".
+    expect(ids("pollo")).toEqual([]);
     expect(ids("de la")).toEqual([]);
   });
 });
@@ -130,6 +142,85 @@ describe("the order, built from what the customer says", () => {
     await c.burst(order(line("un aceite", "aceite", "1")));
     const next = await c.burst(answer("el clover de litro"));
     expect(orderOf(next).lines[0]).toMatchObject({ productId: "p-clover-1l" });
+  });
+
+  it("tells perception the options it offered, and takes perception's pick among them", async () => {
+    const c = customer();
+    await c.burst(order(line("un aceite", "aceite", "1")));
+    const context = await c.engine.perceptionContext({ businessId: "store-1", conversationId: "conv-1", customerId: "cust-1", jobId: "j", nowMs: 1 });
+    expect(context.pendingOptions).toEqual([
+      { label: "O1", text: "Aceite Clover 1 L · L 60" },
+      { label: "O2", text: "Aceite Clover 500 ml · L 34" },
+      { label: "O3", text: "Aceite Mazola 1 L · L 65" },
+    ]);
+    // "Esa grande de 65": no rule reads that, perception's pick does.
+    const next = await c.burst({ kind: "clarification", answer: "esa grande de 65", pick: "O3", evidence: text(0, 16), ...none });
+    expect(orderOf(next).lines[0]).toMatchObject({ productId: "p-mazola" });
+  });
+
+  it("drops a pick that isn't one of the options offered", () => {
+    const messages = [{ type: "text", text: "la quinta" }] as const;
+    const context = { openOrder: null, pendingQuestion: "ambiguous_product", pendingOptions: [{ label: "O1", text: "A" }, { label: "O2", text: "B" }], catalogLabels: [] } as const;
+    const raw = { observations: [{ kind: "clarification", answer: "la quinta", pick: "O5", quantity: null, evidence: { message: 0, quote: "la quinta", box: null }, issues: [] }] };
+    const read = validateReading(raw, "customer", messages, context);
+    expect(read.ok && read.observations[0]).toMatchObject({ kind: "clarification", pick: null });
+  });
+
+  it("settles an option by a word only one option holds, with filler around it", async () => {
+    const c = customer();
+    await c.burst(order(line("un aceite", "aceite", "1")));
+    const next = await c.burst(answer("mazola porfavor"));
+    expect(orderOf(next).lines[0]).toMatchObject({ productId: "p-mazola" });
+  });
+
+  it("'¿ya anotaste…?' while the order is built gets the open question with what's noted", async () => {
+    const c = customer();
+    await c.burst(order(line("2 libras de arroz", "arroz", "2", "libra")));
+    const again = await c.burst({ kind: "question", topic: "order_status", products: [], ...none });
+    expect(again).toMatchObject({ type: "ask", question: "pickup_or_delivery" });
+    expect(renderOutcome(again, { customerId: "cust-1" })!.body).toBe("Anotado ✅ 2 × Arroz 1 lb.\n¿Lo recogés en la tienda o te lo llevamos?");
+  });
+
+  it("takes perception's quantity, and never a number that is the product's own name", async () => {
+    const byPerception = customer();
+    await byPerception.burst(order(line("unas tortillas", "tortillas", null)));
+    const read = await byPerception.burst({ kind: "clarification", answer: "si el paquete de 10 gracias", pick: null, quantity: "1", evidence: text(0, 27), ...none });
+    expect(orderOf(read).lines[0]).toMatchObject({ quantity: "1" });
+    // Without perception's reading, code leaves the 10 of "paquete 10" out: no quantity, never ten.
+    const byCode = customer();
+    await byCode.burst(order(line("unas tortillas", "tortillas", null)));
+    const fallback = await byCode.burst(answer("si el paquete de 10 gracias"));
+    expect(orderOf(fallback).lines[0]!.quantity).toBeNull();
+    // Still no quantity: asked once more, then the order moves on.
+    expect(fallback).toMatchObject({ type: "ask", question: "quantity", line: 0 });
+    expect(await byCode.burst(answer("no se"))).toMatchObject({ type: "ask", question: "pickup_or_delivery" });
+  });
+
+  it("asks once for several missing quantities, reads the answer, asks once more for the rest, then moves on", async () => {
+    const c = customer();
+    const asked = await c.burst(order(line("platanos", "platanos", null), line("piña", "piña", null), line("sal", "sal", null)));
+    expect(asked).toMatchObject({ type: "ask", question: "quantities" });
+    expect(renderOutcome(asked, { customerId: "cust-1" })!.body).toBe(
+      ["Anotado ✅ 3 productos.", "¿Cuántos querés de cada uno?", "• platanos", "• piña", "• Sal 1 lb", "Escribime, por ejemplo: «2 platanos, 1 piña»."].join("\n"),
+    );
+    // Read by code when perception passed it as one answer: two of three settled, asked again for one.
+    const again = await c.burst(answer("6 platanos y una piña"));
+    expect(orderOf(again).lines.map((l) => l.quantity)).toEqual(["6", "1", null]);
+    expect(again).toMatchObject({ type: "ask", question: "quantities" });
+    expect(renderOutcome(again, { customerId: "cust-1" })!.body).toContain("• Sal 1 lb");
+    // No quantity again: the order moves on; the quantity stays unknown, never made up.
+    const moved = await c.burst(answer("eso"));
+    expect(moved).toMatchObject({ type: "ask", question: "pickup_or_delivery" });
+    expect(orderOf(moved).lines[2]!.quantity).toBeNull();
+  });
+
+  it("takes the quantities perception set line by line", async () => {
+    const c = customer();
+    await c.burst(order(line("platanos", "platanos", null), line("piña", "piña", null)));
+    const set = (ref: string, quantity: string) => ({ op: "set_quantity", target: { ref, said: ref }, quantity, evidence: text(0, 5) });
+    const next = await c.burst({ kind: "order_change", edits: [set("L1", "6"), set("L2", "1")], ...none } as never);
+    expect(orderOf(next).lines.map((l) => l.quantity)).toEqual(["6", "1"]);
+    expect(next).toMatchObject({ type: "ask", question: "pickup_or_delivery" });
   });
 
   it("asks how many when no quantity was said, and reads the answer", async () => {
@@ -265,5 +356,34 @@ describe("the owner answers from Pendientes", () => {
     const empty = await send(h, "/console/pendientes/responder", { method: "POST", form: { csrf, pendiente: "x", respuesta: "   " }, cookie: owner });
     expect(empty.headers.get("location")).toContain("aviso=vacio");
     void env;
+  });
+});
+
+describe("the simulator's photos and voice notes, and the order number on the console", () => {
+  it("keeps an upload and serves it back by its ID; refuses other types, sizes and IDs", async () => {
+    const sim = new SimMediaSource(env.MEDIA);
+    const bytes = new TextEncoder().encode("not really a jpeg").buffer as ArrayBuffer;
+    const id = await sim.upload("image/jpeg", bytes);
+    expect(id).toMatch(/^sim-[0-9a-f-]{36}$/u);
+    const back = await sim.fetch({ providerMediaId: id! });
+    expect(back?.contentType).toBe("image/jpeg");
+    expect(new TextDecoder().decode(back!.bytes)).toBe("not really a jpeg");
+    expect(await sim.upload("text/html", bytes)).toBeNull();
+    expect(await sim.upload("image/jpeg", new ArrayBuffer(0))).toBeNull();
+    // A WhatsApp media ID, or a path out of the uploads: nothing.
+    expect(await sim.fetch({ providerMediaId: "1234567890" })).toBeNull();
+    expect(await sim.fetch({ providerMediaId: "../stores/x" })).toBeNull();
+  });
+
+  it("serves uploads only in the simulator: dev console on and no WhatsApp token", () => {
+    const runtime = (vars: Record<string, string>) => buildRuntime({ ...env, ...vars } as Env);
+    expect(runtime({ DEV_CONSOLE: "", WHATSAPP_TOKEN: "" }).simMedia).toBeNull();
+    expect(runtime({ DEV_CONSOLE: "1", WHATSAPP_TOKEN: "a-real-token" }).simMedia).toBeNull();
+    expect(runtime({ DEV_CONSOLE: "1", WHATSAPP_TOKEN: "" }).simMedia).not.toBeNull();
+  });
+
+  it("puts the order number before the customer's name on the console", () => {
+    expect(orderLabel({ code: "101" } as never)).toBe("#101 · ");
+    expect(orderLabel({} as never)).toBe("");
   });
 });

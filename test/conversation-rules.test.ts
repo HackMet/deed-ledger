@@ -34,7 +34,7 @@ const READ = {
   arroz: { observations: [{ kind: "customer_order", lines: [line("2 libras de arroz", "arroz", "2", "libra", quote(0, "2 libras de arroz"))], ...none }] },
   pickup: { observations: [{ kind: "fulfillment", mode: "pickup", place_text: null, same_as_before: false, ...none }] },
   nothing: { observations: [{ kind: "other", ...none }] },
-  yesAnswer: { observations: [{ kind: "clarification", answer: "sí", evidence: quote(0, "sí"), ...none }] },
+  yesAnswer: { observations: [{ kind: "clarification", answer: "sí", pick: null, quantity: null, evidence: quote(0, "sí"), ...none }] },
   carla: { observations: [{ kind: "customer_name", name: "Carla", evidence: quote(0, "Carla"), ...none }] },
   priceAndOrder: {
     observations: [
