@@ -2,11 +2,20 @@
  * The Deed (K20): each order's facts as a graph, and the feed of every verification the engine made.
  * Read-only, for any member of the store; the ledger only, scoped to the store (another store's order
  * is a 404). The graph is server-rendered inline SVG, with no script: a fact's panel opens with `:target`,
- * and the page refreshes every few seconds.
+ * and the page refreshes every few seconds. `?t=<ms>` replays the order as it stood at that time.
  */
 import type { Hono } from "hono";
 import { html } from "hono/html";
-import { type DeedFact, type DeedGraph, type DeedNode, type DeedStatus, blockingPath, deedGraph } from "../../../domain/deed-graph";
+import {
+  type DeedFact,
+  type DeedGraph,
+  type DeedNode,
+  type DeedRefusal,
+  type DeedStatus,
+  blockingPath,
+  deedGraph,
+  visibleAt,
+} from "../../../domain/deed-graph";
 import { D1DeedReads, type DeedCheckView } from "../../../infrastructure/d1/deed-checks";
 import { D1OrderTrail, type TrailEntry } from "../../../infrastructure/d1/order-trail";
 import type { ConsoleEnv } from "./auth";
@@ -64,8 +73,11 @@ const toDeedFact = (entry: TrailEntry): DeedFact => ({
   kind: entry.kind,
   recordedAtMs: entry.recordedAtMs,
   dependsOn: entry.dependsOn,
-  closure: entry.closedBy === null ? null : { closedByFactId: entry.closedBy.factId, reason: entry.closedBy.reason },
+  closure: entry.closedBy === null ? null : { closedByFactId: entry.closedBy.factId, reason: entry.closedBy.reason, atMs: entry.closedBy.atMs },
 });
+
+/** The replay's time, from `?t=`: a whole number of milliseconds, or null for the live order. */
+const replayTime = (raw: string | undefined): number | null => (raw !== undefined && /^\d{1,15}$/.test(raw) ? Number(raw) : null);
 
 export function deedScreen(app: Hono<ConsoleEnv>) {
   // Before `/deed/:orderId`, so the feed's name is never read as an order id.
@@ -91,73 +103,106 @@ ${rows.length === 0 ? html`<p class="empty">Todavía no hay verificaciones.</p>`
 
   app.get("/deed/:orderId", async (c) => {
     const orderId = c.req.param("orderId");
-    const trail = await new D1OrderTrail(c.env.DB).trail({ businessId: c.get("member").businessId }, orderId);
+    const tenant = { businessId: c.get("member").businessId };
+    const trail = await new D1OrderTrail(c.env.DB).trail(tenant, orderId);
     if (trail === null) return c.html(simplePage("Deed", html`<p class="empty">Ese pedido no está en la lista.</p>`), 404);
-    const facts = trail.facts.map(toDeedFact);
-    const graph = deedGraph(facts);
+    const at = replayTime(c.req.query("t"));
+    const everything = trail.facts.map(toDeedFact);
+    const refusals = await new D1DeedReads(c.env.DB).refusalsOf(tenant, orderId);
+    // The replay shows what was recorded by its time: facts, closures and refusals alike.
+    const facts = at === null ? everything : visibleAt(everything, at);
+    const shownRefusals: DeedRefusal[] = at === null ? refusals : refusals.filter((refusal) => refusal.atMs <= at);
+    const graph = deedGraph(facts, shownRefusals);
     const focus = c.req.query("foco");
     const onPath = new Set(focus === undefined ? [] : (blockingPath(graph, focus, facts)?.path ?? []));
+    const shownEntries = trail.facts.filter((entry) => facts.some((fact) => fact.id === entry.factId));
+    const times = [...trail.facts.map((entry) => entry.recordedAtMs), ...refusals.map((refusal) => refusal.atMs)];
     return c.html(
       await shell(c, {
         title: `Pedido ${trail.code ?? "—"}`,
-        subtitle: "Deed",
+        subtitle: at === null ? "Deed" : `Deed · como estaba a las ${formatTime(at)}`,
         back: `/console/pedidos/${encodeURIComponent(orderId)}`,
         path: `/console/deed/${encodeURIComponent(orderId)}`,
         tab: "/console/mas",
-        refreshSeconds: REFRESH_SECONDS,
+        refreshSeconds: at === null ? REFRESH_SECONDS : undefined,
         style: STYLE,
-        body: html`${graphSvg(graph, onPath)}
+        body: html`${replayForm(times, at)}
+${graphSvg(graph, onPath)}
 <p class="hint">Tocá un hecho para ver su detalle.</p>
-${trail.facts.map((entry) => panelOf(entry, graph, facts))}`,
+${shownEntries.map((entry) => panelOf(entry, graph, facts))}`,
       }),
     );
   });
 }
 
-/** The graph as inline SVG: boxes by kind, coloured by status, every box a link to its panel. */
+/** The replay: a range over the order's times, sent as a GET form to `?t=`. Empty when nothing is recorded. */
+function replayForm(times: readonly number[], at: number | null) {
+  if (times.length === 0) return "";
+  const first = Math.min(...times);
+  const last = Math.max(...times);
+  return html`<form method="get" class="replay">
+<label>Ver como estaba <input type="range" name="t" min="${first}" max="${last}" step="1000" value="${at ?? last}"></label>
+<button type="submit">Ver</button>${at === null ? "" : html` · <a href="?">Ahora</a>`}
+</form>`;
+}
+
+/** The graph as inline SVG: boxes by kind, coloured by status, every box a link to its panel; refusals below. */
 function graphSvg(graph: DeedGraph, onPath: ReadonlySet<string>) {
-  if (graph.nodes.length === 0) return html`<p class="empty">Este pedido no tiene hechos todavía.</p>`;
-  const columns = Math.max(...graph.nodes.map((node) => node.column)) + 1;
+  if (graph.nodes.length === 0 && graph.refusals.length === 0) return html`<p class="empty">Este pedido no tiene hechos todavía.</p>`;
+  const columns = Math.max(0, ...graph.nodes.map((node) => node.column + 1), ...graph.refusals.map((refusal) => refusal.column + 1));
+  const rows = graph.layers + (graph.refusals.length > 0 ? 1 : 0);
   const width = PAD * 2 + Math.max(0, columns - 1) * GAP_X + NODE_W;
-  const height = PAD * 2 + Math.max(0, graph.layers - 1) * GAP_Y + NODE_H;
-  const place = new Map(graph.nodes.map((node) => [node.id, { x: PAD + node.column * GAP_X, y: PAD + node.layer * GAP_Y }]));
+  const height = PAD * 2 + Math.max(0, rows - 1) * GAP_Y + NODE_H;
+  const at = new Map<string, { x: number; y: number }>();
+  for (const node of graph.nodes) at.set(node.id, { x: PAD + node.column * GAP_X, y: PAD + node.layer * GAP_Y });
+  for (const refusal of graph.refusals) at.set(refusal.id, { x: PAD + refusal.column * GAP_X, y: PAD + graph.layers * GAP_Y });
   const centre = (id: string) => {
-    const at = place.get(id)!;
-    return { x: at.x + NODE_W / 2, y: at.y + NODE_H / 2 };
+    const spot = at.get(id)!;
+    return { x: spot.x + NODE_W / 2, y: spot.y + NODE_H / 2 };
   };
+  const drawn = graph.edges.filter((edge) => at.has(edge.from) && at.has(edge.to));
   return html`<svg id="grafo" class="graph" viewBox="0 0 ${width} ${height}" role="img" aria-label="Hechos del pedido y cómo se apoyan">
-${graph.edges.map((edge) => {
+${drawn.map((edge) => {
   const from = centre(edge.from);
   const to = centre(edge.to);
   const path = edge.type === "depends" && onPath.has(edge.from) && onPath.has(edge.to) ? " path" : "";
   return html`<line class="${edge.type}${path}" x1="${from.x}" y1="${from.y}" x2="${to.x}" y2="${to.y}"/>`;
 })}
-${graph.nodes.map((node) => nodeSvg(node, place.get(node.id)!, onPath.has(node.id)))}
+${graph.nodes.map((node) => nodeSvg(node, at.get(node.id)!, onPath.has(node.id)))}
+${graph.refusals.map((refusal) => refusalSvg(refusal, at.get(refusal.id)!))}
 </svg>`;
 }
 
-function nodeSvg(node: DeedNode, at: { x: number; y: number }, onPath: boolean) {
+function nodeSvg(node: DeedNode, spot: { x: number; y: number }, onPath: boolean) {
   const cls = `node ${node.status}${onPath ? " path" : ""}`;
-  const { x, y } = at;
-  const kind = node.kind;
+  const { x, y } = spot;
   const shape =
-    kind === "order_cancel"
+    node.kind === "order_cancel"
       ? html`<polygon class="${cls}" points="${x + 14},${y} ${x + NODE_W - 14},${y} ${x + NODE_W},${y + NODE_H / 2} ${x + NODE_W - 14},${y + NODE_H} ${x + 14},${y + NODE_H} ${x},${y + NODE_H / 2}"/>`
-      : html`<rect class="${cls}" x="${x}" y="${y}" width="${NODE_W}" height="${NODE_H}" rx="${kind === "order_confirm" ? NODE_H / 2 : 6}"/>`;
-  return html`<a href="#f-${node.id}">${shape}<text class="label" x="${x + NODE_W / 2}" y="${y + 19}" text-anchor="middle">${SHORT_KIND[kind as TrailEntry["kind"]] ?? kind}</text><text class="status" x="${x + NODE_W / 2}" y="${y + 36}" text-anchor="middle">${STATUS_WORDS[node.status]}</text></a>`;
+      : html`<rect class="${cls}" x="${x}" y="${y}" width="${NODE_W}" height="${NODE_H}" rx="${node.kind === "order_confirm" ? NODE_H / 2 : 6}"/>`;
+  return html`<a href="#f-${node.id}">${shape}<text class="label" x="${x + NODE_W / 2}" y="${y + 19}" text-anchor="middle">${SHORT_KIND[node.kind as TrailEntry["kind"]] ?? node.kind}</text><text class="status" x="${x + NODE_W / 2}" y="${y + 36}" text-anchor="middle">${STATUS_WORDS[node.status]}</text></a>`;
+}
+
+/** A refused check: a small dashed box, linked to the fact that decided it when there is one. */
+function refusalSvg(refusal: DeedRefusal, spot: { x: number; y: number }) {
+  const { x, y } = spot;
+  const box = html`<rect class="refusal" x="${x}" y="${y}" width="${NODE_W}" height="${NODE_H * 0.8}" rx="6"/><text class="status" x="${x + NODE_W / 2}" y="${y + 17}" text-anchor="middle">Intento rechazado</text><text class="status" x="${x + NODE_W / 2}" y="${y + 33}" text-anchor="middle">${reasonLabel(refusal.reason, refusal.decidingFactId)}</text>`;
+  return refusal.decidingFactId === null ? html`<g>${box}</g>` : html`<a href="#f-${refusal.decidingFactId}">${box}</a>`;
 }
 
 /** The panel of one fact, shown by `:target`: what it is, who and when, what it rests on, and why it is dead. */
 function panelOf(entry: TrailEntry, graph: DeedGraph, facts: readonly DeedFact[]) {
   const status = graph.nodes.find((node) => node.id === entry.factId)?.status ?? "live";
-  const labelOf = (id: string) => KIND_LABELS[(facts.find((fact) => fact.id === id)?.kind ?? "") as TrailEntry["kind"]] ?? "hecho";
+  const fact = facts.find((candidate) => candidate.id === entry.factId);
+  const closure = fact?.closure ?? null;
+  const labelOf = (id: string) => KIND_LABELS[(facts.find((candidate) => candidate.id === id)?.kind ?? "") as TrailEntry["kind"]] ?? "hecho";
   const block = status === "blocked" ? blockingPath(graph, entry.factId, facts) : null;
   return html`<section id="f-${entry.factId}" class="panel ${status}">
 <h2>${KIND_LABELS[entry.kind]} · ${STATUS_WORDS[status]}</h2>
 <p class="meta">${entry.actor} · ${formatTime(entry.recordedAtMs)}${entry.courier === null ? "" : ` · ${entry.courier.name ?? "repartidor"}`}</p>
 <p class="meta">Operación: <code>${entry.operationKey}</code></p>
 ${entry.evidence.length === 0 ? "" : html`<p>${entry.evidence.filter((e) => e.kind in EVIDENCE_LABELS).map((e) => html`<span class="chip">${EVIDENCE_LABELS[e.kind]} · ${e.refId.slice(0, 8)}</span>`)}</p>`}
-${entry.closedBy === null ? "" : html`<p class="closed">Cerrado por <a href="#f-${entry.closedBy.factId}">${labelOf(entry.closedBy.factId)}</a> (${CLOSURE_LABELS[entry.closedBy.reason]})</p>`}
+${closure === null ? "" : html`<p class="closed">Cerrado por <a href="#f-${closure.closedByFactId}">${labelOf(closure.closedByFactId)}</a> (${CLOSURE_LABELS[closure.reason]})</p>`}
 ${block === null ? "" : html`<p class="blocked">Bloqueado por <a href="#f-${block.closedId}">${labelOf(block.closedId)}</a></p>
 <p><a href="?foco=${entry.factId}#f-${entry.factId}">Ver el camino hasta el bloqueo</a></p>`}
 <p><a href="#grafo">Volver al grafo</a></p>
@@ -168,14 +213,14 @@ ${block === null ? "" : html`<p class="blocked">Bloqueado por <a href="#f-${bloc
 function feedRow(row: DeedCheckView) {
   const passed = row.result === "pass";
   const what = row.source === "verify_claims" ? `Verificó ${CLAIM_LABELS[row.claimKind ?? "other"]}` : `Intentó ${actionLabel(row.operationKey)}`;
-  return html`<li class="${passed ? "pass" : "fail"}"><span class="mark">${passed ? "✓" : "✗"}</span><span class="what">${what}</span>${passed ? "" : html`<span class="why">${reasonOf(row)}</span>`}<time>${formatTime(row.atMs)}</time>${row.orderId === null ? "" : html`<a href="/console/deed/${encodeURIComponent(row.orderId)}">pedido</a>`}</li>`;
+  const why = row.source === "verify_claims" ? REASON_LABELS.not_backed : reasonLabel(row.reasonCode ?? "", row.decidingFactId);
+  return html`<li class="${passed ? "pass" : "fail"}"><span class="mark">${passed ? "✓" : "✗"}</span><span class="what">${what}</span>${passed ? "" : html`<span class="why">${why}</span>`}<time>${formatTime(row.atMs)}</time>${row.orderId === null ? "" : html`<a href="/console/deed/${encodeURIComponent(row.orderId)}">pedido</a>`}</li>`;
 }
 
 /** The reason in Spanish; a refused cancelled order names the cancel (`ancestro cancelado`). */
-function reasonOf(row: DeedCheckView): string {
-  if (row.source === "verify_claims") return REASON_LABELS.not_backed ?? "rechazado";
-  if (row.reasonCode === "invalid_state") return row.decidingFactId === null ? "el estado no lo permite" : "ancestro cancelado";
-  return REASON_LABELS[row.reasonCode ?? ""] ?? "rechazado";
+function reasonLabel(code: string, decidingFactId: string | null): string {
+  if (code === "invalid_state") return decidingFactId === null ? "el estado no lo permite" : "ancestro cancelado";
+  return REASON_LABELS[code] ?? "rechazado";
 }
 
 /** What an operation key names: the action, read from the key's shape (`staff:<order>:<version>:<action>`). */
@@ -207,9 +252,12 @@ const STYLE = `
 .feed .why{grid-column:2;font-size:13px;color:var(--mute)}
 .feed time{font-size:12px;color:var(--mute)}
 .feed a{grid-column:3;grid-row:1;font-size:13px}
+.replay{margin:8px 12px;font-size:14px}
+.replay input{width:100%;margin:4px 0}
 .graph{display:block;width:100%;height:auto;margin:8px 0;background:var(--card)}
 .graph line{stroke:#9e9e9e;stroke-width:1.5}
 .graph line.closes{stroke:#c62828;stroke-dasharray:2 4}
+.graph line.refused{stroke:#9e9e9e;stroke-dasharray:3 3}
 .graph line.depends.path{stroke:#1565c0;stroke-width:3}
 .graph .node{stroke-width:1.5}
 .graph .node.live{fill:#e8f5e9;stroke:#2e7d32}
@@ -217,6 +265,7 @@ const STYLE = `
 .graph .node.blocked{fill:#eeeeee;stroke:#757575;stroke-dasharray:6 4}
 .graph .node.pending{fill:#fff8e1;stroke:#f9a825}
 .graph .node.path{stroke:#1565c0;stroke-width:3}
+.graph .refusal{fill:#fafafa;stroke:#757575;stroke-dasharray:4 3}
 .graph .label{font-size:13px;font-weight:600;fill:#222}
 .graph .status{font-size:11px;fill:#555}
 .hint{font-size:14px;color:var(--mute);margin:0 12px}

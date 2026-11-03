@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
-import { type DeedFact, type DeedGraph, type DeedStatus, blockingPath, deedGraph, isLiveStatus } from "../src/domain/deed-graph";
+import { type DeedFact, type DeedGraph, type DeedStatus, blockingPath, deedGraph, isLiveStatus, visibleAt } from "../src/domain/deed-graph";
 import { D1OrderStore } from "../src/infrastructure/d1/order-store";
 import { newStore } from "./helpers/orders";
 
@@ -47,7 +47,45 @@ describe("deedGraph: layout", () => {
   });
 
   it("is empty for no facts", () => {
-    expect(deedGraph([])).toEqual({ nodes: [], edges: [], layers: 0 });
+    expect(deedGraph([])).toEqual({ nodes: [], edges: [], layers: 0, refusals: [] });
+  });
+});
+
+describe("visibleAt: the replay's view of a time", () => {
+  const facts = [
+    fact("v1", 1, [], null, "order_version"),
+    fact("c", 2, ["v1"], { closedByFactId: "x", reason: "cancelled", atMs: 5 }, "order_confirm"),
+    fact("x", 5, [], null, "order_cancel"),
+  ];
+
+  it("keeps the facts recorded by then, and the closures recorded by then", () => {
+    expect(visibleAt(facts, 4).map((f) => f.id)).toEqual(["v1", "c"]);
+    expect(visibleAt(facts, 4)[1]!.closure).toBeNull();
+    expect(visibleAt(facts, 5).map((f) => f.id)).toEqual(["v1", "c", "x"]);
+    expect(visibleAt(facts, 5)[1]!.closure).toEqual({ closedByFactId: "x", reason: "cancelled", atMs: 5 });
+    expect(statusesOf(deedGraph(visibleAt(facts, 4)))).toEqual({ v1: "live", c: "live" });
+    expect(statusesOf(deedGraph(visibleAt(facts, 5)))).toEqual({ v1: "live", c: "closed", x: "live" });
+  });
+});
+
+describe("deedGraph: refused checks", () => {
+  it("draws each refusal below the layers, linked to the fact that decided it", () => {
+    const facts = [
+      fact("v1", 1, [], null, "order_version"),
+      fact("c", 2, ["v1"], { closedByFactId: "x", reason: "cancelled" }, "order_confirm"),
+      fact("x", 3, [], null, "order_cancel"),
+    ];
+    const graph = deedGraph(facts, [
+      { id: "r2", atMs: 9, reason: "invalid_state", decidingFactId: "x" },
+      { id: "r1", atMs: 4, reason: "duplicate", decidingFactId: null },
+    ]);
+    expect(graph.refusals.map((refusal) => [refusal.id, refusal.column])).toEqual([
+      ["r1", 0],
+      ["r2", 1],
+    ]);
+    expect(graph.edges).toContainEqual({ from: "r2", to: "x", type: "refused" });
+    expect(graph.edges.filter((edge) => edge.type === "refused")).toHaveLength(1);
+    expect(graph.nodes.every((node) => node.layer < graph.layers)).toBe(true);
   });
 });
 

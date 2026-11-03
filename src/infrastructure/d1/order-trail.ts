@@ -40,7 +40,7 @@ export interface TrailEntry {
   readonly operationKey: string;
   readonly actor: string;
   readonly evidence: readonly { readonly kind: string; readonly refId: string }[];
-  readonly closedBy: { readonly factId: string; readonly reason: "cancelled" | "superseded" } | null;
+  readonly closedBy: { readonly factId: string; readonly reason: "cancelled" | "superseded"; readonly atMs: number } | null;
   readonly dependsOn: readonly string[];
   readonly blocks: readonly string[];
   /** change_review only: the answer and its reason, as the member wrote it. */
@@ -266,9 +266,9 @@ export class D1OrderTrail {
         .bind(tenant.businessId)
         .all<{ fact_id: string; kind: string; ref_id: string }>(),
       this.db
-        .prepare(`SELECT fact_id, closed_by_fact_id, reason FROM fact_closures WHERE business_id = ?1`)
+        .prepare(`SELECT fact_id, closed_by_fact_id, reason, closed_at_ms FROM fact_closures WHERE business_id = ?1`)
         .bind(tenant.businessId)
-        .all<{ fact_id: string; closed_by_fact_id: string; reason: "cancelled" | "superseded" }>(),
+        .all<{ fact_id: string; closed_by_fact_id: string; reason: "cancelled" | "superseded"; closed_at_ms: number }>(),
       this.db
         .prepare(`SELECT fact_id, depends_on_fact_id FROM fact_dependencies WHERE business_id = ?1`)
         .bind(tenant.businessId)
@@ -289,7 +289,7 @@ export class D1OrderTrail {
         operationKey: row.operation_key,
         actor: proof.some((e) => e.kind === "member") ? "Personal" : "Cliente",
         evidence: proof,
-        closedBy: closure === undefined ? null : { factId: closure.closed_by_fact_id, reason: closure.reason },
+        closedBy: closure === undefined ? null : { factId: closure.closed_by_fact_id, reason: closure.reason, atMs: closure.closed_at_ms },
         dependsOn: ids.filter((id) => edges.results.some((e) => e.fact_id === row.id && e.depends_on_fact_id === id)),
         blocks: ids.filter((id) => edges.results.some((e) => e.depends_on_fact_id === row.id && e.fact_id === id)),
         review: row.kind === "change_review" ? reviewOf(row) : null,

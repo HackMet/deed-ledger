@@ -147,6 +147,35 @@ describe("/console/deed/:orderId: the order's facts as a graph", () => {
     expect(body).not.toContain("<script");
   });
 
+  it("replays the order as it stood at ?t=, and draws the refused tap beside the cancel that decided it", async () => {
+    const s = await storeWithMembers();
+    const { orderId } = await cancelledWithChange(s);
+    const member: MemberContext = { businessId: s.businessId, memberId: ids.staff, role: "staff", canApproveFiado: false, nowMs: T0 + 4_000 };
+    await staffTap(member, "mark_ready", orderId, 1);
+    const cancel = await env.DB.prepare(`SELECT id FROM facts WHERE business_id = ? AND kind = 'order_cancel'`).bind(s.businessId).first<{ id: string }>();
+    const h = harness({ engine: checkedEngine });
+    const cookie = await login(h, s, "staff");
+    const path = `/console/deed/${encodeURIComponent(orderId)}`;
+
+    // Before the cancel: the confirm is still live, and nothing was refused yet.
+    const before = await (await get(h, `${path}?t=${T0 + 2_500}`, cookie)).text();
+    expect(before).toContain(`class="node live"`);
+    expect(before).not.toContain(`class="node closed"`);
+    expect(before).not.toContain("Intento rechazado");
+    expect(before).toContain(`name="t"`);
+
+    // After the refusal: the confirm is closed, the refused tap is drawn and linked to the cancel.
+    const after = await (await get(h, `${path}?t=${T0 + 5_000}`, cookie)).text();
+    expect(after).toContain(`class="node closed"`);
+    expect(after).toContain("Intento rechazado");
+    expect(after).toContain(`href="#f-${cancel!.id}"`);
+
+    // The live view has no range to replay from, and refreshes.
+    const live = await (await get(h, path, cookie)).text();
+    expect(live).toContain(`class="node closed"`);
+    expect(live).toContain(`http-equiv="refresh"`);
+  });
+
   it("answers 404 for another store's order, and lets an owner and staff open this one", async () => {
     const mine = await storeWithMembers();
     const theirs = await newStore();

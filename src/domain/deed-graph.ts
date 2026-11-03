@@ -18,6 +18,8 @@ export type DeedStatus = "live" | "closed" | "blocked" | "pending";
 export interface DeedClosure {
   readonly closedByFactId: string;
   readonly reason: "cancelled" | "superseded";
+  /** When the closure was recorded: the replay shows it only from then on. Absent: always shown. */
+  readonly atMs?: number;
 }
 
 export interface DeedFact {
@@ -26,6 +28,19 @@ export interface DeedFact {
   readonly recordedAtMs: number;
   readonly dependsOn: readonly string[];
   readonly closure: DeedClosure | null;
+}
+
+/** A check the engine refused on this order (K20): drawn beside the fact that decided it, when it had one. */
+export interface DeedRefusal {
+  readonly id: string;
+  readonly atMs: number;
+  readonly reason: string;
+  readonly decidingFactId: string | null;
+}
+
+export interface DeedRefusalNode extends DeedRefusal {
+  /** Position within the refusals' row, which sits below the last layer. */
+  readonly column: number;
 }
 
 export interface DeedNode {
@@ -39,18 +54,22 @@ export interface DeedNode {
   readonly column: number;
 }
 
-/** `depends`: `from` is a dependency of `to` (solid). `closes`: `from` closed `to` (red, dotted). */
+/**
+ * `depends`: `from` is a dependency of `to` (solid). `closes`: `from` closed `to` (red, dotted).
+ * `refused`: the refused check `from` was decided by the fact `to` (grey, dashed).
+ */
 export interface DeedEdge {
   readonly from: string;
   readonly to: string;
-  readonly type: "depends" | "closes";
+  readonly type: "depends" | "closes" | "refused";
 }
 
 export interface DeedGraph {
   readonly nodes: readonly DeedNode[];
   readonly edges: readonly DeedEdge[];
-  /** How many layers the graph has (0 for no facts). */
+  /** How many layers the graph has (0 for no facts). The refusals sit in the row after the last one. */
   readonly layers: number;
+  readonly refusals: readonly DeedRefusalNode[];
 }
 
 /** The facts in recorded order, then by id: the one order every output follows. */
@@ -74,7 +93,17 @@ function ancestorsOf(id: string, byId: ReadonlyMap<string, DeedFact>, memo: Map<
 const kills = (closure: DeedClosure | null, ancestors: ReadonlySet<string>): boolean =>
   closure !== null && !(closure.reason === "superseded" && ancestors.has(closure.closedByFactId));
 
-export function deedGraph(facts: readonly DeedFact[]): DeedGraph {
+/** The facts as they stood at `atMs`: those recorded by then, and only the closures recorded by then. */
+export function visibleAt(facts: readonly DeedFact[], atMs: number): DeedFact[] {
+  return facts
+    .filter((fact) => fact.recordedAtMs <= atMs)
+    .map((fact) => ({
+      ...fact,
+      closure: fact.closure !== null && (fact.closure.atMs ?? Number.NEGATIVE_INFINITY) <= atMs ? fact.closure : null,
+    }));
+}
+
+export function deedGraph(facts: readonly DeedFact[], refusals: readonly DeedRefusal[] = []): DeedGraph {
   const ordered = inRecordedOrder(facts);
   const byId = new Map(ordered.map((fact) => [fact.id, fact]));
   const ancestry = new Map<string, ReadonlySet<string>>();
@@ -120,7 +149,16 @@ export function deedGraph(facts: readonly DeedFact[]): DeedGraph {
     }
   }
 
-  return { nodes, edges, layers: nodes.length === 0 ? 0 : Math.max(...nodes.map((node) => node.layer)) + 1 };
+  const layers = nodes.length === 0 ? 0 : Math.max(...nodes.map((node) => node.layer)) + 1;
+  const byTime = [...refusals].sort((a, b) => a.atMs - b.atMs || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const refusalNodes = byTime.map((refusal, column) => ({ ...refusal, column }));
+  for (const refusal of byTime) {
+    if (refusal.decidingFactId !== null && byId.has(refusal.decidingFactId)) {
+      edges.push({ from: refusal.id, to: refusal.decidingFactId, type: "refused" });
+    }
+  }
+
+  return { nodes, edges, layers, refusals: refusalNodes };
 }
 
 /** The ledger's live reading of a status: a live fact, or a pending change request. */

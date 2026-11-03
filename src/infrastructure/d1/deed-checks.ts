@@ -5,6 +5,7 @@
  */
 import type { DeedCheckRow, DeedChecks } from "../../application/engine/deed-checks";
 import type { Tenant } from "../../application/ports";
+import type { DeedRefusal } from "../../domain/deed-graph";
 
 export class D1DeedChecks implements DeedChecks {
   constructor(private readonly db: D1Database) {}
@@ -80,6 +81,18 @@ export class D1DeedReads {
       }
     }
     return { total, passed, refused, refusedByReason: byReason };
+  }
+
+  /** The refusals the engine made on one order, oldest first; the claim checks are not an order's refusals. */
+  async refusalsOf(tenant: Tenant, orderId: string): Promise<DeedRefusal[]> {
+    const { results } = await this.db
+      .prepare(
+        `SELECT id, at_ms, reason_code, deciding_fact_id FROM deed_checks
+         WHERE business_id = ?1 AND order_id = ?2 AND result = 'fail' AND source <> 'verify_claims' ORDER BY at_ms, rowid`,
+      )
+      .bind(tenant.businessId, orderId)
+      .all<{ id: string; at_ms: number; reason_code: string | null; deciding_fact_id: string | null }>();
+    return results.map((row) => ({ id: row.id, atMs: row.at_ms, reason: row.reason_code ?? "", decidingFactId: row.deciding_fact_id }));
   }
 
   /** The newest checks of the store, newest first. */
