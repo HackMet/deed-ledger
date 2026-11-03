@@ -250,6 +250,24 @@ describe("K12: a change after confirming is a request the owner or staff answer 
     expect({ ...(await footprint(s.businessId)), facts: await count(`facts WHERE business_id = ?`, s.businessId) }).toEqual(before);
   });
 
+  it("approving a request still open once the order is listo is refused, and nothing is saved", async () => {
+    const s = await newStore();
+    const v1 = await placeFirstOrder(s);
+    await save(await engine.onCustomerAction(s.context({ nowMs: T0 + 1000 }), tap(v1.orderId, 1)));
+    await save(await engine.onConsoleAction(staff(s, T0 + 1500), staffTap("start_preparing", v1.orderId)));
+    await save(await engine.onBurst(s.context({ nowMs: T0 + 2000 }), addAndPickup, []));
+    const requestId = (await factsOfKind(s.businessId, "change_request"))[0]!.id;
+    await save(await engine.onConsoleAction(staff(s, T0 + 2500), staffTap("mark_ready", v1.orderId)));
+    const ready = (await store.order(s.context(), v1.orderId))!.view;
+    expect(ready).toMatchObject({ state: "listo", version: 1, openChangeRequest: { id: requestId } });
+    const before = { ...(await footprint(s.businessId)), facts: await count(`facts WHERE business_id = ?`, s.businessId) };
+
+    const approved = await engine.onConsoleAction(reviewer(s, T0 + 3000), reviewTap(requestId));
+    expect(approved).toEqual({ outcome: { type: "rejected", reason: "invalid_state", order: ready }, notices: [], commits: [] });
+    expect({ ...(await footprint(s.businessId)), facts: await count(`facts WHERE business_id = ?`, s.businessId) }).toEqual(before);
+    expect(await count(`orders WHERE id = ? AND state = 'listo' AND current_version = 1`, v1.orderId)).toBe(1);
+  });
+
   it("another store's request id is not_found; a key it didn't derive, a bad reason and a spoofed actor are refused", async () => {
     const s = await newStore();
     const other = await newStore();
