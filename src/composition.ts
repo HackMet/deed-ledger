@@ -293,6 +293,10 @@ export function buildOrderReading(
             source: plannerSource,
             log: deps.log,
           },
+    oneCall:
+      plannerSource === null || !config.fastText
+        ? null
+        : { provider, spend: new D1SpendLedger(overrides.db ?? env.DB), clock: deps.clock, log: deps.log, settings: config.fastTextModel },
   });
 }
 

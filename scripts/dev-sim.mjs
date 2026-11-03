@@ -22,6 +22,8 @@
 // --reader-effort and --planner-effort set each call's reasoning effort (minimal, low, medium, high,
 // xhigh, max, or default for the model's own); --cache-retention sets the prompt cache's (in_memory
 // or 24h). Left out, the Worker's defaults apply (src/infrastructure/config.ts).
+// --fast-text 1 or 0 turns the planner path's one-call text path on or off (PLANNER_FAST_TEXT);
+// --fast-text-effort sets its effort.
 //
 //   npm run dev:sim -- --ai --store --planner --vars ../hackathon/.dev.vars --planner-effort low
 import { spawn } from "node:child_process";
@@ -53,6 +55,8 @@ function modelVars() {
     ["reader-effort", "READER_REASONING_EFFORT", efforts],
     ["planner-effort", "PLANNER_REASONING_EFFORT", efforts],
     ["cache-retention", "PROMPT_CACHE_RETENTION", ["in_memory", "24h"]],
+    ["fast-text", "PLANNER_FAST_TEXT", ["1", "0"]],
+    ["fast-text-effort", "FAST_TEXT_REASONING_EFFORT", efforts],
   ]) {
     if (args[flag] === undefined) continue;
     if (!allowed.includes(args[flag])) {

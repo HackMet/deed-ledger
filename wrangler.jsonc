@@ -31,6 +31,11 @@
     // keeps the model's own). The simulator's --reader-effort and --planner-effort set them.
     "READER_REASONING_EFFORT": "",
     "PLANNER_REASONING_EFFORT": "",
+    // Planner path: a burst of text only is read and planned in one call ("1"), or with the reader and
+    // the planner as for photos and voice ("0"). Blank: the default in src/infrastructure/config.ts.
+    // FAST_TEXT_REASONING_EFFORT sets that one call's effort, like the two above.
+    "PLANNER_FAST_TEXT": "",
+    "FAST_TEXT_REASONING_EFFORT": "",
     // How long Meta keeps a prompt-cache entry: "in_memory" or "24h". Blank sends none (Meta's
     // default). A cached prefix can hold a customer's messages, so "24h" needs the privacy check first.
     "PROMPT_CACHE_RETENTION": "",

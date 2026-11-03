@@ -43,6 +43,8 @@ export interface PlannerFrame {
   readonly askedQuantityOf: string | null;
   /** The open order as the plan is checked against it (`orderBasis`); null when there is none. */
   readonly basis: string | null;
+  /** What the burst holds besides text: "Ya vi tu lista 👍" needs a photo, the voice phrase a voice note. */
+  readonly media: { readonly image: boolean; readonly voice: boolean };
   /** The reading flagged something it couldn't read. */
   readonly illegible: boolean;
   /** The store's products by ID: how each is sold, its usual amount, whether it's restricted. */

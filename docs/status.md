@@ -17,7 +17,9 @@ Last updated: Mon Nov 2, 2026, night Honduras time, by Claude Code (latency lane
   flips only when the eval suite (lane L2) says the planner path is at least as good with zero truth failures.
   The independent review's nine findings (Nov 2) are fixed with a failing-then-passing test each
   (`test/planner-review.test.ts`, and the alias batch in `planner-flow.test.ts`); the planner's sentence is now one
-  of a fixed list of phrases (`SAY_PHRASES`), never its own text.
+  of a fixed list of phrases (`SAY_PHRASES`), never its own text. A text-only burst is read and planned in one call
+  (D-52, on by default in planner mode): 10–15 s receipt→reply live, same outcomes as two calls; the 10 s bar is
+  still not met. Photo captions now reach the reader.
 - **Planner-path latency (Nov 2, [handoff](handoffs/2026-11-02-latency.md)):** each call now sends its own reasoning
   effort and a prompt-cache key per instruction version. Planner-path defaults: reader `low`, planner `minimal`
   (`READER_REASONING_EFFORT`, `PLANNER_REASONING_EFFORT`; the classic reader keeps the model's own). On the fixed

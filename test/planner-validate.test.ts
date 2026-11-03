@@ -93,6 +93,7 @@ function frame(more: Partial<PlannerFrame> = {}, offered: Record<string, string[
     unplacedRemovals: [],
     askedQuantityOf: null,
     basis: null,
+    media: { image: true, voice: true },
     illegible: false,
     products,
     ...more,
@@ -307,6 +308,16 @@ describe("the question", () => {
 describe("the connecting phrase", () => {
   it("is one of the approved phrases, carried as chosen", () => {
     for (const say of SAY_PHRASES) expect(check(proposal([], { say })).plan.say).toBe(say);
+  });
+
+  it("says it saw a list only when the burst has a photo, and heard a voice note only when it has one", () => {
+    const say = (phrase: string, media?: { image: boolean; voice: boolean }) =>
+      check(proposal([], { say: phrase }), media === undefined ? frame() : frame({ media } as Partial<PlannerFrame>)).plan.say;
+    expect(say("Ya vi tu lista 👍", { image: false, voice: true })).toBe("");
+    expect(say("Ya escuché tu nota de voz 👍", { image: true, voice: false })).toBe("");
+    expect(say("Ya vi tu lista 👍", { image: true, voice: false })).toBe("Ya vi tu lista 👍");
+    expect(say("Ya escuché tu nota de voz 👍", { image: false, voice: true })).toBe("Ya escuché tu nota de voz 👍");
+    expect(say("Va 👍", { image: false, voice: false })).toBe("Va 👍");
   });
 
   it("refuses the whole proposal for anything else: no free text reaches a customer", () => {
