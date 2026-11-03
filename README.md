@@ -20,7 +20,7 @@ Three numbers, each with where it was measured:
 
 The hackathon's kickoff was Mon Oct 26, 2026, 10:00 AM Honduras time (16:00 UTC). The full per-commit list, with every commit dated before kickoff marked pre-event, is in [`docs/built-during-hackathon.md`](docs/built-during-hackathon.md). Regenerate it right before submitting with `node scripts/built-during.mjs`.
 
-- There is no `pre-event-baseline` tag in the repo (only `backup/*` tags exist), so the boundary is the date. The section below this one that mentions that tag is out of date on this point.
+- There is no `pre-event-baseline` tag in the repo (only `backup/*` tags exist), so the boundary is the date.
 - `origin/main` at `7bec048` has 146 commits, 0 dated before kickoff (author dates, UTC), by Angel-Rodas (117), kerly (21), kercmari (7) and x (1), as `git log --format=%an` shows them.
 
 Pull requests (`gh pr list --state all`, 2026-11-03):
@@ -50,8 +50,10 @@ Not yet on `origin/main`, on stacked local branches (commits counted against the
 | `claude/console-negocio` | 4 | `claude/dispatch` |
 | `claude/facturas` | 4 | `claude/console-negocio` |
 | `claude/engine-docs` | 4 | `origin/main` |
-| `claude/stack-on-main` | 26 | `origin/main` |
-| `claude/demo-on-main` | 7 | `claude/stack-on-main` |
+| `claude/stack-on-main` | 2 | `origin/main` |
+| `claude/demo-on-main` | 1 | `claude/stack-on-main` |
+
+`claude/stack-on-main` is the stack above (through `claude/dispatch`) merged onto `main`, and `claude/demo-on-main` adds `claude/demo-env` on top of it. Their counts leave out the commits already counted in the rows above (`git log B ^parent ^claude/dispatch` and `git log B ^parent ^claude/demo-env`), so only the new ones remain, merges included.
 
 Angel's PR #63 is merged; it is on `main` and no longer a local branch.
 
@@ -95,9 +97,9 @@ next.
 
 ## Built during the hackathon
 
-The first commit (tag `pre-event-baseline`) holds only planning documents and agent configuration prepared before the
-kickoff: the PRD, `docs/`, `AGENTS.md`, `CLAUDE.md` and repository settings. It contains no application code.
-Everything after it is hackathon work. This list grows as features land.
+Every commit on `origin/main` is dated after the kickoff (the first is 2026-10-27); the full record, with each commit,
+PR and branch, is in [`docs/built-during-hackathon.md`](docs/built-during-hackathon.md) and summarised above. This list
+grows as features land.
 
 - October 28: the foundation. WhatsApp webhooks are verified and saved before they're acknowledged, worked through
   in order per conversation, and answered through an outbox. Numbers that aren't members get one fixed reply.

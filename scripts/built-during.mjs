@@ -9,7 +9,9 @@ import { writeFileSync } from "node:fs";
 const KICKOFF = "2026-10-26T16:00:00Z"; // D-17: Mon Oct 26, 10:00 AM Honduras time
 const REF = process.argv[2] ?? "origin/main";
 
-// Work not yet on origin/main lives on stacked local branches: [branch, parent].
+// Work not yet on origin/main lives on stacked local branches: [branch, parent, excluded refs].
+// The two on-main branches are the stack above them rebased/merged onto main, so the
+// stack they carry is excluded from their count (otherwise those shas are counted twice).
 const STACK = [
   ["claude/engine-issue-12", "origin/main"],
   ["claude/engine-facts", "claude/engine-issue-12"],
@@ -21,8 +23,8 @@ const STACK = [
   ["claude/console-negocio", "claude/dispatch"],
   ["claude/facturas", "claude/console-negocio"],
   ["claude/engine-docs", "origin/main"],
-  ["claude/stack-on-main", "origin/main"],
-  ["claude/demo-on-main", "claude/stack-on-main"],
+  ["claude/stack-on-main", "origin/main", ["claude/dispatch"]],
+  ["claude/demo-on-main", "claude/stack-on-main", ["claude/demo-env"]],
 ];
 
 const run = (cmd, args) => execFileSync(cmd, args, { encoding: "utf8", maxBuffer: 64 << 20, stdio: ["ignore", "pipe", "ignore"] }).trim();
@@ -65,12 +67,13 @@ if (prs) {
 out.push("");
 
 out.push("## Not yet on origin/main (local branches)", "");
-out.push("Commits are counted against the parent branch; the stack order is the merge order.", "");
+out.push("Commits are counted against the parent branch; the stack order is the merge order.");
+out.push("`claude/stack-on-main` and `claude/demo-on-main` are the stack above merged onto main: their count leaves out the commits already counted in the rows they carry (`claude/dispatch` and its ancestors, and `claude/demo-env`), so only the commits new on that branch are listed, merges included.", "");
 out.push("| Branch | Parent | Commits | Head |", "|---|---|---|---|");
-for (const [b, parent] of STACK) {
+for (const [b, parent, excl = []] of STACK) {
   const sha = tryRun("git", ["rev-parse", "--short", b]);
   if (!sha) { out.push(`| ${b} | ${parent} | - | not present in this clone |`); continue; }
-  out.push(`| ${b} | ${parent} | ${run("git", ["rev-list", "--count", `${parent}..${b}`])} | ${sha} |`);
+  out.push(`| ${b} | ${parent} | ${run("git", ["rev-list", "--count", b, `^${parent}`, ...excl.map((e) => `^${e}`)])} | ${sha} |`);
 }
 out.push("");
 

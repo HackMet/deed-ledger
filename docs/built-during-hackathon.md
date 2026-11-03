@@ -23,6 +23,7 @@ Regenerate right before submitting: `node scripts/built-during.mjs` (git + gh on
 ## Not yet on origin/main (local branches)
 
 Commits are counted against the parent branch; the stack order is the merge order.
+`claude/stack-on-main` and `claude/demo-on-main` are the stack above merged onto main: their count leaves out the commits already counted in the rows they carry (`claude/dispatch` and its ancestors, and `claude/demo-env`), so only the commits new on that branch are listed, merges included.
 
 | Branch | Parent | Commits | Head |
 |---|---|---|---|
@@ -36,8 +37,8 @@ Commits are counted against the parent branch; the stack order is the merge orde
 | claude/console-negocio | claude/dispatch | 4 | 56fb3a4 |
 | claude/facturas | claude/console-negocio | 4 | 367813e |
 | claude/engine-docs | origin/main | 4 | d94b256 |
-| claude/stack-on-main | origin/main | 26 | 4fb745d |
-| claude/demo-on-main | claude/stack-on-main | 7 | 7a44d97 |
+| claude/stack-on-main | origin/main | 2 | 4fb745d |
+| claude/demo-on-main | claude/stack-on-main | 1 | 7a44d97 |
 
 ## Every commit on origin/main
 
