@@ -255,6 +255,21 @@ describe("readConsoleInput: refusals before any call or write", () => {
     expect(outcome).toMatchObject({ ok: false, reason: "spend_cap" });
     expect(requests).toHaveLength(0);
   });
+
+  it("takes the cap from MODEL_DAILY_CAP_USD when the composition builds the reader", async () => {
+    const requests: unknown[] = [];
+    const fetch = async (_url: string, init: RequestInit): Promise<Response> => {
+      requests.push(init.body);
+      throw new Error("no model call expected");
+    };
+    const log = new RecordingLogger();
+    const clock = new FakeClock(Date.UTC(2026, 9, 31, 18, 0, 0));
+    const reader = buildBurstReader({ ...env, MODEL_API_KEY: FAKE_KEY, MODEL_DAILY_CAP_USD: "0.000001" } as unknown as Env, { clock, log }, { fetch });
+    const deps: ConsoleReaderDeps = { reader, mediaStore: new R2MediaStore(env.MEDIA), log, catalog: async () => catalog };
+    const outcome = await readConsoleInput(deps, member(), { purpose: "report", inputs: [{ type: "text", text: SALE_TEXT }] });
+    expect(outcome).toMatchObject({ ok: false, reason: "spend_cap" });
+    expect(requests).toHaveLength(0);
+  });
 });
 
 describe("readConsoleInput: the store comes from the member only", () => {

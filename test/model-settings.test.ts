@@ -13,7 +13,7 @@ import { plannerInstructions } from "../src/application/planner/instructions";
 import { PlannerModel } from "../src/application/planner/plan-turn";
 import type { ModelProvider, ModelRequest, ModelResult, SpendLedger, SpendReservation, Tenant } from "../src/application/ports";
 import { buildBurstReader } from "../src/composition";
-import { DEFAULT_PLANNER_EFFORT, DEFAULT_READER_EFFORT, readConfig } from "../src/infrastructure/config";
+import { DEFAULT_PLANNER_EFFORT, DEFAULT_READER_EFFORT, MAX_DAILY_CAP_MICRO_USD, readConfig } from "../src/infrastructure/config";
 import { D1PretendEngine } from "../src/infrastructure/memory/d1-pretend-engine";
 import { MuseSparkProvider } from "../src/integrations/meta/spark";
 import * as contract from "./fixtures/contract";
@@ -117,6 +117,17 @@ describe("the request body", () => {
 describe("worker settings", () => {
   const settingsOf = (vars: Record<string, string>) => readConfig(testEnv(vars as unknown as Partial<Env>));
   const planner = { CONVERSATION: "planner" };
+
+  it("reads the daily model budget as exact micro-dollars, and ignores what isn't a sensible amount", () => {
+    const cap = (value?: string) => settingsOf(value === undefined ? {} : { MODEL_DAILY_CAP_USD: value }).modelDailyCapMicroUsd;
+    expect(cap()).toBeNull();
+    expect(cap("")).toBeNull();
+    expect(cap("15")).toBe(15_000_000);
+    expect(cap(" 7.5 ")).toBe(7_500_000);
+    expect(cap("0.000001")).toBe(1);
+    expect(cap("100")).toBe(MAX_DAILY_CAP_MICRO_USD);
+    for (const bad of ["0", "100.5", "1500", "-5", "15 USD", "1e3", "abc", "7.1234567", "$15"]) expect(cap(bad)).toBeNull();
+  });
 
   it("blank variables give the measured defaults on the planner path, with no cache retention", () => {
     expect([DEFAULT_READER_EFFORT, DEFAULT_PLANNER_EFFORT]).toEqual(["low", "minimal"]);

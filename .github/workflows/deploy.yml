@@ -45,3 +45,4 @@ jobs:
           --var PUBLIC_BASE_URL:https://store-assistant.atiendeme.workers.dev
           --var CONVERSATION:planner
           --var TEST_COMMANDS:1
+          --var MODEL_DAILY_CAP_USD:15
