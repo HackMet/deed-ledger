@@ -3,38 +3,31 @@
 Shared state for every agent: what's true now, what's next, what's open, what bit us. Keep it short. Anything a
 command can tell you (git log, test results, CI) doesn't belong here. Decisions go in [decisions.md](decisions.md).
 
-Last updated: Mon Nov 2, 2026, night Honduras time, by Claude Code (latency lane).
+Last updated: Tue Nov 3, 2026, morning Honduras time, by Claude Code.
 
 ## Now
 
-- **Planner (Nov 2, D-45 to D-51, behind `CONVERSATION=planner`, default `classic`):** a second Muse Spark call per
-  burst decides the next step from two instruction files (`src/application/planner/instructions/`); code checks it
+- **Live (Nov 3):** deployed to Cloudflare Workers on Meta's WhatsApp test number, store "Tienda demo (sintética)"
+  with a synthetic 40-product catalog, `PRETEND_ENGINE=1`, `CONVERSATION=planner`, `TEST_COMMANDS=1`
+  (docs/deploy.md). Tested end to end from a phone: order, readback with buttons and footer, Confirmar, name,
+  staff Listo, the customer notice. Real WhatsApp voice notes have no Ogg end-of-stream page (#27 settled): the
+  reader no longer requires it and downloads are checked against Meta's `sha256` and `file_size` instead.
+- **Planner (D-45 to D-52, `CONVERSATION=planner`; default stays `classic`):** a Muse Spark call decides the next
+  step from two instruction files (`src/application/planner/instructions/`); code validates every proposal
   (`src/domain/planner/validate.ts`), the readiness gate (`src/domain/readiness.ts`) has the last word, and the
-  pretend engine applies the plan. Simulator: `npm run dev:sim -- --ai --store --planner`. Retrieval is L1's over
-  the whole catalog, widened by other names the reader proposes ("catsup" → "ketchup"; no spelling table); a
-  confirmed order proposes learned aliases for its planner picks, approved in Pendientes; weighed items read back in
-  pounds. The real engine runs classic until it has what contract.md "Proposed (Nov 2): planner" lists. The flag
-  flips only when the eval suite (lane L2) says the planner path is at least as good with zero truth failures.
-  The independent review's nine findings (Nov 2) are fixed with a failing-then-passing test each
-  (`test/planner-review.test.ts`, and the alias batch in `planner-flow.test.ts`); the planner's sentence is now one
-  of a fixed list of phrases (`SAY_PHRASES`), never its own text. A text-only burst is read and planned in one call
-  (D-52, on by default in planner mode): 10–15 s receipt→reply live, same outcomes as two calls; the 10 s bar is
-  still not met. Photo captions now reach the reader. After the head-to-head eval (Nov 3): a "which one" answer
-  (number, price, brand) is read by code and the same list is never asked a third time (E19, E09b); a voice note
-  takes the same one call as typed words (E21); "me manda una" after a product question orders that product
-  (E11); the eval runner writes all.md and results.json again, keeps a failed scenario's transcript and retries a
-  dropped socket once (E22 passes). Re-run of E09b, E11, E19, E21, E22 on the planner path: 4 of 5 pass; E21's
-  recording is a store owner's sales report ("Vendí tres refrescos…"), read as no order whether spoken or typed,
-  so its expectation needs another recording or a decision. WhatsApp test commands (Nov 3): `/new` makes a store
-  member's phone a new customer again and `/help` lists the commands, only with `TEST_COMMANDS=1` and only for the
-  store's own members (docs/deploy.md "Testing on the live number").
-- **Planner-path latency (Nov 2, [handoff](handoffs/2026-11-02-latency.md)):** each call now sends its own reasoning
-  effort and a prompt-cache key per instruction version. Planner-path defaults: reader `low`, planner `minimal`
-  (`READER_REASONING_EFFORT`, `PLANNER_REASONING_EFFORT`; the classic reader keeps the model's own). On the fixed
-  4-input set, a text message went from about 30 s to about 13.6 s from receipt to reply, a short photo list from 37 s
-  to 15–16 s, an 11-item photo list from 90 s to 25–32 s. Not under the 10 s bar: two calls plus the ~4.3 s burst wait
-  can't get there. Next lever: a one-call path for text-only bursts (described in the handoff, not built). L2's
-  eval must rerun at these efforts before the flag flips.
+  pretend engine applies the plan. Text and voice are read and planned in one call (`one-call.ts`); photos take two.
+  Whole-catalog retrieval with reader-proposed other names; learned aliases proposed inside the confirmation batch
+  and approved in Pendientes; the planner's sentence is one of fixed phrases (`SAY_PHRASES`). Effort: reader `low`,
+  planner and one call `minimal`, prompt-cache keys per instruction version. Live: 4–7 s per model call, 9–13 s
+  receipt to reply (3 s of it is the deliberate burst wait).
+- **Evidence:** head-to-head eval (Nov 3, `npm run eval`): planner 27–28/32, classic 12–16/32, zero truth failures
+  on both; the planner failures since fixed (option-list loop, voice like text, "una" after a question, runner
+  crash, E22). Two Codex reviews, every finding fixed with a failing test first. E21's recording is an owner's sales
+  report, not an order: its expectation needs a real customer voice order.
+- **Test commands:** `/new` makes a store member's phone a new customer again, `/help` lists the commands; only with
+  `TEST_COMMANDS=1` and only for the store's own members (docs/deploy.md "Testing on the live number").
+- **Next:** Codex final pass on the latest changes, push to PR #63 (Angel), Kerly tests with her number, a real
+  WhatsApp number for judging, demo video and submission.
 
 - The product is an order assistant: customers order on WhatsApp, Johan and staff work from a phone console, and
   both end in the same engine. Two-person team (D-37): Angel owns conversations, perception, replies, the console
