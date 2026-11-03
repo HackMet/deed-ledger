@@ -13,6 +13,7 @@ import type {
   SlowNoticeDraft,
   StoredMedia,
   Tenant,
+  TypingIndicator,
 } from "../../application/ports";
 import { BURST_MAX_MESSAGES } from "../../domain/burst";
 import { MAX_JOB_ATTEMPTS, type MessageKind } from "../../domain/processing";
@@ -212,6 +213,22 @@ export class D1JobRepository implements JobRepository {
       storedKey: row.stored_key,
       phoneNumberId: row.phone_number_id,
     };
+  }
+
+  async typingTarget(conversation: ConversationRef, jobId: string): Promise<TypingIndicator | null> {
+    // A deleted customer's provider IDs are overwritten with 'deleted:<id>' (customer-control-repository).
+    const row = await this.db
+      .prepare(
+        `SELECT i.provider_message_id, ca.phone_number_id
+         FROM inbound_messages i
+         JOIN conversations c ON c.business_id = i.business_id AND c.id = i.conversation_id
+         JOIN channel_accounts ca ON ca.business_id = c.business_id AND ca.id = c.channel_account_id
+         WHERE i.business_id = ? AND i.conversation_id = ? AND i.id = ?
+           AND i.job_state IN ('pending', 'processing') AND i.provider_message_id NOT LIKE 'deleted:%'`,
+      )
+      .bind(conversation.businessId, conversation.conversationId, jobId)
+      .first<{ provider_message_id: string; phone_number_id: string }>();
+    return row === null ? null : { fromPhoneNumberId: row.phone_number_id, providerMessageId: row.provider_message_id };
   }
 
   async startJob(lease: Lease, jobId: string, nowMs: number): Promise<void> {

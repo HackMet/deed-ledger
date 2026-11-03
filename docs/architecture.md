@@ -266,6 +266,9 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
 
 ### The outbox
 
+- **Read and typing.** Before a burst's first job runs, the consumer marks its newest message read and shows
+  "typing…" until the reply or 25 s (`MessagingChannel.showTyping`), best effort and never for a customer who typed
+  ALTO.
 - **Writing.** Replies are written in the same batch as the job transition that produced them. They are split
   before the batch into parts of at most 4096 UTF-16 code units: at whitespace, else between graphemes. A single
   grapheme longer than the limit is cut by code units, never inside a surrogate pair. Each row gets a send order

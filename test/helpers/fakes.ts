@@ -10,6 +10,8 @@ import type {
   OutgoingButtons,
   OutgoingText,
   SendResult,
+  TypingIndicator,
+  TypingResult,
 } from "../../src/application/ports";
 
 export class FakeClock implements Clock {
@@ -76,6 +78,16 @@ export class FakeChannel implements MessagingChannel {
 
   async sendButtons(message: OutgoingButtons): Promise<SendResult> {
     return this.sendText(message);
+  }
+
+  /** Every typing indicator asked for, kept apart from `sent` (it isn't a message). */
+  typing: TypingIndicator[] = [];
+  /** Decides each typing indicator; by default it shows. A throw stands for a broken channel. */
+  respondTyping: (indicator: TypingIndicator) => Promise<TypingResult> = async () => ({ ok: true });
+
+  async showTyping(indicator: TypingIndicator): Promise<TypingResult> {
+    this.typing.push(indicator);
+    return this.respondTyping(indicator);
   }
 }
 

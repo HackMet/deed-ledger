@@ -9,11 +9,28 @@
  * unique, and an optional `footer: { text }` of up to 60 characters (limits.ts, checked October 28).
  * A tap comes back as an interactive message with `button_reply.id`.
  *
+ * Read receipt with typing indicator, checked against Meta's docs on November 3, 2026:
+ * https://developers.facebook.com/docs/whatsapp/cloud-api/typing-indicators
+ * The same messages endpoint with `status: "read"`, the inbound `message_id` and
+ * `typing_indicator: { type: "text" }`; the answer is `{ success: true }`. It marks the message (and
+ * earlier ones) read and shows "typing…" until the reply, or 25 seconds. Meta asks to show it only
+ * when a reply follows.
+ *
  * Never called by the default test run: tests use a fake MessagingChannel.
  */
-import type { MessagingChannel, OutgoingButtons, OutgoingText, SendResult } from "../../application/ports";
+import type {
+  MessagingChannel,
+  OutgoingButtons,
+  OutgoingText,
+  SendResult,
+  TypingIndicator,
+  TypingResult,
+} from "../../application/ports";
 import { plainTextBody, type ReplyButton } from "../../domain/replies";
 import { WHATSAPP_LIMITS } from "./limits";
+
+/** The indicator is awaited before the work starts, so a slow one gives up instead of holding it. */
+const TYPING_TIMEOUT_MS = 3_000;
 
 export interface WhatsAppCloudOptions {
   readonly token: string;
@@ -59,27 +76,42 @@ export class WhatsAppCloudChannel implements MessagingChannel {
     });
   }
 
+  async showTyping(indicator: TypingIndicator): Promise<TypingResult> {
+    if (!this.configured) return { ok: false, errorCode: "channel_not_configured" };
+    let response: Response;
+    try {
+      response = await this.request(
+        indicator.fromPhoneNumberId,
+        {
+          messaging_product: "whatsapp",
+          status: "read",
+          message_id: indicator.providerMessageId,
+          typing_indicator: { type: "text" },
+        },
+        Math.min(this.options.timeoutMs, TYPING_TIMEOUT_MS),
+      );
+    } catch (error) {
+      return { ok: false, errorCode: networkErrorCode(error) };
+    }
+    if (!response.ok) return { ok: false, errorCode: `http_${response.status}` };
+    const body: unknown = await response.json().catch(() => null);
+    const success = typeof body === "object" && body !== null && (body as { success?: unknown }).success === true;
+    return success ? { ok: true } : { ok: false, errorCode: "unexpected_response" };
+  }
+
   private async post(message: OutgoingText, content: Record<string, unknown>): Promise<SendResult> {
     if (!this.configured) return { ok: false, disposition: "permanent", errorCode: "channel_not_configured" };
-    const url = `https://graph.facebook.com/${this.options.apiVersion}/${encodeURIComponent(message.fromPhoneNumberId)}/messages`;
 
     let response: Response;
     try {
-      response = await this.options.fetch(url, {
-        method: "POST",
-        headers: { authorization: `Bearer ${this.options.token}`, "content-type": "application/json" },
-        body: JSON.stringify({
-          messaging_product: "whatsapp",
-          recipient_type: "individual",
-          to: `+${message.toPhone}`,
-          ...content,
-        }),
-        signal: AbortSignal.timeout(this.options.timeoutMs),
-      });
+      response = await this.request(
+        message.fromPhoneNumberId,
+        { messaging_product: "whatsapp", recipient_type: "individual", to: `+${message.toPhone}`, ...content },
+        this.options.timeoutMs,
+      );
     } catch (error) {
       // A timeout or a dropped connection: the request may have reached Meta. Never resend.
-      const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
-      return { ok: false, disposition: "unknown", errorCode: timedOut ? "timeout" : "network_error" };
+      return { ok: false, disposition: "unknown", errorCode: networkErrorCode(error) };
     }
 
     if (!response.ok) {
@@ -97,6 +129,22 @@ export class WhatsAppCloudChannel implements MessagingChannel {
       ? { ok: false, disposition: "unknown", errorCode: "unexpected_response" }
       : { ok: true, providerMessageId: id };
   }
+
+  /** POSTs to the messages endpoint of the store's number. Throws on a timeout or a dropped connection. */
+  private request(fromPhoneNumberId: string, body: Record<string, unknown>, timeoutMs: number): Promise<Response> {
+    const url = `https://graph.facebook.com/${this.options.apiVersion}/${encodeURIComponent(fromPhoneNumberId)}/messages`;
+    return this.options.fetch(url, {
+      method: "POST",
+      headers: { authorization: `Bearer ${this.options.token}`, "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  }
+}
+
+function networkErrorCode(error: unknown): "timeout" | "network_error" {
+  const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
+  return timedOut ? "timeout" : "network_error";
 }
 
 /** Whether Meta accepts these as reply buttons with this body, and this footer when there is one. */
