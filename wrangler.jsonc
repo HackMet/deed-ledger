@@ -62,7 +62,7 @@
     {
       "binding": "DB",
       "database_name": "store-assistant",
-      // database_id: set after `wrangler d1 create store-assistant` (Angel runs remote commands).
+      "database_id": "d5c4de06-0265-41a7-b8db-6ef722e54261",
       "migrations_dir": "migrations"
     }
   ],
