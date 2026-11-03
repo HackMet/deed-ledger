@@ -1,8 +1,9 @@
 /**
  * The Deed (K20): each order's facts as a graph, and the feed of every verification the engine made.
  * Read-only, for any member of the store; the ledger only, scoped to the store (another store's order
- * is a 404). The graph is server-rendered inline SVG, with no script: a fact's panel opens with `:target`,
- * and the page refreshes every few seconds. `?t=<ms>` replays the order as it stood at that time.
+ * is a 404). The graph is server-rendered inline SVG, with no script: a fact's panel opens with `:target`.
+ * The feed refreshes every few seconds; the order page does not, so an open panel stays open. `?t=<ms>` replays
+ * the order as it stood at that time.
  */
 import type { Hono } from "hono";
 import { html } from "hono/html";
@@ -94,8 +95,9 @@ export function deedScreen(app: Hono<ConsoleEnv>) {
         tab: "/console/mas",
         refreshSeconds: REFRESH_SECONDS,
         style: STYLE,
-        body: html`<p class="counters" id="contadores">Verificados ${counters.total} · Pasaron ${counters.passed} · Rechazados ${counters.refused}</p>
-${counters.refusedByReason.size === 0 ? "" : html`<ul class="reasons">${[...counters.refusedByReason].map(([reason, n]) => html`<li>${REASON_LABELS[reason] ?? reason}: ${n}</li>`)}</ul>`}
+        body: html`<p class="counters" id="contadores">Intentos rechazados ${counters.attempts}</p>
+${counters.refusedByReason.size === 0 ? "" : html`<ul class="reasons">${[...counters.refusedByReason].map(([reason, n]) => html`<li>${reasonLabel(reason, null)}: ${n}</li>`)}</ul>`}
+<p class="counters" id="afirmaciones">Afirmaciones verificadas ${counters.claims}, pasaron ${counters.claimsPassed}</p>
 ${rows.length === 0 ? html`<p class="empty">Todavía no hay verificaciones.</p>` : html`<ol class="feed">${rows.map(feedRow)}</ol>`}`,
       }),
     );
@@ -124,7 +126,7 @@ ${rows.length === 0 ? html`<p class="empty">Todavía no hay verificaciones.</p>`
         back: `/console/pedidos/${encodeURIComponent(orderId)}`,
         path: `/console/deed/${encodeURIComponent(orderId)}`,
         tab: "/console/mas",
-        refreshSeconds: at === null ? REFRESH_SECONDS : undefined,
+        // No refresh here: a reload drops the fact panel that is open (`#f-…`) and the `?foco=` path.
         style: STYLE,
         body: html`${replayForm(times, at)}
 ${graphSvg(graph, onPath)}

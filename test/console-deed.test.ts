@@ -118,7 +118,7 @@ async function cancelledWithChange(s: Store): Promise<{ orderId: string; confirm
 }
 
 /** A staff tap on an order's version, as the console sends it. */
-const staffTap = (member: MemberContext, type: "mark_ready", orderId: string, version: number) => {
+const staffTap = (member: MemberContext, type: "mark_ready" | "mark_delivered", orderId: string, version: number) => {
   const action = { type, orderId, version } as const;
   const envelope: ActionEnvelope<ConsoleAction> = {
     operationKey: staffKey(action),
@@ -143,7 +143,8 @@ describe("/console/deed/:orderId: the order's facts as a graph", () => {
     expect(body).toContain(`id="f-${changeId}"`);
     expect(body).toContain(`Bloqueado por`);
     expect(body).toContain(`?foco=${changeId}`);
-    expect(body).toContain(`http-equiv="refresh"`);
+    // No refresh on the order page: a reload would close the open panel and drop the `?foco=` path.
+    expect(body).not.toContain(`http-equiv="refresh"`);
     expect(body).not.toContain("<script");
   });
 
@@ -170,10 +171,10 @@ describe("/console/deed/:orderId: the order's facts as a graph", () => {
     expect(after).toContain("Intento rechazado");
     expect(after).toContain(`href="#f-${cancel!.id}"`);
 
-    // The live view has no range to replay from, and refreshes.
+    // The live view has no range to replay from, and it does not refresh (that would close an open panel).
     const live = await (await get(h, path, cookie)).text();
     expect(live).toContain(`class="node closed"`);
-    expect(live).toContain(`http-equiv="refresh"`);
+    expect(live).not.toContain(`http-equiv="refresh"`);
   });
 
   it("never draws another store's refusals on this order's graph", async () => {
@@ -233,11 +234,33 @@ describe("/console/deed/verificaciones: every check, newest first, for the store
     const h = harness({ engine: checkedEngine });
     const cookie = await login(h, s, "staff");
     const body = await (await get(h, "/console/deed/verificaciones", cookie)).text();
-    expect(body).toContain("Rechazados 1");
+    expect(body).toContain('id="contadores">Intentos rechazados 1<');
+    expect(body).toContain('id="afirmaciones">Afirmaciones verificadas 0, pasaron 0<');
     expect(body).toContain("✗");
     expect(body).toContain("Intentó marcar listo");
     expect(body).toContain("ancestro cancelado");
     expect(body).not.toContain(foreign.orderId);
     expect(body).toContain(`href="/console/deed/${encodeURIComponent(orderId)}"`);
+  });
+
+  it("lists each refusal reason in Spanish, never the raw code", async () => {
+    const s = await storeWithMembers();
+    const { orderId } = await cancelledWithChange(s);
+    const member: MemberContext = { businessId: s.businessId, memberId: ids.staff, role: "staff", canApproveFiado: false, nowMs: T0 + 4_000 };
+    await staffTap(member, "mark_ready", orderId, 1);
+    await staffTap(member, "mark_delivered", orderId, 1);
+    const h = harness({ engine: checkedEngine });
+    const cookie = await login(h, s, "staff");
+    const body = await (await get(h, "/console/deed/verificaciones", cookie)).text();
+    expect(body).toContain('<li>el estado no lo permite: 2</li>');
+    expect(body).not.toContain("invalid_state");
+  });
+
+  it("refreshes the feed, and only the feed, to its own path", async () => {
+    const s = await storeWithMembers();
+    const h = harness({ engine: checkedEngine });
+    const cookie = await login(h, s, "staff");
+    const feed = await (await get(h, "/console/deed/verificaciones", cookie)).text();
+    expect(feed).toContain(`<meta http-equiv="refresh" content="3;url=/console/deed/verificaciones">`);
   });
 });

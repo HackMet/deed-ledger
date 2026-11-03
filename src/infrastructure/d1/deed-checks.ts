@@ -51,11 +51,16 @@ export interface DeedCheckView {
   readonly operationKey: string | null;
 }
 
-/** The counters on top of the feed: every check, the passes, and the refusals by reason. */
+/**
+ * The counters on top of the feed. Refused attempts (the engine said no to a tap or a message) are counted
+ * apart from claims (the engine checked what was said): a claim that failed is not an attempt refused.
+ */
 export interface DeedCounters {
-  readonly total: number;
-  readonly passed: number;
-  readonly refused: number;
+  /** Attempts the engine refused: refusal rows, by reason in `refusedByReason`. */
+  readonly attempts: number;
+  /** Claims the engine checked, and how many of them held. */
+  readonly claims: number;
+  readonly claimsPassed: number;
   readonly refusedByReason: ReadonlyMap<string, number>;
 }
 
@@ -64,23 +69,28 @@ export class D1DeedReads {
 
   async counters(tenant: Tenant): Promise<DeedCounters> {
     const { results } = await this.db
-      .prepare(`SELECT result, reason_code, count(*) AS n FROM deed_checks WHERE business_id = ?1 GROUP BY result, reason_code`)
+      .prepare(
+        `SELECT source = 'verify_claims' AS claim, result, reason_code, count(*) AS n FROM deed_checks
+         WHERE business_id = ?1 GROUP BY claim, result, reason_code`,
+      )
       .bind(tenant.businessId)
-      .all<{ result: "pass" | "fail"; reason_code: string | null; n: number }>();
-    let total = 0;
-    let passed = 0;
-    let refused = 0;
+      .all<{ claim: 0 | 1; result: "pass" | "fail"; reason_code: string | null; n: number }>();
+    let attempts = 0;
+    let claims = 0;
+    let claimsPassed = 0;
     const byReason = new Map<string, number>();
     for (const row of results) {
-      total += row.n;
-      if (row.result === "pass") passed += row.n;
-      else {
-        refused += row.n;
-        const reason = row.reason_code ?? "unknown";
-        byReason.set(reason, (byReason.get(reason) ?? 0) + row.n);
+      if (row.claim === 1) {
+        claims += row.n;
+        if (row.result === "pass") claimsPassed += row.n;
+        continue;
       }
+      if (row.result === "pass") continue;
+      attempts += row.n;
+      const reason = row.reason_code ?? "unknown";
+      byReason.set(reason, (byReason.get(reason) ?? 0) + row.n);
     }
-    return { total, passed, refused, refusedByReason: byReason };
+    return { attempts, claims, claimsPassed, refusedByReason: byReason };
   }
 
   /** The refusals the engine made on one order, oldest first; the claim checks are not an order's refusals. */

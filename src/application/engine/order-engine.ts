@@ -242,6 +242,13 @@ export function staffKey(action: StaffAction & OrderRef): string {
   return action.type === "mark_line" ? `${base}:${action.lineId}` : base;
 }
 
+/** The key a console action must carry as the engine derives it; null for an action that derives none. */
+const consoleKeyOf = (member: MemberContext, action: ConsoleAction): string | null => {
+  if (action.type === "review_change") return typeof action.changeRequestId === "string" ? reviewKey(action.changeRequestId) : null;
+  if (action.type === "propose_price" || action.type === "confirm_price") return priceKey(action.productId, member.nowMs, action.type);
+  return isStaffAction(action) ? staffKey(action) : null;
+};
+
 /** 1500 -> "1.5": the canonical decimal for a quantity in thousandths. */
 export function fromThousandths(milli: number): string {
   const whole = Math.floor(milli / 1000);
@@ -270,11 +277,14 @@ const DEED_SOURCE: Readonly<Record<"duplicate" | "stale_version" | "invalid_stat
 const claimKindOf = (claim: Claim): string =>
   (typeof claim === "object" && claim !== null ? DEED_CLAIM_KINDS.find((kind) => kind === claim.type) : undefined) ?? "other";
 
-/** The order a claim names, when it names one of a sane length. */
+/** The order a claim names, when it names one of a sane length. Whether it resolves is checked where it is written. */
 const orderIdOfClaim = (claim: Claim): string | null =>
   typeof claim === "object" && claim !== null && "orderId" in claim && typeof claim.orderId === "string" && claim.orderId.length <= 64
     ? claim.orderId
     : null;
+
+/** A key as the caller sent it, kept only when it is the key the engine derives for that action (K20). */
+const derivedOnly = (key: string, derived: string | null): string | null => (key === derived ? key : null);
 
 export class OrderEngine implements Engine {
   /**
@@ -393,7 +403,7 @@ export class OrderEngine implements Engine {
   async onCustomerAction(context: CustomerContext, envelope: ActionEnvelope<CustomerAction>): Promise<EngineResult> {
     const decided = await this.decideCustomerAction(context, envelope);
     await this.recordRefusal(context, decided.outcome, {
-      operationKey: envelope.operationKey,
+      operationKey: derivedOnly(envelope.operationKey, actionKey(envelope.action)),
       orderId: "orderId" in envelope.action ? envelope.action.orderId : null,
       atMs: context.nowMs,
     });
@@ -465,7 +475,7 @@ export class OrderEngine implements Engine {
   async onConsoleAction(member: MemberContext, envelope: ActionEnvelope<ConsoleAction>): Promise<EngineResult> {
     const decided = await this.decideConsoleAction(member, envelope);
     await this.recordRefusal(member, decided.outcome, {
-      operationKey: envelope.operationKey,
+      operationKey: derivedOnly(envelope.operationKey, consoleKeyOf(member, envelope.action)),
       orderId: "orderId" in envelope.action ? envelope.action.orderId : null,
       atMs: member.nowMs,
     });
@@ -595,7 +605,7 @@ export class OrderEngine implements Engine {
   private async recordRefusal(
     tenant: Tenant,
     outcome: EngineOutcome,
-    meta: { readonly operationKey: string; readonly orderId: string | null; readonly atMs: number },
+    meta: { readonly operationKey: string | null; readonly orderId: string | null; readonly atMs: number },
   ): Promise<void> {
     const { checks, ids, log } = this.deps;
     if (checks === undefined || (outcome.type !== "rejected" && outcome.type !== "duplicate")) return;
@@ -604,6 +614,9 @@ export class OrderEngine implements Engine {
     // there is the customer's own open one, not the id they sent). A duplicate's order was resolved first.
     const orderId =
       outcome.type === "duplicate" ? meta.orderId : outcome.reason === "not_found" ? null : (outcome.order?.orderId ?? null);
+    // A key is written only with the order it names when that order resolved here: a key that names an
+    // unknown order (another store's, or none) is kept out of the row, so the row never carries its text.
+    const operationKey = meta.operationKey !== null && (meta.orderId === null || orderId !== null) ? meta.operationKey : null;
     try {
       const decidingFactId =
         outcome.type === "rejected" && outcome.reason === "invalid_state" && outcome.order?.state === "cancelado" && orderId !== null
@@ -620,12 +633,18 @@ export class OrderEngine implements Engine {
           result: "fail",
           reasonCode: reason,
           decidingFactId,
-          operationKey: meta.operationKey,
+          operationKey,
         },
       ]);
     } catch {
       log?.warn("deed_check_not_recorded", { businessId: tenant.businessId, reason, count: 1 });
     }
+  }
+
+  /** The order id when it names an order of this store; null otherwise (K20). */
+  private async resolvedOrderId(tenant: Tenant, orderId: string | null): Promise<string | null> {
+    if (orderId === null) return null;
+    return (await this.deps.store.order(tenant, orderId)) === null ? null : orderId;
   }
 
   /** The live cancel of an order, the fact that closed its confirm; null when the order has none. */
@@ -640,6 +659,8 @@ export class OrderEngine implements Engine {
     if (checks === undefined || claims.length === 0) return;
     try {
       const atMs = clock?.now() ?? Date.now();
+      // A claim's order is written only when it resolves in this store; its text never reaches the row as an id.
+      const orderIds = await Promise.all(claims.map((claim) => this.resolvedOrderId(tenant, orderIdOfClaim(claim))));
       await checks.record(
         tenant,
         claims.map((claim, index) => ({
@@ -647,7 +668,7 @@ export class OrderEngine implements Engine {
           atMs,
           source: "verify_claims",
           subjectFactId: null,
-          orderId: orderIdOfClaim(claim),
+          orderId: orderIds[index] ?? null,
           claimKind: claimKindOf(claim),
           result: answers[index] === true ? "pass" : "fail",
           reasonCode: answers[index] === true ? null : "not_backed",
