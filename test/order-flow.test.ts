@@ -1004,7 +1004,7 @@ describe("photos and voice notes in an order", () => {
 
     expect(t.transcriber.calls).toBe(3);
     expect(t.provider.requests).toHaveLength(0);
-    expect(t.h.sentTo(t.phone)).toEqual(["Perdón, no pude escuchar tu nota de voz. ¿Me la mandás otra vez?"]);
+    expect(t.h.sentTo(t.phone)).toEqual(["Perdón, no pude escuchar tu nota de voz. ¿Me la mandás otra vez o me escribís lo que necesitás?"]);
     // Only the voice note counts as read: the photo waits for the customer's next message.
     expect(await t.reads()).toHaveLength(1);
 
@@ -1013,7 +1013,7 @@ describe("photos and voice notes in an order", () => {
     expect(t.provider.requests).toHaveLength(1);
     expect(t.provider.requests[0]!.user.filter((part) => part.type === "image")).toHaveLength(1);
     expect(t.provider.textOf(0)).toContain("MENSAJES (2;");
-    expect(t.h.sentTo(t.phone)).toEqual(["Perdón, no pude escuchar tu nota de voz. ¿Me la mandás otra vez?", ASK_HOW]);
+    expect(t.h.sentTo(t.phone)).toEqual(["Perdón, no pude escuchar tu nota de voz. ¿Me la mandás otra vez o me escribís lo que necesitás?", ASK_HOW]);
     expect(await t.reads()).toHaveLength(3);
   });
 
@@ -1023,7 +1023,7 @@ describe("photos and voice notes in an order", () => {
 
     expect(t.transcriber.calls).toBe(0);
     expect(t.provider.requests).toHaveLength(0);
-    expect(t.h.sentTo(t.phone)).toEqual(["Perdón, no pude escuchar tu nota de voz. ¿Me la mandás otra vez?"]);
+    expect(t.h.sentTo(t.phone)).toEqual(["Perdón, no pude escuchar tu nota de voz. ¿Me la mandás otra vez o me escribís lo que necesitás?"]);
     expect(t.h.log.fields("burst_media_unreadable")).toEqual([
       expect.objectContaining({ reason: "OggOpusError", outcome: "permanent" }),
     ]);
@@ -1035,7 +1035,7 @@ describe("photos and voice notes in an order", () => {
     await t.burst(t.photoMsg("heic-1"));
 
     expect(t.provider.requests).toHaveLength(0);
-    expect(t.h.sentTo(t.phone)).toEqual(["Perdón, no pude leer tu foto. ¿Me la mandás otra vez?"]);
+    expect(t.h.sentTo(t.phone)).toEqual(["Perdón, no pude leer tu foto. ¿Me la mandás otra vez o me escribís lo que necesitás?"]);
     expect(t.h.log.events()).not.toContain("job_deferred");
   });
 });

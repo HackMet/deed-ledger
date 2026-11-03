@@ -14,6 +14,8 @@ import {
   COPY,
   echoBlock,
   firstCheck,
+  flattenClaims,
+  catalogName,
   itemName,
   joinBlocks,
   plainTextBody,
@@ -139,6 +141,60 @@ describe("item names", () => {
     expect(body(asked)).toBe(`Anotado ✅\n• 6 Plátanos\n• 2 libras de Pollo\n\n${PICKUP_OR_DELIVERY}`);
     const readback = await burst([{ kind: "fulfillment", mode: "pickup", pin: null, placeText: null, sameAsBefore: false, issues: [] }], plan({ move: "readback" }));
     expect(body(readback)).not.toContain("×");
+  });
+});
+
+describe("catalog names as the customer reads them", () => {
+  const frijoles = { productId: "p-f", productName: "Frijoles rojos 1 lb", unitPrice: 2200, unit: "libra", byWeight: true as const };
+  const platano = { productId: "p-p", productName: "Plátano maduro (unidad)", unitPrice: 500 };
+
+  it("drops the per-pound size when the quantity is in pounds, and the (unidad) tag", () => {
+    const lines = [view("a", "frijoles", { ...frijoles, quantity: "5" }), view("b", "arroz", { productId: "p-a", productName: "Arroz 1 lb", unitPrice: 1800, unit: "libra", byWeight: true as const, quantity: "5" }), view("c", "platano", { ...platano, quantity: "5" })];
+    expect(echoBlock(lines)).toBe("Anotado ✅\n• 5 libras de Frijoles rojos\n• 5 libras de Arroz\n• 5 Plátano maduro");
+    const text = render({ type: "readback", order: { ...readbackOrder, lines, total: null } }).body;
+    expect(text).toContain("• 5 libras de Arroz · L 90");
+    expect(text).toContain("• 5 Plátano maduro · L 25");
+    expect(text).not.toContain("1 lb");
+    expect(text).not.toContain("(unidad)");
+  });
+
+  it("strips (unidad) in an options list and a price answer", () => {
+    const options = render({
+      type: "ask",
+      question: "ambiguous_product",
+      line: 0,
+      order: building([view("a", "platano")]),
+      options: [
+        { productId: "p-p", name: "Plátano maduro (unidad)", unitPrice: 500 },
+        { productId: "p-v", name: "Plátano verde (und)", unitPrice: null },
+      ],
+    });
+    expect(options.body).toContain("1. Plátano maduro · L 5");
+    expect(options.body).toContain("2. Plátano verde");
+    expect(options.body).not.toContain("(");
+    expect(flattenClaims(options.claims)).toContainEqual({ type: "unit_price", productId: "p-p", price: 500 });
+    const price = render({ type: "answer", topic: "price", facts: [{ asked: "Plátano maduro (unidad)", productId: "p-p", unitPrice: 500, availability: "hay", restricted: false }] });
+    expect(price.body).toBe("Plátano maduro: L 5.");
+  });
+
+  it("handles one and half pounds", () => {
+    expect(echoBlock([view("a", "x", { ...frijoles, quantity: "1" })])).toContain("• 1 libra de Frijoles rojos");
+    expect(echoBlock([view("a", "x", { ...frijoles, quantity: "0.5" })])).toContain("• 0.5 libras de Frijoles rojos");
+  });
+
+  it("leaves other sizes and counted bags alone", () => {
+    expect(itemName(view("a", "x", { productId: "p", productName: "Aceite Clover 1 L", quantity: "2" }))).toBe("Aceite Clover 1 L");
+    expect(itemName(view("a", "x", { productId: "p", productName: "Huevos cartón de 30", quantity: "1" }))).toBe("Huevos cartón de 30");
+    expect(echoBlock([view("a", "x", { productId: "p", productName: "Arroz 1 lb", quantity: "5" })])).toBe("Anotado ✅\n• 5 Arroz 1 lb");
+  });
+
+  it("never reduces a name to nothing", () => {
+    expect(catalogName("(unidad)")).toBe("(unidad)");
+    expect(catalogName("1 lb", true)).toBe("1 lb");
+    expect(catalogName("Papa (c/u)")).toBe("Papa");
+    expect(catalogName("Arroz x LB", true)).toBe("Arroz");
+    expect(catalogName("Pollo (libra)", true)).toBe("Pollo");
+    expect(catalogName("Pollo por libra", true)).toBe("Pollo");
   });
 });
 

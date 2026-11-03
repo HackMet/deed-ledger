@@ -644,9 +644,9 @@ function optionsReply(
   const line = lineIndex === null ? undefined : order.lines[lineIndex];
   const claims: ClaimCheck[] = [stateIn(order, OPEN_STATES)];
   const rows = options.map((option, n) => {
-    if (option.unitPrice === null) return `${n + 1}. ${quote(option.name)}`;
+    if (option.unitPrice === null) return `${n + 1}. ${catalogName(option.name)}`;
     claims.push(one({ type: "unit_price", productId: option.productId, price: option.unitPrice }));
-    return `${n + 1}. ${quote(option.name)} · ${formatLempiras(option.unitPrice)}`;
+    return `${n + 1}. ${catalogName(option.name)} · ${formatLempiras(option.unitPrice)}`;
   });
   const head = line === undefined ? "Tengo estos:" : `Para ${lineName(line)} tengo:`;
   const others = noted.filter((other) => other.lineId !== line?.lineId);
@@ -918,7 +918,7 @@ function answerReply(topic: "price" | "availability", facts: readonly AnswerFact
   const lines: string[] = [];
   const claims: ClaimCheck[] = [];
   for (const fact of facts) {
-    const asked = quote(fact.asked);
+    const asked = catalogName(fact.asked);
     if (fact.restricted) {
       lines.push(`${capitalize(asked)}: eso solo lo vendemos aquí en la tienda.`);
     } else if (topic === "price") {
@@ -1028,7 +1028,30 @@ function substituteReply(order: OrderView, lineId: string): RenderedReply {
 
 /** A line named inside a sentence: the catalog name, or the customer's words as they came. */
 function lineName(line: OrderLineView): string {
-  return line.productName !== null ? quote(line.productName) : quote(line.text) || "un producto";
+  return line.productName !== null ? catalogName(line.productName, line.byWeight === true) : quote(line.text) || "un producto";
+}
+
+const COUNT_SUFFIX = /\s*\((?:unidad|und|unid\.?|c\/u)\)\s*$/iu;
+const POUND_SUFFIX = /\s+(?:(?:1|una)\s*(?:lb|libra)s?\.?|\(\s*libra\s*\)|por\s+libra|x\s*lb)\s*$/iu;
+
+/**
+ * A catalog name as the customer reads it: a trailing "(unidad)"-style tag is dropped, and, when the
+ * quantity is shown in pounds, a per-pound size ("Arroz 1 lb" -> "Arroz"). Display only: a name
+ * that would end up empty is kept whole, and a size anywhere else stays ("Aceite Clover 1 L").
+ */
+export function catalogName(name: string, inPounds = false): string {
+  const whole = quote(name);
+  let shown = whole.replace(COUNT_SUFFIX, "");
+  if (inPounds) shown = shown.replace(POUND_SUFFIX, "");
+  shown = shown.trim();
+  return shown === "" ? whole : shown;
+}
+
+/** Whether the line's quantity is shown in pounds ("2 libras de", "media libra de"). */
+function shownInPounds(line: OrderLineView): boolean {
+  if (line.quantity === null) return false;
+  if (line.byWeight === true) return true;
+  return unitShown(line) && /^(?:libra|lb)/iu.test(line.unit ?? "");
 }
 
 /**
@@ -1037,7 +1060,7 @@ function lineName(line: OrderLineView): string {
  * spelling as written: "un carton de huevos" → "Carton de huevos".
  */
 export function itemName(line: OrderLineView): string {
-  if (line.productName !== null) return quote(line.productName);
+  if (line.productName !== null) return catalogName(line.productName, shownInPounds(line));
   const said = saidName(line);
   return said === "" ? "Un producto" : capitalize(said);
 }

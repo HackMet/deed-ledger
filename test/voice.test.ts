@@ -14,7 +14,7 @@ import {
 } from "../src/integrations/audio";
 import { maxOpusPackets, readOggOpus } from "../src/integrations/audio/ogg";
 import { MuseVoiceTranscriber, TRANSCRIBE_URL, TranscriptionError } from "../src/integrations/meta/transcribe";
-import { oggOpus, toneOgg } from "./fixtures/audio";
+import { oggOpus, oggPageCrc, toneOgg, withoutEndOfStream } from "./fixtures/audio";
 import { FakeMediaSource } from "./helpers/fakes";
 import { type Harness, harness, rows } from "./helpers/harness";
 import { newPhone, seedStore } from "./helpers/seed";
@@ -73,20 +73,51 @@ describe("voice note decoding", () => {
     await expect(decoder.toTranscriberWav(ogg(full.subarray(0, Math.floor(full.length / 2))))).rejects.toBeInstanceOf(OggOpusError);
   });
 
-  it("refuses a note cut right after a complete page, before its end-of-stream page", async () => {
+  it("decodes a note whose last page has no end-of-stream flag, as WhatsApp writes them (#27)", async () => {
     const full = toneOgg();
     const ends = pageEnds(full);
+    const lastPage = ends.at(-2)!;
     expect(ends.at(-1)).toBe(full.length);
-    // The second-to-last page ends a packet and isn't the last: alone, it looks like a whole file.
-    const cut = full.subarray(0, ends.at(-2)!);
-    expect(lastLacing(cut)).toBeLessThan(255);
-    await expect(decoder.toTranscriberWav(ogg(cut))).rejects.toThrow(
-      expect.objectContaining({ name: "OggOpusError", message: "the file ends before the end of the stream" }),
-    );
-    // The same packets, written without the end-of-stream flag, are refused too.
+    expect(full[lastPage + 5]! & 0x04).toBe(0x04); // ffmpeg sets the flag
+    // The fixture's CRC reproduces every CRC ffmpeg wrote, so the rewritten page is valid Ogg.
+    for (let start = 0, i = 0; i < ends.length; start = ends[i]!, i++) {
+      const page = full.subarray(start, ends[i]);
+      expect(oggPageCrc(page)).toBe(new DataView(page.buffer, page.byteOffset).getUint32(22, true));
+    }
+
+    const noEnd = withoutEndOfStream(full);
+    expect(noEnd[lastPage + 5]! & 0x04).toBe(0);
+    const withFlag = await decoder.toTranscriberWav(ogg(full));
+    const withoutFlag = await decoder.toTranscriberWav(ogg(noEnd));
+    expect(withoutFlag.durationMs).toBe(withFlag.durationMs);
+    expect(withoutFlag.wav).toEqual(withFlag.wav);
+
     const packet = new Uint8Array([16 << 3]); // one 2.5 ms CELT frame
-    expect(() => readOggOpus(oggOpus([packet, packet], { endOfStream: false }), 10)).toThrow(OggOpusError);
+    expect(readOggOpus(oggOpus([packet, packet], { endOfStream: false }), 10).packets).toHaveLength(2);
     expect(readOggOpus(oggOpus([packet, packet]), 10).packets).toHaveLength(2);
+  });
+
+  it("still refuses a note without the flag that ends inside a page", async () => {
+    const noEnd = withoutEndOfStream(toneOgg());
+    const ends = pageEnds(noEnd);
+    // Cut inside the last page's header, then inside its body.
+    for (const cut of [ends.at(-2)! + 10, ends.at(-1)! - 1]) {
+      await expect(decoder.toTranscriberWav(ogg(noEnd.subarray(0, cut)))).rejects.toThrow(
+        expect.objectContaining({ name: "OggOpusError", message: "the file ends inside an Ogg page" }),
+      );
+    }
+  });
+
+  it("still refuses a note whose last packet is cut off, with or without the flag", () => {
+    const packet = new Uint8Array([16 << 3]);
+    // A 255-byte segment means "this packet goes on in the next page": ending a page on one leaves
+    // the packet open, as when the file is cut between two pages that share a packet.
+    const open = new Uint8Array(255);
+    for (const endOfStream of [false, true]) {
+      expect(() => readOggOpus(oggOpus([packet, open], { endOfStream }), 10)).toThrow(
+        expect.objectContaining({ name: "OggOpusError", message: "the last packet is cut off" }),
+      );
+    }
   });
 
   it("refuses a note with a page missing from the middle", async () => {
@@ -157,13 +188,6 @@ function pageEnds(bytes: Uint8Array): number[] {
     ends.push(at);
   }
   return ends;
-}
-
-/** The last lacing value of the last page: under 255 means the page ends a packet. */
-function lastLacing(bytes: Uint8Array): number {
-  const ends = pageEnds(bytes);
-  const start = ends.length > 1 ? ends.at(-2)! : 0;
-  return bytes[start + 27 + bytes[start + 26]! - 1]!;
 }
 
 interface Call {
@@ -344,7 +368,7 @@ describe("transcribeVoiceNote", () => {
       { job_state: "failed", attempts: 3, last_error: "attempt_failed" },
     ]);
     expect(h.sentTo(phone)).toEqual([couldNotProcess("audio")]);
-    expect(couldNotProcess("audio")).toBe("Perdón, no pude escuchar tu nota de voz. ¿Me la mandás otra vez?");
+    expect(couldNotProcess("audio")).toBe("Perdón, no pude escuchar tu nota de voz. ¿Me la mandás otra vez o me escribís lo que necesitás?");
   });
 
   it("treats a note with no words in it as a failure", async () => {

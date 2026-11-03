@@ -11,6 +11,11 @@
  * after 7 days. Errors carry a short code only: never the URL (it is a credential while it lasts)
  * or response text.
  *
+ * The bytes must match the `file_size` and `sha256` the lookup declares, or the download is
+ * `incomplete` and retried like a timeout. This is what keeps a cut-off voice note from being
+ * transcribed: WhatsApp voice notes don't end with an Ogg end-of-stream page (#27), so the audio
+ * reader can't tell a note cut on a page boundary from a whole one.
+ *
  * Never called by the default test run: tests pass a fake fetch or a fake MediaSource.
  */
 import type { MediaBytes, MediaSource } from "../../application/ports";
@@ -61,6 +66,7 @@ export class WhatsAppMediaSource implements MediaSource {
       throw new MediaDownloadError("too_large");
     }
     const bytes = await readCapped(download, maxBytes);
+    await verifyComplete(bytes, info);
     const contentType = download.headers.get("content-type") ?? info.mimeType ?? "application/octet-stream";
     return { bytes, contentType };
   }
@@ -89,11 +95,13 @@ interface MediaInfo {
   readonly url: string;
   readonly mimeType: string | null;
   readonly fileSize: number | null;
+  /** The declared SHA-256 of the file, as 32 bytes. */
+  readonly sha256: Uint8Array | null;
 }
 
 function readMediaInfo(body: unknown): MediaInfo {
   if (typeof body !== "object" || body === null) throw new MediaDownloadError("lookup_unexpected_response");
-  const { url, mime_type: mimeType, file_size: fileSize } = body as Record<string, unknown>;
+  const { url, mime_type: mimeType, file_size: fileSize, sha256 } = body as Record<string, unknown>;
   // The token goes with the download, so only an https URL is followed.
   if (typeof url !== "string" || !url.startsWith("https://")) {
     throw new MediaDownloadError("lookup_unexpected_response");
@@ -102,12 +110,34 @@ function readMediaInfo(body: unknown): MediaInfo {
     url,
     mimeType: typeof mimeType === "string" && mimeType !== "" ? mimeType : null,
     fileSize: toSize(fileSize),
+    sha256: toDigest(sha256),
   };
 }
 
+/** Refuses bytes that differ from the declared size or hash; without either, there is nothing to check. */
+async function verifyComplete(bytes: ArrayBuffer, info: MediaInfo): Promise<void> {
+  if (info.fileSize !== null && bytes.byteLength !== info.fileSize) throw new MediaDownloadError("incomplete");
+  if (info.sha256 === null) return;
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  if (!digest.every((byte, i) => byte === info.sha256![i])) throw new MediaDownloadError("incomplete");
+}
+
+/**
+ * Meta's docs don't say how `sha256` is encoded, so a SHA-256 in hex (any case) or base64 is read.
+ * Anything else isn't checked: refusing every download over a format we can't read would break all
+ * media, and the size check still catches a cut-off body.
+ */
+function toDigest(value: unknown): Uint8Array | null {
+  if (typeof value !== "string") return null;
+  if (/^[0-9a-f]{64}$/i.test(value)) return Uint8Array.from(value.match(/../g)!, (hex) => parseInt(hex, 16));
+  if (/^[A-Za-z0-9+/]{43}=?$/.test(value)) return Uint8Array.from(atob(value.padEnd(44, "=")), (char) => char.charCodeAt(0));
+  return null;
+}
+
 function toSize(value: unknown): number | null {
-  const size = typeof value === "string" ? Number(value) : value;
-  return typeof size === "number" && Number.isFinite(size) && size >= 0 ? size : null;
+  // Number("") is 0, which the completeness check would hold every download to.
+  const size = typeof value === "string" && value.trim() !== "" ? Number(value) : value;
+  return typeof size === "number" && Number.isSafeInteger(size) && size >= 0 ? size : null;
 }
 
 /** Reads the body, refusing it as soon as it grows past the limit (Content-Length can be absent). */
