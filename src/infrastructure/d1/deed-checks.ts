@@ -87,7 +87,7 @@ export class D1DeedReads {
     const { results } = await this.db
       .prepare(
         `SELECT id, at_ms, source, order_id, claim_kind, result, reason_code, deciding_fact_id, operation_key
-         FROM deed_checks WHERE business_id = ?1 ORDER BY at_ms DESC, id DESC LIMIT ?2`,
+         FROM deed_checks WHERE business_id = ?1 ORDER BY at_ms DESC, rowid DESC LIMIT ?2`,
       )
       .bind(tenant.businessId, limit)
       .all<{

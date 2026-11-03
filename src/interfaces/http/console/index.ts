@@ -15,6 +15,7 @@ import {
   sameSiteForms,
 } from "./auth";
 import { bienvenidaScreen } from "./bienvenida";
+import { deedScreen } from "./deed";
 import { empleadosScreen } from "./empleados";
 import { facturasScreen } from "./facturas";
 import { masScreen } from "./mas";
@@ -52,6 +53,7 @@ export function consoleRoutes() {
   productosScreen(app);
   negocioScreen(app);
   facturasScreen(app);
+  deedScreen(app);
 
   return app;
 }

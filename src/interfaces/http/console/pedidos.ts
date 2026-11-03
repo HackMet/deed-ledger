@@ -40,7 +40,7 @@ const STATE_LABELS: Record<OrderState, string> = {
   cancelado: "Cancelado",
 };
 
-const KIND_LABELS: Record<TrailEntry["kind"], string> = {
+export const KIND_LABELS: Record<TrailEntry["kind"], string> = {
   order_version: "Pedido recibido",
   order_confirm: "Pedido confirmado",
   order_cancel: "Pedido cancelado",
@@ -81,7 +81,7 @@ const NOTICES: Readonly<Record<string, string>> = { ...REVIEW_NOTICES, ...STEP_N
 const STEPS = { despachar: "dispatch", entregar: "mark_delivered" } as const;
 
 const COLOUR_MARKS: Record<OrderColour, string> = { yellow: "Cambió", red: "Cancelado", check: "✓ Entregado", blue: "En camino", none: "" };
-const EVIDENCE_LABELS: Record<string, string> = { inbound_message: "mensaje", media_asset: "foto", member: "miembro" };
+export const EVIDENCE_LABELS: Record<string, string> = { inbound_message: "mensaje", media_asset: "foto", member: "miembro" };
 const CLOSURE_LABELS = { cancelled: "cancelado", superseded: "reemplazado" } as const;
 
 export function pedidosScreen(app: Hono<ConsoleEnv>) {
@@ -234,6 +234,7 @@ function trailBody(trail: OrderTrail, orderId: string, csrf: string, notice: str
   const names = new Map(trail.facts.map((entry, n) => [entry.factId, `${KIND_LABELS[entry.kind]} (paso ${n + 1})`]));
   return html`${notice === null ? "" : html`<p class="notice">${notice}</p>`}
 <p class="meta">${STATE_LABELS[trail.state]} · Versión ${trail.version}${marks === "" ? "" : ` · ${marks}`}</p>
+<p class="meta"><a href="/console/deed/${encodeURIComponent(orderId)}">Ver en Deed</a></p>
 ${trail.courier === null || trail.delivered ? "" : html`<p class="meta">Lo lleva ${courierName(trail.courier)}</p>`}
 ${trail.openRequest === null ? "" : changeBox(trail.openRequest, orderId, csrf)}
 ${stepBox(trail, orderId, csrf, members)}
@@ -309,7 +310,7 @@ ${entry.blocks.length === 0 ? "" : html`<p class="meta">Bloquea: ${refs(entry.bl
 }
 
 /** Honduras time (UTC−6, no daylight saving), day/month and 24-hour clock. */
-function formatTime(ms: number): string {
+export function formatTime(ms: number): string {
   const d = new Date(ms - 6 * 3_600_000);
   const two = (n: number) => String(n).padStart(2, "0");
   return `${two(d.getUTCDate())}/${two(d.getUTCMonth() + 1)} ${two(d.getUTCHours())}:${two(d.getUTCMinutes())}`;

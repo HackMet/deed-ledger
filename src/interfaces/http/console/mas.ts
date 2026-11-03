@@ -34,6 +34,7 @@ const OPTIONS: readonly Option[] = [
   { label: "Precios", hint: "Proponer y confirmar precios.", href: "/console/productos", ownerOnly: false },
   { label: "Datos del negocio", hint: "Nombre, horario, dirección y zonas.", href: "/console/negocio", ownerOnly: true },
   { label: "Facturas", hint: "Subir y aprobar facturas de proveedores.", href: "/console/facturas", ownerOnly: true },
+  { label: "Deed", hint: "Cómo se armó cada pedido y cada verificación.", href: "/console/deed/verificaciones", ownerOnly: false },
   { label: "Cierre del día", hint: "Cuadrar la caja al cerrar.", href: null, ownerOnly: false },
   { label: "Aviso de privacidad", hint: "Lo que ven los clientes.", href: PRIVACY_PATH, ownerOnly: false },
 ];
