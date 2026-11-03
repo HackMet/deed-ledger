@@ -62,6 +62,26 @@ against the types and the fixtures; `npm run typecheck` fails when a fixture sto
 - `Commit` naming D1 types in the application layer is a decision (D-40), not debt.
 - Tables use `business_id` (existing schema), not Tech Spec v3's `store_id`.
 
+## Proposed (K12): change requests after confirming
+
+Not agreed. Built behind these types on `claude/change-requests`; the PR can't merge until Angel accepts them (#5).
+Angel renders the WhatsApp copy.
+
+| Addition | Where | Status |
+|---|---|---|
+| `ConsoleAction` `{ type: "review_change"; changeRequestId; decision: "approve" \| "decline"; reason }`, owner or staff; reason 1–200 characters after trimming, stored as data; key `rev:<changeRequestId>` | `actions.ts` | Proposed (K12) — Angel to accept |
+| `CustomerNotice` `change_approved { order }` ("Tu cambio fue aprobado: …") | `outcomes.ts` | Proposed (K12) — Angel to accept |
+| `CustomerNotice` `change_declined { order, reason }` ("No pudimos hacer el cambio: <reason>") | `outcomes.ts` | Proposed (K12) — Angel to accept |
+| `OrderView.openChangeRequest: { id; diff } \| null`, with `LineDiff { added; removed; changed: { before; after }[] }` | `outcomes.ts` | Proposed (K12) — Angel to accept |
+| `OrderView.lastReview: { decision; reason; atMs } \| null` | `outcomes.ts` | Proposed (K12) — Angel to accept |
+
+- Both `OrderView` fields are optional (`?:`), so views built before K12 (the pretend engine, the demo orders,
+  the fixtures) still type-check unchanged; the real engine always sets them, `null` when there is none.
+- A customer's change in `confirmado` or `preparando` no longer answers `order_changed`: the order stays as it is
+  and the engine answers `order_status` with `openChangeRequest` set (the reply says it waits for the store). From
+  `listo` on it answers `rejected`/`invalid_state`; the copy is `CHANGE_AFTER_READY` in `src/domain/copy.ts`.
+- A review with an empty or too long reason answers `rejected`/`not_allowed` (the contract has no input-error reason).
+
 ## Open for the meeting
 
 1. **Kerly's spec:** not read yet. Anything here that conflicts with it wins a discussion, not a default.

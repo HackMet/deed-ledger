@@ -74,6 +74,15 @@ Last updated: Fri Oct 30, 2026, evening Honduras time, by Claude Code (E7: docs 
 - Two independent reviews of Tech Spec v3 (Oct 30) both said "build with changes". The contract draft takes in their
   fixes for line references, multi-part messages, staff-only kinds, confirmed prices and the claim check.
 
+- K12, change requests (Nov 3, `claude/change-requests`, local D1 only, **not deployed**): after `confirmado`, a
+  customer's change is a `change_request` fact on the live confirm (key `chg:<order>:<job>`); owner or staff answer
+  in Pedidos with Aprobar ✓ / Rechazar ✗ and a required reason (`change_review`, key `rev:<request>`). Approve
+  writes the new version (superseding the old, resting on the review) and its confirm in the same batch; decline
+  closes the request. Window: `confirmado` and `preparando` (Q1 default). Migration `0024_change_requests.sql`
+  rebuilds `facts` with `change_request`, `change_review` and `receipt_review` (K14). The contract additions are
+  Proposed in [contract.md](contract.md) and need Angel's OK before merging. The Pedidos buttons call the engine
+  but, like every console tap on this branch, nothing saves until `saveConsoleAction` (#63) runs the commits.
+
 ## Next
 
 | # | Task | Owner | Notes |
@@ -99,6 +108,7 @@ staff use the preparation list on their own phones. If the console can't pass, i
 | Repository license, and when it goes public (right before submitting) | Team | Oct 26 |
 | Decisions made since Oct 28 aren't in [decisions.md](decisions.md) yet | Angel → Claude Code | Oct 28 |
 | Product and team name: "Johan AI" is a working title | Team | Oct 27 |
+| K12 contract additions (`review_change`, `change_approved`, `change_declined`, `OrderView.openChangeRequest`, `OrderView.lastReview`) are Proposed and need Angel's OK | Angel | Nov 3 |
 | D-41 (fact memory under `Commit`) and D-42 (read before every guard) are Proposed and need Angel's acceptance | Angel | Oct 30 |
 | D-43 (customer cancel refused once preparando; re-confirm returns to the interrupted state) and D-44 (operation keys derived from the customer's own order and action) are Proposed and need Angel's acceptance | Angel | Oct 30 |
 | Issue #12: `preparationList`, `verifyClaims` and the console taps are not built | Teammate | Oct 30 |
