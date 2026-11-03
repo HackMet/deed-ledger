@@ -1,3 +1,4 @@
+import { staffKey } from "../src/application/engine/order-engine";
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import type { MemberContext } from "../src/application/engine";
@@ -224,6 +225,13 @@ describe("the dev console's preparation list", () => {
     expect(lineOf(page, "Arroz 1 lb")).not.toContain("<button");
     // Every form carries the version on screen.
     expect(new Set([...page.matchAll(/name="version" value="(\d+)"/g)].map(([, v]) => v))).toEqual(new Set(["2"]));
+  });
+
+  it("puts the engine's own key on each tap (D-44), so the real engine accepts it and a double tap saves once", async () => {
+    const { h } = devConsole();
+    const page = await (await h.get("/console/preparacion/demo-order-1")).text();
+    expect(page).toContain(`name="operationKey" value="${staffKey({ type: "mark_ready", orderId: "demo-order-1", version: 2 })}"`);
+    expect(page).toContain(`name="operationKey" value="${staffKey({ type: "mark_line", orderId: "demo-order-1", version: 2, lineId: "d1-1", mark: "listo", substituteProductId: null })}"`);
   });
 
   it("shows a new order with Empezar, a delivery's place, and no total promised when a price is missing", async () => {

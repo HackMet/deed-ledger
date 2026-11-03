@@ -13,6 +13,7 @@ import { html } from "hono/html";
 import { type ConsoleActionResult, runConsoleAction } from "../../../application/console-actions";
 import { dispatchOutbox } from "../../../application/dispatch";
 import type { MemberContext } from "../../../application/engine";
+import { staffKey } from "../../../application/engine/order-engine";
 import { describeError } from "../../../application/errors";
 import type { ActionEnvelope, ConsoleAction, LineMark } from "../../../domain/contract/actions";
 import { formatLempiras } from "../../../domain/contract/numbers";
@@ -21,6 +22,8 @@ import { mapLink } from "../../../domain/place";
 import { formatStoreTime } from "../../../domain/store-time";
 import { type ConsoleEnv, memberContext } from "./auth";
 import { csrfField, shell } from "./layout";
+
+type StaffTap = Parameters<typeof staffKey>[0];
 
 const PATH = "/console/preparacion";
 const REFRESH_SECONDS = 15;
@@ -285,7 +288,7 @@ function markButton(
   ariaLabel?: string,
 ) {
   return html`<form method="post" action="/console/acciones">
-${hidden(order, "mark_line", csrf)}<input type="hidden" name="lineId" value="${line.lineId}"><input type="hidden" name="mark" value="${mark}">
+${hidden(order, "mark_line", csrf, line.lineId)}<input type="hidden" name="lineId" value="${line.lineId}"><input type="hidden" name="mark" value="${mark}">
 <button class="${kind}"${ariaLabel === undefined ? "" : html` aria-label="${ariaLabel}"`}>${label}</button></form>`;
 }
 
@@ -309,9 +312,13 @@ function orderActions(card: PreparationCard, csrf: string) {
   return "";
 }
 
-/** Every form carries the version on screen and a fresh operation key: a double tap sends the same key. */
-function hidden(order: OrderView, type: string, csrf: string) {
-  return html`<input type="hidden" name="type" value="${type}"><input type="hidden" name="orderId" value="${order.orderId}"><input type="hidden" name="version" value="${order.version}"><input type="hidden" name="operationKey" value="${crypto.randomUUID()}">${csrfField(csrf)}`;
+/**
+ * Every form carries the version on screen and the key the engine derives for this tap (D-44), so a
+ * double tap sends the same key and the engine accepts it.
+ */
+function hidden(order: OrderView, type: StaffTap["type"], csrf: string, lineId?: string) {
+  const key = staffKey({ type, orderId: order.orderId, version: order.version, lineId } as StaffTap);
+  return html`<input type="hidden" name="type" value="${type}"><input type="hidden" name="orderId" value="${order.orderId}"><input type="hidden" name="version" value="${order.version}"><input type="hidden" name="operationKey" value="${key}">${csrfField(csrf)}`;
 }
 
 function fulfillmentKind(order: OrderView): string {
