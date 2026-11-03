@@ -109,7 +109,10 @@ export function createHttpApp(makeRuntime: (env: Env) => Runtime) {
 async function afterIntake(deps: Deps, outcome: IntakeOutcome): Promise<void> {
   for (const conversation of outcome.conversations) {
     try {
+      const startedAt = deps.clock.now();
       await deps.doorbell.ring(conversation);
+      // The queue has it: with doorbell_received, this shows how long the queue held it.
+      deps.log.info("doorbell_rung", { ...conversation, latencyMs: deps.clock.now() - startedAt });
     } catch (error) {
       deps.log.error("doorbell_ring_failed", { ...conversation, reason: describeError(error) });
     }

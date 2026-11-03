@@ -212,6 +212,12 @@ export const BUTTON_TITLES = { confirm: "Confirmar", correct: "Corregir", cancel
 /** Customer words quoted back are capped at this many characters. */
 export const QUOTE_MAX_CHARS = 60;
 
+/**
+ * A delivery place is read back whole up to this many characters: a real address with its
+ * landmarks fits, and pasted text still can't flood the reply.
+ */
+export const PLACE_QUOTE_MAX_CHARS = 160;
+
 const BUTTON_TITLE_MAX = 20;
 
 /**
@@ -729,7 +735,7 @@ function quantitiesText(order: OrderView | null): string {
 function samePlaceReply(order: OrderView | null, place: SavedPlace | null, noted: readonly OrderLineView[]): RenderedReply {
   const claims = order === null ? [] : [stateIn(order, OPEN_STATES)];
   const lines: string[] = [COPY.samePlace];
-  if (place?.placeText != null) lines.push(`La vez pasada te lo llevamos a: ${quote(place.placeText)}.`);
+  if (place?.placeText != null) lines.push(`La vez pasada te lo llevamos a: ${quotePlace(place.placeText)}.`);
   else if (place?.pin != null) lines.push(COPY.samePlacePin);
   lines.push(COPY.samePlaceFallback);
   const same = order === null || place === null ? null : placeChoiceKey("same", order, place.placeId);
@@ -836,7 +842,7 @@ function fulfillmentLines(order: OrderView): string[] {
   if (fulfillment.mode === "pickup") return [`🏪 ${COPY.pickup}`];
   const place =
     fulfillment.placeText !== null
-      ? `Te lo llevamos a: ${capitalize(quote(fulfillment.placeText))}`
+      ? `Te lo llevamos a: ${capitalize(quotePlace(fulfillment.placeText))}`
       : fulfillment.pin != null
         ? COPY.deliveryToPin
         : fulfillment.placeId !== null
@@ -1120,9 +1126,18 @@ export function plainTextBody(body: string, textFallback: string | undefined): s
 
 /** Customer or catalog words, flattened to one line and capped. Data, never instructions. */
 export function quote(text: string): string {
+  return flatCapped(text, QUOTE_MAX_CHARS);
+}
+
+/** A delivery place as the customer said it: flattened like any quote, with the larger cap. */
+export function quotePlace(text: string): string {
+  return flatCapped(text, PLACE_QUOTE_MAX_CHARS);
+}
+
+function flatCapped(text: string, maxChars: number): string {
   const flat = text.replace(/[\p{Cc}\p{Cf}]/gu, " ").replace(/\s+/g, " ").trim();
   const chars = [...flat];
-  return chars.length <= QUOTE_MAX_CHARS ? flat : `${chars.slice(0, QUOTE_MAX_CHARS - 1).join("").trimEnd()}…`;
+  return chars.length <= maxChars ? flat : `${chars.slice(0, maxChars - 1).join("").trimEnd()}…`;
 }
 
 function buttonTitle(text: string): string {

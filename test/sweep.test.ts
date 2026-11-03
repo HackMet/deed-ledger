@@ -42,6 +42,11 @@ describe("cron sweep", () => {
     await h.runCron();
     const rings = h.takeRingsFor(store.businessId);
     expect(rings).toHaveLength(1);
+    // The log names the conversation the sweep picked up, by its IDs only.
+    const conversation = await conversationOf(store.businessId);
+    expect(h.log.fields("stranded_rung").filter((line) => line.businessId === store.businessId)).toEqual([
+      { level: "warn", event: "stranded_rung", ...conversation },
+    ]);
     await h.deliver(rings);
 
     // Later sweeps and a duplicate doorbell change nothing.

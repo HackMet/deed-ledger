@@ -141,14 +141,17 @@ export function harness(options: HarnessOptions = {}) {
       return response;
     },
 
-    /** Hands rung doorbells to the queue handler, as Cloudflare Queues would. */
-    async deliver(rings: readonly Ring[] = doorbell.take()) {
+    /**
+     * Hands rung doorbells to the queue handler, as Cloudflare Queues would. `sentAtMs`: when they
+     * were sent (default: now), for a queue that held them.
+     */
+    async deliver(rings: readonly Ring[] = doorbell.take(), sentAtMs: number = clock.now()) {
       if (rings.length === 0) return null;
       const batch = createMessageBatch<DoorbellMessage>(
         "store-assistant-jobs",
         rings.map((ring, n) => ({
           id: `doorbell-${n}-${crypto.randomUUID()}`,
-          timestamp: new Date(clock.now()),
+          timestamp: new Date(sentAtMs),
           attempts: 1,
           body: { v: 1, businessId: ring.conversation.businessId, conversationId: ring.conversation.conversationId },
         })),

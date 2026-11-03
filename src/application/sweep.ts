@@ -39,6 +39,8 @@ export async function runSweep(deps: Deps): Promise<SweepSummary> {
     try {
       await deps.doorbell.ring(conversation);
       rung++;
+      // Which conversation the safety net picked up, so a slow reply can be traced to it (IDs only).
+      deps.log.warn("stranded_rung", { ...conversation });
     } catch (error) {
       deps.log.error("sweep_ring_failed", { businessId: conversation.businessId, reason: describeError(error) });
     }
