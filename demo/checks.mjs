@@ -10,6 +10,16 @@ export function refusedForTheOrder(redirect) {
   return notice === "estado" || notice === "cambio";
 }
 
+/** The notice a console redirect carries (`aviso=…`), or null when it carries none. */
+export function noticeOf(redirect) {
+  return typeof redirect === "string" && redirect.startsWith("/") ? new URLSearchParams(redirect.split("#")[0].split("?")[1] ?? "").get("aviso") : null;
+}
+
+/** Whether a refusal carries the notice the engine gives: `want` is a notice key, or null for none. */
+export function noticeIs(redirect, want) {
+  return noticeOf(redirect) === want;
+}
+
 /** The quantity a readback line shows for a product, or null when the line isn't there. */
 export function readbackQuantity(reply, productName) {
   if (typeof reply !== "string") return null;
