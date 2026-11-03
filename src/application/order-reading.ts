@@ -2,7 +2,11 @@
  * Reading a customer's burst for the order handler: the jobs become the reader's messages, the
  * engine says what perception may know (the open order's labelled lines and the question it asked
  * last, contract gap a) and which catalog code matches against (gap b), Muse Spark reads, and code
- * matches lines. Nothing here decides or saves anything.
+ * matches lines. Nothing here saves anything.
+ *
+ * With a planner (`CONVERSATION=planner`, D-45): the reader gets no catalog labels and no pick
+ * rules, only says what was said; then the planner decides the turn (application/planner) and the
+ * reading comes back with its plan. A planner failure leaves the plan out: the classic path.
  */
 import type { BurstReading, Observation, PerceptionContext } from "../domain/contract/observation";
 import { type BurstMessage, isSupportedImage } from "../domain/perception/burst";
@@ -18,6 +22,7 @@ import {
   type UnreadableMedia,
 } from "./errors";
 import type { BurstRead, BurstReader, BurstReaderInput } from "./order-handler";
+import { needsPlanner, planTurn, type TurnPlannerDeps } from "./planner/plan-turn";
 import type { CatalogProduct } from "./perception/matching";
 import type { BurstReader as ModelBurstReader } from "./perception/reader";
 import type { Job, JobRepository, Lease, Logger, Tenant } from "./ports";
@@ -91,6 +96,8 @@ export interface OrderReadingDeps {
   /** Extends the conversation lease before each slow step (a transcription, the model call). */
   readonly leases: Pick<JobRepository, "extendLease">;
   readonly log: Logger;
+  /** The planner, when the conversation is the planner's (D-45); null or absent: classic. */
+  readonly planner?: TurnPlannerDeps | null;
 }
 
 /** The order handler's reader: one model call per burst, behind the store's spend cap. */
@@ -108,12 +115,24 @@ async function readBurst(deps: OrderReadingDeps, { lease, messages, context }: B
   }
   const [perception, catalog] = await Promise.all([deps.source.perceptionContext(context), deps.source.catalog(tenant)]);
   await holdLeaseFor(deps, lease, READING_MAX_MS);
-  const outcome = await deps.reader.read(tenant, { audience: "customer", messages: burst, context: perception, catalog });
+  const planner = deps.planner ?? null;
+  const outcome = await deps.reader.read(tenant, {
+    audience: "customer",
+    messages: burst,
+    context: perception,
+    catalog,
+    ...(planner === null ? {} : { withoutLabels: true }),
+  });
   if (!outcome.ok) throw new ReadingFailedError(outcome.reason);
   // Code matches come first; a pick only fills a line code couldn't match (resolvePicks).
   const picks: LineMatch[] = outcome.labelMatches.map(({ observation, line, productId }) => ({ observation, line, productId, how: "label_pick" }));
   if (picks.length > 0) deps.log.info("perception.label_picks_used", { businessId: tenant.businessId, count: picks.length });
-  return { reading: withSharedPin(outcome.reading, burst), matches: [...outcome.matches, ...picks], pendingQuestion: perception.pendingQuestion };
+  const reading = withSharedPin(outcome.reading, burst);
+  const read: BurstRead = { reading, matches: [...outcome.matches, ...picks], pendingQuestion: perception.pendingQuestion };
+  if (planner === null || !needsPlanner(reading)) return read;
+  await holdLeaseFor(deps, lease, READING_MAX_MS);
+  const planned = await planTurn(planner, { context, reading, matches: read.matches, messages: burst });
+  return planned === null ? read : { ...read, matches: [...read.matches, ...planned.matches], plan: planned.plan };
 }
 
 /**

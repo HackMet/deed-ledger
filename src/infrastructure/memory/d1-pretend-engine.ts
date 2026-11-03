@@ -21,6 +21,8 @@
 import type { CustomerContext, Engine, EngineResult, LineMatch, MemberContext } from "../../application/engine";
 import type { OrderReadingSource } from "../../application/order-reading";
 import type { CatalogProduct } from "../../application/perception/matching";
+import type { PlannerContext, PlannerSource } from "../../application/planner/source";
+import type { TurnPlan } from "../../domain/planner/types";
 import type { Commit, Tenant } from "../../application/ports";
 import type { ActionEnvelope, ConsoleAction, CustomerAction } from "../../domain/contract/actions";
 import type { BurstReading, PerceptionContext } from "../../domain/contract/observation";
@@ -59,14 +61,14 @@ interface Loaded {
   readonly json: string;
 }
 
-export class D1PretendEngine implements Engine, OrderReadingSource {
+export class D1PretendEngine implements Engine, OrderReadingSource, PlannerSource {
   constructor(
     private readonly db: D1Database,
     private readonly options: D1PretendEngineOptions = {},
   ) {}
 
-  async onBurst(context: CustomerContext, reading: BurstReading, matches: readonly LineMatch[]): Promise<EngineResult> {
-    return this.change(context, context.nowMs, (engine) => engine.onBurst(context, reading, matches));
+  async onBurst(context: CustomerContext, reading: BurstReading, matches: readonly LineMatch[], plan?: TurnPlan): Promise<EngineResult> {
+    return this.change(context, context.nowMs, (engine) => engine.onBurst(context, reading, matches, plan));
   }
 
   async onCustomerAction(context: CustomerContext, envelope: ActionEnvelope<CustomerAction>): Promise<EngineResult> {
@@ -87,6 +89,10 @@ export class D1PretendEngine implements Engine, OrderReadingSource {
 
   async perceptionContext(context: CustomerContext): Promise<PerceptionContext> {
     return (await this.load(context)).engine.perceptionContext(context);
+  }
+
+  async plannerContext(context: CustomerContext): Promise<PlannerContext> {
+    return (await this.load(context)).engine.plannerContext(context);
   }
 
   async catalog(tenant: Tenant): Promise<readonly CatalogProduct[]> {

@@ -8,6 +8,9 @@ import type { Engine } from "./application/engine";
 import { type BurstReader as OrderBurstReader, createOrderHandler } from "./application/order-handler";
 import { type BurstMediaResolver, createOrderReading, readingSourceOf, storedMediaResolver } from "./application/order-reading";
 import { BurstReader } from "./application/perception/reader";
+import { interimRetrieveCandidates } from "./application/planner/interim-retrieval";
+import { PlannerModel } from "./application/planner/plan-turn";
+import { plannerSourceOf } from "./application/planner/source";
 import { placeholderHandler } from "./application/placeholder-handler";
 import type {
   AudioDecoder,
@@ -224,6 +227,8 @@ export function buildBurstReader(
 /**
  * The order handler's reader: Muse Spark when MODEL_API_KEY is set (or a provider is passed) and the
  * engine offers perception's reads (gaps a and b). Otherwise null, and bursts get the placeholder.
+ * With CONVERSATION=planner and an engine that offers the planner's read, the planner decides each
+ * turn after the reader, on the same provider and the same spend cap (D-45).
  */
 export function buildOrderReading(
   env: Env,
@@ -252,15 +257,25 @@ export function buildOrderReading(
       transcriber: overrides.transcriber ?? museTranscriber(readConfig(env)),
       log: deps.log,
     });
+  const provider =
+    overrides.provider ?? new MuseSparkProvider({ apiKey: env.MODEL_API_KEY ?? "", fetch: (input, init) => fetch(input, init) });
+  const plannerSource = readConfig(env).conversation === "planner" ? plannerSourceOf(engine) : null;
   return createOrderReading({
-    reader: buildBurstReader(env, deps, {
-      ...(overrides.db === undefined ? {} : { db: overrides.db }),
-      ...(overrides.provider === undefined ? {} : { provider: overrides.provider }),
-    }),
+    reader: buildBurstReader(env, deps, { ...(overrides.db === undefined ? {} : { db: overrides.db }), provider }),
     source,
     media,
     leases: jobs,
     log: deps.log,
+    planner:
+      plannerSource === null
+        ? null
+        : {
+            model: new PlannerModel({ provider, spend: new D1SpendLedger(overrides.db ?? env.DB), clock: deps.clock, log: deps.log }),
+            // Lane L1's retrieveCandidates (src/domain/retrieval.ts) replaces this at merge.
+            retrieve: interimRetrieveCandidates,
+            source: plannerSource,
+            log: deps.log,
+          },
   });
 }
 

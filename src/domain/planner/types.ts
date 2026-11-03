@@ -117,4 +117,23 @@ export interface TurnPlan {
   }[];
   /** Already checked: no digits, amounts, state words, promises or questions. */
   readonly say: string;
+  /**
+   * Added by L0 (Nov 2): validated changes to lines that no observation or match carries: a product
+   * picked for an order line (L), a quantity the burst said for any line, a removal. Product IDs
+   * come from code's candidate table, never from the model. Absent: none.
+   */
+  readonly changes?: readonly LineChange[];
+  /**
+   * Added by L0 (Nov 2): for an `options` question, the products offered per line, best first, as
+   * retrieval found them, so the engine never searches the catalog itself. Absent: none.
+   */
+  readonly options?: readonly { readonly lineRef: string; readonly productIds: readonly string[] }[];
+}
+
+/** One validated change to a line, by its label in this turn. */
+export interface LineChange {
+  readonly lineRef: string;
+  readonly productId?: string;
+  readonly quantity?: DecimalString;
+  readonly remove?: true;
 }

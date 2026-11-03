@@ -25,6 +25,15 @@
  * moves the order comes back as `answered` beside the next step; the name is never asked while the
  * order is built: Confirmar with no name on file asks it and holds the confirmation, which the
  * name completes under the same operation key.
+ *
+ * The planner path (Nov 2, proposed in docs/contract.md "Proposed (Nov 2): planner"): with a
+ * validated `TurnPlan`, a burst skips the question queue and the engine's own catalog search. New
+ * lines take only code's exact matches and the planner's picks; the plan's changes and assumed
+ * quantities are applied; then the plan's question is asked, or the order is read back, after the
+ * readiness gate (`missingFor`, `settleStep`) has the last word. A draft the planner shaped stays
+ * on that path: a later burst with no plan (small talk, a planner failure) asks what the readiness
+ * gate says is missing, so the two kinds of questions never mix. Without a plan, a draft that never
+ * had one behaves exactly as before.
  */
 import type { AnsweredQuestion, CustomerContext, Engine, EngineResult, LineMatch, MemberContext } from "../../application/engine";
 import type { OrderReadingSource } from "../../application/order-reading";
@@ -52,6 +61,11 @@ import { storeHoursKey } from "../../domain/store-hours";
 import { productWords, searchCatalog } from "../../domain/catalog-search";
 import { fulfillmentWords, optionNumber, quantityFrom } from "../../domain/answer-words";
 import { MAX_OPTIONS, type ProductOption } from "../../domain/contract/outcomes";
+import type { DecimalString } from "../../domain/contract/numbers";
+import type { AskKind, RetrievableProduct, SoldBy, TurnPlan } from "../../domain/planner/types";
+import { isWeightUnit, settleStep } from "../../domain/planner/validate";
+import { missingFor } from "../../domain/readiness";
+import type { LastAsk, PlannerContext, PlannerSource } from "../../application/planner/source";
 
 export interface StoredOrder {
   readonly customerId: string;
@@ -69,6 +83,10 @@ export interface PretendProduct extends CatalogProduct {
   readonly availability?: Availability;
   /** Alcohol or tobacco: never priced or offered in chat. */
   readonly restricted?: boolean;
+  /** How the store sells it (planner path); absent or null: the store hasn't said. */
+  readonly soldBy?: SoldBy | null;
+  /** The store's usual amount (planner path, D-46); absent or null: none. */
+  readonly usualQuantity?: DecimalString | null;
 }
 
 export interface MemoryEngineOptions {
@@ -92,6 +110,15 @@ interface Draft {
   shown: boolean;
   /** The customer answered Otro lugar: the saved place isn't offered again for this order. */
   declinedSavedPlace: boolean;
+  /** Set once the planner shaped this draft: the question last shown, and quantity asks per line. */
+  planned?: PlannedDraft;
+}
+
+/** What the planner path keeps about a draft between bursts. */
+interface PlannedDraft {
+  last: LastAsk | null;
+  /** Line ID → how many times its quantity was asked (readiness stops after MAX_QUANTITY_ASKS). */
+  readonly quantityAsks: Record<string, number>;
 }
 
 /**
@@ -162,6 +189,8 @@ interface DraftSnapshot {
   readonly shown: boolean;
   /** Absent in snapshots saved before #29. */
   readonly declinedSavedPlace?: boolean;
+  /** Absent unless the planner shaped the draft (Nov 2). */
+  readonly planned?: PlannedDraft;
 }
 
 const ON_THE_LIST: readonly OrderView["state"][] = ["confirmado", "preparando", "listo"];
@@ -169,7 +198,7 @@ const PACKING: readonly OrderView["state"][] = ["confirmado", "preparando"];
 
 const OPEN: readonly OrderView["state"][] = ["armando", "por_confirmar", "confirmado", "preparando", "listo"];
 
-export class MemoryEngine implements Engine, OrderReadingSource {
+export class MemoryEngine implements Engine, OrderReadingSource, PlannerSource {
   private readonly stores = new Map<string, StoreState>();
 
   /** `seed` fills a store with orders the first time it's used. */
@@ -182,14 +211,15 @@ export class MemoryEngine implements Engine, OrderReadingSource {
    * One outcome for the burst: the next thing to say. A retried job (same job ID) gets its first
    * outcome again without applying the burst twice, standing in for the real engine's operation key.
    */
-  async onBurst(context: CustomerContext, reading: BurstReading, matches: readonly LineMatch[]): Promise<EngineResult> {
+  async onBurst(context: CustomerContext, reading: BurstReading, matches: readonly LineMatch[], plan?: TurnPlan): Promise<EngineResult> {
     const state = this.state(context);
     const key = customerOperationKey(context.customerId, `burst:${context.jobId}`);
     const first = state.operations.get(key);
     if (first !== undefined) return result(first);
 
-    const burst = new BurstApplier(state, context, this.options.catalog ?? [], matches, this.options.storeHours ?? null, this.options.deliveryFee ?? null);
+    const burst = new BurstApplier(state, context, this.options.catalog ?? [], matches, this.options.storeHours ?? null, this.options.deliveryFee ?? null, plan ?? null);
     reading.observations.forEach((observation, index) => burst.apply(observation, index));
+    burst.applyPlan();
     const { outcome, answered } = burst.decide();
     state.operations.set(key, outcome);
     if (outcome.type === "ask") state.lastQuestion.set(context.customerId, outcome.question);
@@ -228,6 +258,20 @@ export class MemoryEngine implements Engine, OrderReadingSource {
 
   async catalog(): Promise<readonly CatalogProduct[]> {
     return this.options.catalog ?? [];
+  }
+
+  /** What the planner may know: the open order, each line's words, the question last shown, the store. */
+  async plannerContext(context: CustomerContext): Promise<PlannerContext> {
+    const state = this.state(context);
+    const open = openOrderOf(state, context.customerId);
+    const draft = open === null ? undefined : state.drafts.get(open.order.orderId);
+    return {
+      order: open?.order ?? null,
+      said: Object.fromEntries((open?.order.lines ?? []).map((line) => [line.lineId, draft?.names.get(line.lineId) ?? line.text])),
+      lastAsk: draft?.planned?.last ?? null,
+      products: (this.options.catalog ?? []).map(retrievable),
+      store: { hoursSet: (this.options.storeHours ?? null) !== null, delivery: (this.options.deliveryFee ?? null) !== null ? "yes" : "unknown" },
+    };
   }
 
   /**
@@ -285,7 +329,7 @@ export class MemoryEngine implements Engine, OrderReadingSource {
     if (stored.order.state !== "armando" || stored.order.fulfillment?.mode !== "delivery") {
       return { type: "rejected", reason: "invalid_state", order: stored.order };
     }
-    const burst = new BurstApplier(state, context, this.options.catalog ?? [], [], this.options.storeHours ?? null, this.options.deliveryFee ?? null);
+    const burst = new BurstApplier(state, context, this.options.catalog ?? [], [], this.options.storeHours ?? null, this.options.deliveryFee ?? null, null);
     if (action.type === "accept_saved_place") {
       const saved = savedPlaceOf(context);
       if (saved === null || saved.placeId !== action.placeId) return { type: "rejected", reason: "not_found", order: stored.order };
@@ -356,6 +400,7 @@ export class MemoryEngine implements Engine, OrderReadingSource {
           names: [...draft.names],
           shown: draft.shown,
           declinedSavedPlace: draft.declinedSavedPlace,
+          ...(draft.planned === undefined ? {} : { planned: structuredClone(draft.planned) }),
         },
       ]),
       lastQuestion: [...state.lastQuestion],
@@ -377,6 +422,7 @@ export class MemoryEngine implements Engine, OrderReadingSource {
             names: new Map(draft.names),
             shown: draft.shown,
             declinedSavedPlace: draft.declinedSavedPlace ?? false,
+            ...(draft.planned === undefined ? {} : { planned: structuredClone(draft.planned) }),
           },
         ]),
       ),
@@ -469,6 +515,14 @@ class BurstApplier {
   private offTopic = false;
   /** Lines added by this burst, in order, with the products that fit them when a few do. */
   private readonly added: { readonly lineId: string; readonly options: readonly string[]; readonly quantity: boolean }[] = [];
+  /** Planner path: the lines this burst added, in order (N1 is the first). */
+  private readonly newLines: string[] = [];
+  /** Planner path: lines whose quantity this burst assumed. */
+  private readonly assumedNow: string[] = [];
+  /** The reading flagged something it couldn't read. */
+  private illegible = false;
+  /** On the planner path: a plan came with this burst, or the planner shaped the draft before. */
+  private readonly planning: boolean;
 
   constructor(
     private readonly state: StoreState,
@@ -477,6 +531,7 @@ class BurstApplier {
     private readonly matches: readonly LineMatch[],
     private readonly storeHours: StoreHours | null,
     private readonly deliveryFee: Centavos | null,
+    private readonly plan: TurnPlan | null,
   ) {
     this.stored = openOrderOf(state, context.customerId);
     this.before = this.stored?.order ?? null;
@@ -487,13 +542,16 @@ class BurstApplier {
       declinedSavedPlace: false,
     };
     this.named = (context as { customerName?: string | null }).customerName ?? this.stored?.customerName ?? null;
+    this.planning = plan !== null || this.draft.planned !== undefined;
   }
 
   apply(observation: Observation, index: number): void {
     if (observation.issues.some((issue) => issue.code === "embedded_instructions")) this.embedded = true;
+    if (observation.issues.some((issue) => issue.code === "illegible")) this.illegible = true;
     switch (observation.kind) {
       case "customer_order":
         observation.lines.forEach((line, n) => this.addLine(line, this.matchOf(index, n)));
+        if (this.planning) return;
         this.queueIssues(observation, observation.lines.length);
         this.queueLineQuestions();
         return;
@@ -502,16 +560,16 @@ class BurstApplier {
           if (edit.op === "add") return this.addLine(edit.line, this.matchOf(index, n));
           const at = edit.target.ref === null ? -1 : Number(edit.target.ref.slice(1)) - 1;
           const line = this.stored?.order.lines[at];
-          if (line === undefined) return this.draft.pending.push({ code: "ambiguous_product", lineId: null });
+          if (line === undefined) return this.planning ? undefined : this.draft.pending.push({ code: "ambiguous_product", lineId: null });
           // "Entonces solo los frijoles" after a No hay: that line is already out; nothing changes.
           if (edit.op === "remove" && line.mark === "no_hay") return;
           this.setLines(
             edit.op === "remove"
               ? this.stored!.order.lines.filter((l) => l !== line)
-              : this.stored!.order.lines.map((l) => (l === line ? { ...l, quantity: edit.quantity } : l)),
+              : this.stored!.order.lines.map((l) => (l === line ? withQuantity(l, edit.quantity) : l)),
           );
         });
-        this.queueLineQuestions();
+        if (!this.planning) this.queueLineQuestions();
         return;
       case "order_cancel":
         this.cancelled = this.stored !== null;
@@ -522,7 +580,8 @@ class BurstApplier {
       case "clarification":
         if (this.answerPlaceQuestion(observation.answer)) return;
         if (this.answerFulfillmentQuestion(observation.answer)) return;
-        this.settleQuestion(observation.answer, observation.pick ?? null, observation.quantity ?? null);
+        // On the planner path the plan says what an answer changed (its `changes`).
+        if (!this.planning) this.settleQuestion(observation.answer, observation.pick ?? null, observation.quantity ?? null);
         return;
       case "customer_name":
         this.named = observation.name;
@@ -562,6 +621,11 @@ class BurstApplier {
       return only({ type: "order_cancelled", order });
     }
     if (this.handoff !== null) return only(this.handoff);
+    if (this.plan?.move === "handoff") {
+      // Only the owner can answer it. What the burst added is kept, being built, for after.
+      if (this.changed && this.stored !== null) this.save({ ...this.stored.order, state: "armando" });
+      return only({ type: "handoff" });
+    }
 
     if (this.stored === null || !this.changed) {
       if (this.statusAsked) {
@@ -594,6 +658,7 @@ class BurstApplier {
 
   /** The next step for an order being built: an open question, pickup or delivery, the place, the readback. */
   private nextStep(): EngineOutcome {
+    if (this.planning) return this.plannedStep();
     const order = this.stored!.order;
     this.dropSettledQuestions(order);
     // Asked enough: the order moves on with those lines' quantities unknown, never made up.
@@ -610,11 +675,144 @@ class BurstApplier {
       const offer = savedPlaceOf(this.context) !== null && !this.draft.declinedSavedPlace;
       return this.ask(offer ? "same_place" : "delivery_place", null, "armando");
     }
+    return this.readbackStep();
+  }
+
+  /** The order is complete: read back (or, already on the list, read back as changed). */
+  private readbackStep(): EngineOutcome {
+    const order = this.stored!.order;
     const onList = this.before !== null && PACKING.includes(this.before.state);
     const next: OrderView = { ...order, state: "por_confirmar", queuePosition: null };
     this.draft.shown = true;
+    if (this.draft.planned !== undefined) this.draft.planned.last = null;
     this.save(next);
     return onList ? { type: "order_changed", order: next } : { type: "readback", order: next };
+  }
+
+  /**
+   * The plan's changes and assumed quantities, after the observations. Labels resolve against this
+   * turn: "N3" is the third line this burst added, "L2" the second line of the order as it was.
+   */
+  applyPlan(): void {
+    if (this.plan === null) return;
+    for (const change of this.plan.changes ?? []) {
+      const lineId = this.lineIdOf(change.lineRef);
+      const line = this.stored?.order.lines.find((l) => l.lineId === lineId);
+      if (line === undefined) continue;
+      if (change.remove === true) {
+        this.setLines(this.stored!.order.lines.filter((l) => l.lineId !== lineId));
+        continue;
+      }
+      let next = line;
+      const product = change.productId === undefined ? undefined : this.catalog.find((p) => p.productId === change.productId);
+      if (product !== undefined && product.productId !== line.productId) {
+        const restricted = line.restricted || product.restricted === true;
+        next = { ...next, productId: product.productId, productName: product.names[0] ?? null, unitPrice: restricted ? null : product.price, availability: soldOutOrUnknown(product), restricted };
+      }
+      if (change.quantity !== undefined && (change.quantity !== line.quantity || line.quantitySource !== undefined)) next = withQuantity(next, change.quantity);
+      if (next !== line) this.setLines(this.stored!.order.lines.map((l) => (l.lineId === lineId ? next : l)));
+    }
+    for (const assumed of this.plan.assumed) {
+      const lineId = this.lineIdOf(assumed.lineRef);
+      const line = this.stored?.order.lines.find((l) => l.lineId === lineId);
+      if (line === undefined || line.quantity !== null) continue;
+      this.setLines(this.stored!.order.lines.map((l) => (l.lineId === lineId ? { ...l, quantity: assumed.quantity, quantitySource: assumed.source } : l)));
+      this.assumedNow.push(line.lineId);
+    }
+  }
+
+  /** A label of this turn as a line ID: N from this burst's new lines, L from the order before it. */
+  private lineIdOf(ref: string): string | null {
+    const label = /^([NL])([1-9]\d{0,8})$/u.exec(ref);
+    if (label === null) return null;
+    const at = Number(label[2]) - 1;
+    return (label[1] === "N" ? this.newLines[at] : this.before?.lines[at]?.lineId) ?? null;
+  }
+
+  /**
+   * The planner path's next step: the plan's question or readback, or, with no plan (or a plan that
+   * only restates), the question last shown; the readiness gate has the last word (settleStep).
+   */
+  private plannedStep(): EngineOutcome {
+    const order = this.stored!.order;
+    const planned = (this.draft.planned ??= { last: null, quantityAsks: {} });
+    const plan = this.plan;
+    const options = this.optionsByLine();
+    let proposed: Parameters<typeof settleStep>[0]["proposed"] = null;
+    if (plan?.move === "ask" && plan.ask !== null) {
+      proposed = { kind: plan.ask.kind, lineIds: plan.ask.lineRefs.flatMap((ref) => this.lineIdOf(ref) ?? []) };
+    } else if (plan?.move === "readback") {
+      proposed = "readback";
+    } else if (!this.changed && planned.last !== null) {
+      proposed = { kind: planned.last.kind, lineIds: planned.last.lineIds };
+    }
+    const step = settleStep({
+      order,
+      missing: missingFor(order, planned.quantityAsks),
+      proposed,
+      withOptions: new Set([...options].filter(([, found]) => found.length > 1).map(([lineId]) => lineId)),
+      illegible: this.illegible,
+    });
+    return step.type === "readback" ? this.readbackStep() : this.plannedAsk(step.kind, step.lineIds, options);
+  }
+
+  /** Each line's products to choose from: this plan's, or those shown with the question last asked. */
+  private optionsByLine(): Map<string, ProductOption[]> {
+    const ids = new Map<string, readonly string[]>();
+    if (this.plan !== null) {
+      for (const offer of this.plan.options ?? []) {
+        const lineId = this.lineIdOf(offer.lineRef);
+        if (lineId !== null) ids.set(lineId, offer.productIds);
+      }
+    } else {
+      for (const [lineId, productIds] of Object.entries(this.draft.planned?.last?.options ?? {})) ids.set(lineId, productIds);
+    }
+    return new Map(
+      [...ids].map(([lineId, productIds]) => [
+        lineId,
+        productIds.slice(0, MAX_OPTIONS).flatMap((id): ProductOption[] => {
+          const product = this.catalog.find((p) => p.productId === id);
+          return product === undefined ? [] : [{ productId: id, name: product.names[0] ?? id, unitPrice: product.restricted === true ? null : product.price }];
+        }),
+      ]),
+    );
+  }
+
+  /** One kind of question about its lines (D-47), remembered for the next turn and counted. */
+  private plannedAsk(kind: Exclude<AskKind, "none">, lineIds: readonly string[], options: ReadonlyMap<string, readonly ProductOption[]>): EngineOutcome {
+    const planned = this.draft.planned!;
+    const same = planned.last?.kind === kind && planned.last.lineIds.join() === lineIds.join();
+    const shown = kind === "options" ? Object.fromEntries(lineIds.map((id) => [id, (options.get(id) ?? []).map((o) => o.productId)])) : undefined;
+    planned.last = { kind, lineIds: [...lineIds], ...(shown === undefined ? {} : { options: shown }), times: same ? planned.last!.times + 1 : 1 };
+    if (kind === "quantities") for (const id of lineIds) planned.quantityAsks[id] = (planned.quantityAsks[id] ?? 0) + 1;
+    if (kind === "delivery_place" && savedPlaceOf(this.context) !== null && !this.draft.declinedSavedPlace) {
+      // A saved place is offered as a question, once per order; never applied without a yes.
+      return this.ask("same_place", null, "armando");
+    }
+    const order: OrderView = { ...this.stored!.order, state: "armando" };
+    this.save(order);
+    const line = lineIds.length === 0 ? -1 : order.lines.findIndex((l) => l.lineId === lineIds[0]);
+    const byWeight = kind === "quantities" ? lineIds.filter((id) => this.soldByWeight(order.lines.find((l) => l.lineId === id))) : [];
+    const assumed = this.assumedNow.filter((id) => order.lines.some((l) => l.lineId === id));
+    return {
+      type: "ask",
+      question: questionCodeOf(kind, lineIds.length),
+      line: line === -1 ? null : line,
+      order,
+      questions: {
+        kind,
+        lineIds: [...lineIds],
+        ...(shown === undefined ? {} : { options: Object.fromEntries(lineIds.map((id) => [id, [...(options.get(id) ?? [])]])) }),
+        ...(byWeight.length === 0 ? {} : { byWeight }),
+      },
+      ...(assumed.length === 0 ? {} : { assumed }),
+    };
+  }
+
+  private soldByWeight(line: OrderLineView | undefined): boolean {
+    if (line === undefined) return false;
+    const product = line.productId === null ? undefined : this.catalog.find((p) => p.productId === line.productId);
+    return isWeightUnit(line.unit) || product?.soldBy === "weight";
   }
 
   /**
@@ -686,7 +884,7 @@ class BurstApplier {
     this.state.held.delete(this.context.customerId);
     const stored = this.stored!;
     if (stored.order.state !== "por_confirmar" || stored.order.version !== held.version) return this.restate();
-    const order: OrderView = { ...stored.order, state: "confirmado" };
+    const order: OrderView = { ...agreed(stored.order), state: "confirmado" };
     const outcome: EngineOutcome = { type: "order_confirmed", order };
     this.stored = { ...stored, customerName: this.named, confirmedAtMs: this.context.nowMs, order };
     this.state.orders.set(order.orderId, this.stored);
@@ -834,6 +1032,12 @@ class BurstApplier {
     const order = this.stored?.order ?? this.newOrder();
     const lineId = `${order.orderId}-${order.lines.length + 1}`;
     this.draft.names.set(lineId, line.name);
+    if (this.planning) {
+      // Only code's exact matches and the planner's picks: never a guess by words or a typo.
+      this.setLines([...order.lines, lineView(lineId, line, product)], order);
+      this.newLines.push(lineId);
+      return;
+    }
     let options: string[] = [];
     if (product === null && !line.restrictedCategory) {
       const found = searchCatalog(line.name, this.catalog);
@@ -1048,6 +1252,53 @@ function soldOutOrUnknown(product: PretendProduct): OrderLineView["availability"
   return product.availability === "se_acabo" ? "se_acabo" : "no_se";
 }
 
+/** A quantity the customer said: any assumed mark goes. */
+function withQuantity(line: OrderLineView, quantity: DecimalString): OrderLineView {
+  if (line.quantitySource === undefined) return { ...line, quantity };
+  const { quantitySource: _assumed, ...said } = line;
+  return { ...said, quantity };
+}
+
+/** Confirmar makes an assumed quantity the agreed one (D-46). */
+function agreed(order: OrderView): OrderView {
+  if (!order.lines.some((line) => line.quantitySource !== undefined)) return order;
+  return { ...order, lines: order.lines.map(({ quantitySource: _assumed, ...line }) => line) };
+}
+
+/** The ask kind as the question code perception and the never-silent fallback know. */
+function questionCodeOf(kind: Exclude<AskKind, "none">, lines: number): QuestionCode {
+  switch (kind) {
+    case "quantities":
+      return lines === 1 ? "quantity" : "quantities";
+    case "options":
+      return "ambiguous_product";
+    case "unreadable":
+      return "illegible";
+    case "fulfillment":
+      return "pickup_or_delivery";
+    case "delivery_place":
+      return "delivery_place";
+    case "what_to_order":
+      return "what_to_order";
+  }
+}
+
+/** A pretend product as retrieval sees it: no price, only whether there is one. */
+function retrievable(product: PretendProduct): RetrievableProduct {
+  const restricted = product.restricted === true;
+  return {
+    productId: product.productId,
+    names: product.names,
+    aliases: product.aliases,
+    barcode: product.barcode,
+    soldBy: product.soldBy ?? null,
+    usualQuantity: product.usualQuantity ?? null,
+    hasPrice: product.price !== null && !restricted,
+    availability: product.availability ?? "no_se",
+    restricted,
+  };
+}
+
 /** "el paquete de 10" asked about "Tortillas paquete 10": the 10 is the product, not the quantity. */
 function withoutNameNumbers(answer: string, productName: string | null): string {
   const numbers = new Set((productName ?? "").match(/\d+(?:[.,]\d+)?/gu) ?? []);
@@ -1089,7 +1340,7 @@ function answer(
   switch (action.type) {
     case "confirm_order": {
       if (order.state !== "por_confirmar") return null;
-      const next: OrderView = { ...order, state: "confirmado" };
+      const next: OrderView = { ...agreed(order), state: "confirmado" };
       return { stored: { ...stored, order: next, confirmedAtMs: nowMs }, outcome: { type: "order_confirmed", order: next } };
     }
     case "cancel_order": {

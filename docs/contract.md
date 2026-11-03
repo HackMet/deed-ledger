@@ -221,3 +221,69 @@ not agreed. All contract additions are optional fields or new union members, so 
    outbox notice signed with the owner's first name, deduplicated by the item, and the item leaves the list. A
    confirmed order with lines nobody could price or find raises a `customer_question` item with topic
    `order_prices`, so every "te confirmo" reaches someone who can answer it.
+
+## Proposed (Nov 2): planner
+
+**Status:** built against the pretend engine (`memory-engine.ts`, and through it `d1-pretend-engine.ts`) behind
+`CONVERSATION=planner` (default `classic`); proposed to the engine, not agreed. Decisions D-45 to D-49. Every
+addition is an optional field, an optional parameter or a new union member, so both sides compile and the classic
+path is unchanged.
+
+The planner is a second Muse Spark call per burst, after the reader, with strict json_schema output and no write
+tools. It names lines and products by labels only (`L` order lines, `N` new items of the burst, `P` products
+offered for a line); code maps them back, refuses what it can't back (`src/domain/planner/validate.ts`), and gives
+the engine a `TurnPlan`. Code still renders every fact, and the claim check is unchanged.
+
+1. **`Engine.onBurst(context, reading, matches, plan?: TurnPlan)`** (`src/domain/planner/types.ts`). `TurnPlan`:
+   `move` (`ask | readback | answer_only | handoff | restate`), `ask` (`{ kind, lineRefs }` or null: one kind per
+   message, several lines), `assumed` (`{ lineRef, quantity, source: "suggested" | "store_usual" }[]`), `say` (one
+   checked sentence, rendered by our side, ignored by the engine), and two optional fields added while building:
+   `changes` (`{ lineRef, productId?, quantity?, remove? }[]`: a product picked for an order line, a quantity the
+   burst said, a removal; the reading has no observation for these) and `options` (`{ lineRef, productIds }[]`: the
+   products retrieval offered for an `options` question, so the engine never searches the catalog itself). Labels
+   resolve against the turn: `N3` is the third line the burst adds (customer_order lines, then order_change adds, in
+   reading order), `L2` the second line of the order as it was before the burst. With a plan the engine skips its
+   own questions and its own catalog search (new lines take only code's exact matches and the planner's picks),
+   applies `changes` and `assumed`, then asks or reads back. **The engine keeps the last word on readiness**
+   (`settleStep` in `validate.ts`): a readback it can't allow comes back as `ask` with the first missing kind, and a
+   question about lines that don't need it is narrowed or replaced. A draft the planner shaped stays on that path:
+   a later burst with no plan (small talk, a planner failure) asks what the readiness gate says is missing.
+2. **`LineMatch.how: "planner_pick"`**: a candidate the planner chose for a new item, mapped to a product by code,
+   like `label_pick`.
+3. **`OrderLineView.quantitySource?: "said" | "suggested" | "store_usual"`**; absent means said. The readback marks
+   the other two ("• 1 × Piña (te puse 1): …"); Confirmar makes them the agreed quantity (the pretend engine drops
+   the mark on confirm). A quantity the customer later says replaces the assumption and drops the mark.
+4. **`EngineOutcome.ask` gains `questions?: AskQuestions` and `assumed?: lineId[]`**. `AskQuestions`:
+   `{ kind, lineIds, options?: Record<lineId, ProductOption[]>, byWeight?: lineId[] }`: every missing quantity
+   together, or every "which one" together, or pickup/delivery, the place, what to order. `question` and `line` stay
+   filled (`quantity`/`quantities`, `ambiguous_product`, `illegible`, `pickup_or_delivery`, `delivery_place`,
+   `what_to_order`) so perception's PREGUNTA PENDIENTE and the never-silent fallback keep working. Option prices
+   are claims, backed by the outcome (`backedClaims` reads `questions.options` too). `assumed` lists the lines
+   whose quantity this burst assumed, for "Te puse 1 de…".
+5. **`missingFor(order, quantityAsks)`** (`src/domain/readiness.ts`, pure) is the shared readiness rule: no lines
+   (what to order), lines without a quantity until asked twice (`MAX_QUANTITY_ASKS`), unknown fulfillment, delivery
+   without a place. Unmatched products and unknown prices are not blocking (they read back as "te confirmo");
+   restricted and out-of-stock lines never need a quantity.
+6. **The planner's read** (`src/application/planner/source.ts`, local until agreed, like gaps a and b):
+   `plannerContext(context)` → the open order, each line's words as perception read them, the question last shown
+   on the planner path (kind, line IDs, options shown, times in a row), the store's products as retrieval needs
+   them (`RetrievableProduct`: whether there's a price, never the price), and the store layer as booleans
+   (`hoursSet`, `delivery`).
+7. **Catalog fields** (our temporary products now; the engine's `products` later): `sold_by: "unit" | "weight" |
+   null` and `usual_quantity: DecimalString | null`, optional on `PretendProduct` today and empty until lane L1
+   adds the columns; `store_aliases` (proposed / approved) with L1. Migration number still to settle: our range
+   0003–0019 is used up except the gaps 0009, 0011–0013; the engine's is 0020–0039.
+
+**What the real engine (`OrderEngine`, kercmari) would need** before the planner can run on it. Nothing here breaks
+its current types; it runs the classic path until then, since it has no `plannerContext`.
+
+- Save a version in `armando` when the plan asks. Today `onBurst()` applies lines and fulfillment and goes straight
+  to `change()`, which always writes `por_confirmar` and returns a readback.
+- Accept `plan` in `onBurst`: apply `changes` (pick for an order line, quantity, remove) and `assumed`, take
+  `planner_pick` matches like any match, and run `missingFor` + `settleStep` before choosing between `ask` and
+  `readback`.
+- Store `quantitySource` on order lines, mark it in the readback version, and clear it when the customer confirms
+  or says a quantity.
+- Remember the question last shown per open order (kind, line IDs, options shown, times) and quantity asks per
+  line, and expose them with the order through `plannerContext`.
+- Return `ask` outcomes with `questions` (and `assumed`), with the option prices from its own price records.
