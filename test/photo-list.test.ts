@@ -69,7 +69,7 @@ describe("a photo of a list with no quantities", () => {
     const lines = allLines();
     lines[10] = line("sal", "sal", null, null, box(0, [0.1, 0.94, 0.3, 1.03]));
     const replies = await send(reading(lines));
-    // The ten read are echoed (four by name, the rest counted), the eleventh is asked about.
-    expect(replies).toEqual(["Anotado ✅\n• Arroz\n• Frijoles\n• Azucar\n• Cafe\n• y 6 más\n\nNo alcancé a leer bien sal. ¿Me lo escribís?"]);
+    // The ten read still need amounts (four by name, the rest counted), the eleventh is asked about.
+    expect(replies).toEqual(["Me falta saber cuánto querés de arroz, frijoles, azucar, cafe y 6 más.\n\nNo alcancé a leer bien sal. ¿Me lo escribís?"]);
   });
 });

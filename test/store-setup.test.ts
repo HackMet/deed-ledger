@@ -475,7 +475,7 @@ describe("No hay reaches the customer (PRETEND_ENGINE, end to end)", () => {
     await r.addProduct(t.store, { name: "Leche 1 L", otherNames: ["leche"], price: 3200 }, 1);
     await r.setNoHay(t.store, (await r.listProducts(t.store)).find((p) => p.name === "Leche 1 L")!.productId, true, 1);
 
-    expect(await t.say("¿Hay leche y arroz?")).toBe(["Leche: se nos acabó.", "Arroz: te confirmo si hay."].join("\n"));
+    expect(await t.say("¿Hay leche y arroz?")).toBe(["Leche: ahorita no hay.", "Arroz: te confirmo si hay."].join("\n"));
     expect(await t.say("¿A cuánto el arroz?")).toBe("Arroz: L 18.");
     expect(await t.say("¿A qué hora abren?")).toBe(COPY.hoursUnknown);
   });
@@ -505,7 +505,7 @@ describe("No hay reaches the customer (PRETEND_ENGINE, end to end)", () => {
     expect(readback.split("\n")).toEqual([
       "Tu pedido:",
       "• 2 Arroz 1 lb · L 36",
-      "• Leche 1 L: no nos queda.",
+      "• Leche 1 L: ahorita no hay.",
       "",
       "📍 Te lo llevamos a: Frente al parque",
       "💵 Total: L 61 (L 36 + L 25 de envío). Pagás cuando te lo entregamos.",

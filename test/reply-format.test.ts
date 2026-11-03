@@ -102,8 +102,8 @@ describe("Anotado: only what this burst added or changed", () => {
   });
 
   it("lists at most four items, then counts the rest on its own line", () => {
-    const lines = ["Plátanos", "Piña", "Sandía", "Catsup", "Arroz", "Sal"].map((name, n) => view(`l${n}`, name));
-    expect(echoBlock(lines)).toBe("Anotado ✅\n• Plátanos\n• Piña\n• Sandía\n• Catsup\n• y 2 más");
+    const lines = ["Plátanos", "Piña", "Sandía", "Catsup", "Arroz", "Sal"].map((name, n) => view(`l${n}`, name, { quantity: "1" }));
+    expect(echoBlock(lines)).toBe("Anotado ✅\n• 1 Plátanos\n• 1 Piña\n• 1 Sandía\n• 1 Catsup\n• y 2 más");
   });
 
   it("still accounts for every item: what's asked about is named in the question, not echoed twice", () => {
