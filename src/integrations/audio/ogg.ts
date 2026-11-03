@@ -1,8 +1,12 @@
 // Minimal reader for a single-stream Ogg Opus file: Ogg pages (RFC 3533) carrying Opus packets
 // (RFC 7845). A voice note is one mono or stereo stream; anything else is rejected, not guessed at.
 // Moved from spikes/audio-decode (A1). Unlike the spike, a cut-off file is rejected: transcribing
-// part of a voice note could drop the words that matter ("... mejor cancelalo"). That includes a
-// file cut right after a complete page: the stream must end with its end-of-stream page.
+// part of a voice note could drop the words that matter ("... mejor cancelalo"). The reader refuses
+// bytes that end inside a page or inside a packet. It can't refuse a file cut right after a complete
+// page: WhatsApp voice notes don't set the end-of-stream flag on their last page (#27: two real
+// notes, both refused when the flag was required), so a whole note and one cut on a page boundary
+// look the same here. That cut is caught at download instead: WhatsAppMediaSource checks the bytes
+// against the sha256 and file_size Meta declares for the media.
 
 import { UnreadableMediaError } from "../../application/errors";
 
@@ -51,7 +55,8 @@ export function maxOpusPackets(maxDurationMs: number): number {
 
 /**
  * Reads the stream, refusing it once it has more than `maxAudioPackets` audio packets, any audio
- * packet that isn't a valid Opus packet, or bytes that end before the end-of-stream page.
+ * packet that isn't a valid Opus packet, or bytes that end inside a page or a packet. The stream
+ * ends at its end-of-stream page or, without one, at the end of the bytes on a page boundary.
  */
 export function readOggOpus(bytes: Uint8Array, maxAudioPackets: number): OggOpusStream {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -129,7 +134,6 @@ export function readOggOpus(bytes: Uint8Array, maxAudioPackets: number): OggOpus
 
   if (offset < bytes.length && !endOfStream) throw new OggOpusError("the file ends inside an Ogg page");
   if (pending.length > 0) throw new OggOpusError("the last packet is cut off");
-  if (!endOfStream) throw new OggOpusError("the file ends before the end of the stream");
   if (packets.length < 2) throw new OggOpusError("missing Opus header packets");
   const head = parseOpusHead(packets[0]!);
   if (ascii(packets[1]!, 0, 8) !== "OpusTags") throw new OggOpusError("missing OpusTags packet");
