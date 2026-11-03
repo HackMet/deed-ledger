@@ -17,12 +17,25 @@ import type { EngineOutcome, OrderView, QuestionCode } from "../../domain/contra
 import { PLACEHOLDER_TTL_MS } from "../../domain/outbox";
 import type { CustomerContext, Engine, EngineResult } from "../engine";
 import { placeholderHandler } from "../placeholder-handler";
-import type { Clock, JobHandler, JobInput, JobOutcome, Tenant } from "../ports";
+import type { Clock, ConversationRef, JobHandler, JobInput, JobOutcome, Tenant } from "../ports";
 import { actionKey, type StoredOrder } from "./order-engine";
 
 /** The customer's own open order, from our records: the only source of an order id and version. */
 export interface OpenOrderReader {
   openOrder(tenant: Tenant, customerId: string): Promise<StoredOrder | null>;
+}
+
+/** The conversation's customer, from our records (#63's customers table). */
+export interface ConversationCustomers {
+  ofConversation(conversation: ConversationRef): Promise<{ readonly id: string } | null>;
+}
+
+/**
+ * The customer an order belongs to: the conversation's customer when the customers table is wired
+ * in, else the conversation itself (tests built before it). Never an id from the message or a model.
+ */
+export async function customerIdOf(customers: ConversationCustomers | undefined, lease: ConversationRef): Promise<string> {
+  return (customers === undefined ? null : (await customers.ofConversation(lease))?.id) ?? lease.conversationId;
 }
 
 /** Replies about an order stay worth sending for the same hour as the placeholder's. */
@@ -55,6 +68,7 @@ export function fixturePerceptionHandler(deps: {
   readonly engine: Engine;
   readonly orders: OpenOrderReader;
   readonly clock: Clock;
+  readonly customers?: ConversationCustomers;
 }): JobHandler {
   return {
     async handle(input: JobInput): Promise<JobOutcome> {
@@ -66,9 +80,7 @@ export function fixturePerceptionHandler(deps: {
       const context: CustomerContext = {
         businessId: lease.businessId,
         conversationId: lease.conversationId,
-        // The conversation IS the customer for a WhatsApp thread, written here and nowhere else. A real
-        // customers table replaces this mapping. Never an id from the message body, the model or a button.
-        customerId: lease.conversationId,
+        customerId: await customerIdOf(deps.customers, lease),
         jobId: job.id,
         nowMs: deps.clock.now(),
       };
