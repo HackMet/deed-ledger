@@ -3,9 +3,12 @@
  * Shapes follow the fact-memory spec (§3 schema, §4 port change).
  */
 
-/** What a fact rests on. Mirrors the `fact_evidence.kind` CHECK in migrations/0020_ledger.sql. */
+/**
+ * What a fact rests on. Mirrors the `fact_evidence.kind` CHECK (migrations/0023_order_facts.sql).
+ * `member` is the console member who tapped; `session` is in the CHECK but not written yet.
+ */
 export interface EvidenceRef {
-  readonly kind: "inbound_message" | "media_asset" | "confirmation" | "stock_movement" | "fact";
+  readonly kind: "inbound_message" | "media_asset" | "confirmation" | "stock_movement" | "fact" | "member" | "session";
   readonly refId: string;
   /** Media only: the stored object's SHA-256. Null otherwise. */
   readonly contentSha256: string | null;
@@ -22,18 +25,36 @@ export interface StockMovement {
 }
 
 /** An append-only fact the engine asks to admit, with everything it rests on. */
+/** Mirrors the `facts.kind` CHECK (migrations/0023_order_facts.sql). */
+export type FactKind =
+  | "receipt"
+  | "cancellation"
+  | "price"
+  | "order_version"
+  | "order_confirm"
+  | "order_cancel"
+  | "order_status"
+  | "business_info";
+
 export interface FactCommit {
   readonly factId: string;
-  readonly kind: "receipt" | "cancellation" | "price";
+  readonly kind: FactKind;
   readonly operationKey: string;
   readonly draft: { readonly id: string; readonly revision: number } | null;
+  /** The customer id or the member id: `facts.actor_user_id` has no foreign key. */
   readonly actorUserId: string;
   readonly validFromMs: number;
   /** Serialized by the repository. */
   readonly body: unknown;
-  /** Must include one 'confirmation'. */
+  /**
+   * Never empty. Receipts: exactly one 'confirmation' and an 'inbound_message'. A customer's order
+   * facts: an 'inbound_message'. order_status: exactly one 'member'.
+   */
   readonly evidence: readonly EvidenceRef[];
-  /** Every dependency must be live. */
+  /**
+   * Every dependency must be live: it and its ancestors exist and none is closed, except an ancestor
+   * superseded by another ancestor (v2 depends on and supersedes v1, and stays live).
+   */
   readonly dependsOn: readonly string[];
   readonly closes: { readonly factId: string; readonly reason: "cancelled" | "superseded" } | null;
   readonly movements: readonly StockMovement[];

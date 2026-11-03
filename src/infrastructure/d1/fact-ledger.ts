@@ -1,5 +1,5 @@
 import { FactRefusedError, PermanentWriteError } from "../../application/errors";
-import type { Commit, Lease } from "../../application/ports";
+import type { Commit, Tenant } from "../../application/ports";
 import type { FactPrecheckReads } from "../../domain/fact-precheck";
 import type { FactCommit } from "../../domain/facts";
 import type { Guard } from "./fence";
@@ -8,15 +8,28 @@ import type { Guard } from "./fence";
  * Turns one domain `FactCommit` into the `Commit` the job repository runs in the batch that
  * completes the job: `guards` are the draft (G3), the dependency gate (G4) and the closed fact (G5), `statements` are
  * S1–S6 in order, and `post` is the evidence check (P1).
+ *
+ * The scope is a store; a conversation is needed only for a draft (G3). The receipt handler passes
+ * its lease, the order engine its customer or member context.
  */
+export type FactScope = Tenant & { readonly conversationId?: string };
+
 export interface FactLedger {
-  statementsFor(lease: Lease, commit: FactCommit, nowMs: number): Commit;
+  statementsFor(scope: FactScope, commit: FactCommit, nowMs: number): Commit;
 }
 
 /**
+ * A closure that kills a fact reached through `ancestors`. A supersede by another ancestor doesn't:
+ * order version v2 depends on v1 and closes it `superseded`, and v2 (with whatever rests on it)
+ * stays live, while what rests on v1 alone (v1's confirm, its status taps) dies with it.
+ */
+const KILLING_CLOSURE = `SELECT 1 FROM fact_closures c JOIN ancestors a ON c.fact_id = a.id WHERE c.business_id = ?
+    AND NOT (c.reason = 'superseded' AND c.closed_by_fact_id IN (SELECT id FROM ancestors))`;
+
+/**
  * Every `dependsOn` id and its ancestors (via fact_dependencies) exist in this store and none is
- * closed. 1 when the gate is open, NULL otherwise. A dependency that doesn't exist or belongs to
- * another store fails the count.
+ * closed (see KILLING_CLOSURE). 1 when the gate is open, NULL otherwise. A dependency that doesn't
+ * exist or belongs to another store fails the count.
  */
 const DEPENDENCIES_LIVE = `WITH RECURSIVE ancestors(id) AS (
     SELECT value FROM json_each(?)
@@ -24,30 +37,42 @@ const DEPENDENCIES_LIVE = `WITH RECURSIVE ancestors(id) AS (
     SELECT d.depends_on_fact_id FROM fact_dependencies d
     JOIN ancestors a ON d.fact_id = a.id WHERE d.business_id = ?
   )
-  SELECT CASE WHEN NOT EXISTS (
-    SELECT 1 FROM fact_closures c JOIN ancestors a ON c.fact_id = a.id WHERE c.business_id = ?
-  ) AND (SELECT count(*) FROM facts f JOIN ancestors a ON f.id = a.id WHERE f.business_id = ?)
+  SELECT CASE WHEN NOT EXISTS (${KILLING_CLOSURE}) AND (SELECT count(*) FROM facts f JOIN ancestors a ON f.id = a.id WHERE f.business_id = ?)
       = (SELECT count(*) FROM ancestors) THEN 1 END`;
 
 /**
- * The fact has exactly one 'confirmation' and at least one 'inbound_message' evidence row.
+ * The fact rests on the evidence its kind needs, and on at least one row whatever its kind:
+ * - receipts (and every kind not named below): exactly one 'confirmation' and at least one
+ *   'inbound_message', as before order facts existed;
+ * - a customer's order facts (order_version, order_confirm, order_cancel): at least one
+ *   'inbound_message', no confirmation row (the customer's own message is the approval);
+ * - order_status, a staff tap: exactly one 'member'.
+ * The rule follows the stored kind, not the commit's, so P1 checks what was written.
  *
  * Inside the batch the fact always exists (S2 ran). The fence re-checks guards after a rolled-back
  * batch, when the fact is gone: it holds then, so a failure elsewhere in the batch (a negative
  * balance, a duplicate) is reported as that constraint, not as missing evidence. A P1 failure
  * itself surfaces as a PermanentWriteError, with nothing written.
  */
-const EVIDENCE_COMPLETE = `SELECT CASE
-    WHEN NOT EXISTS (SELECT 1 FROM facts WHERE business_id = ? AND id = ?) THEN 1
-    WHEN (SELECT count(*) FROM fact_evidence WHERE business_id = ? AND fact_id = ? AND kind = 'confirmation') = 1
-      AND EXISTS (SELECT 1 FROM fact_evidence WHERE business_id = ? AND fact_id = ? AND kind = 'inbound_message')
-      THEN 1 END`;
+const EVIDENCE_COMPLETE = `WITH
+    f AS (SELECT kind FROM facts WHERE business_id = ? AND id = ?),
+    e AS (SELECT kind FROM fact_evidence WHERE business_id = ? AND fact_id = ?)
+  SELECT CASE
+    WHEN NOT EXISTS (SELECT 1 FROM f) THEN 1
+    WHEN NOT EXISTS (SELECT 1 FROM e) THEN NULL
+    WHEN (SELECT kind FROM f) IN ('order_version', 'order_confirm', 'order_cancel') THEN
+      CASE WHEN EXISTS (SELECT 1 FROM e WHERE kind = 'inbound_message') THEN 1 END
+    WHEN (SELECT kind FROM f) = 'order_status' THEN
+      CASE WHEN (SELECT count(*) FROM e WHERE kind = 'member') = 1 THEN 1 END
+    WHEN (SELECT count(*) FROM e WHERE kind = 'confirmation') = 1
+      AND EXISTS (SELECT 1 FROM e WHERE kind = 'inbound_message') THEN 1
+  END`;
 
 export class D1FactLedger implements FactLedger {
   constructor(private readonly db: D1Database) {}
 
-  statementsFor(lease: Lease, commit: FactCommit, nowMs: number): Commit {
-    const businessId = lease.businessId;
+  statementsFor(scope: FactScope, commit: FactCommit, nowMs: number): Commit {
+    const businessId = scope.businessId;
     const guards: Guard[] = [];
     const statements: D1PreparedStatement[] = [];
     const confirmation = commit.evidence.find((ref) => ref.kind === "confirmation");
@@ -55,12 +80,15 @@ export class D1FactLedger implements FactLedger {
     const confirmingInbound = commit.evidence.filter((ref) => ref.kind === "inbound_message").at(-1);
 
     // G3: the exact revision the owner confirmed is still pending, unexpired, in this conversation.
-    if (commit.draft !== null) {
+    // A draft lives in a conversation: without one, the draft can't be the one the owner confirmed.
+    if (commit.draft !== null && scope.conversationId === undefined) {
+      guards.push({ holdsSql: `SELECT NULL`, params: [], error: () => new FactRefusedError("draft_not_pending") });
+    } else if (commit.draft !== null) {
       guards.push({
         holdsSql: `SELECT 1 FROM drafts
                    WHERE business_id = ? AND conversation_id = ? AND id = ? AND state = 'pending' AND revision = ?
                      AND expires_at_ms > ?`,
-        params: [businessId, lease.conversationId, commit.draft.id, commit.draft.revision, nowMs],
+        params: [businessId, scope.conversationId, commit.draft.id, commit.draft.revision, nowMs],
         error: () => new FactRefusedError("draft_not_pending"),
       });
     }
@@ -193,11 +221,11 @@ export class D1FactLedger implements FactLedger {
       );
     }
 
-    // P1: no fact without its confirmation and the message it came from.
+    // P1: no fact without the evidence its kind rests on.
     const post: Guard[] = [
       {
         holdsSql: EVIDENCE_COMPLETE,
-        params: [businessId, commit.factId, businessId, commit.factId, businessId, commit.factId],
+        params: [businessId, commit.factId, businessId, commit.factId],
         error: () => new PermanentWriteError("fact admitted without its evidence"),
       },
     ];
@@ -214,8 +242,8 @@ export class D1FactLedger implements FactLedger {
 export class D1FactPrecheck {
   constructor(private readonly db: D1Database) {}
 
-  async read(lease: Lease, commit: FactCommit): Promise<FactPrecheckReads> {
-    const businessId = lease.businessId;
+  async read(scope: FactScope, commit: FactCommit): Promise<FactPrecheckReads> {
+    const businessId = scope.businessId;
 
     const used = await this.db
       .prepare(`SELECT 1 AS used FROM facts WHERE business_id = ? AND operation_key = ?`)
@@ -223,14 +251,14 @@ export class D1FactPrecheck {
       .first<{ used: number }>();
 
     const draft =
-      commit.draft === null
+      commit.draft === null || scope.conversationId === undefined
         ? null
         : await this.db
             .prepare(
               `SELECT revision, state, expires_at_ms AS expiresAtMs FROM drafts
                WHERE business_id = ? AND conversation_id = ? AND id = ?`,
             )
-            .bind(businessId, lease.conversationId, commit.draft.id)
+            .bind(businessId, scope.conversationId, commit.draft.id)
             .first<{ revision: number; state: string; expiresAtMs: number }>();
 
     let deadDependencies: readonly string[] = [];
@@ -246,7 +274,8 @@ export class D1FactPrecheck {
              )
            SELECT a.id AS id FROM ancestors a
            WHERE NOT EXISTS (SELECT 1 FROM facts f WHERE f.business_id = ? AND f.id = a.id)
-              OR EXISTS (SELECT 1 FROM fact_closures c WHERE c.business_id = ? AND c.fact_id = a.id)`,
+              OR EXISTS (SELECT 1 FROM fact_closures c WHERE c.business_id = ? AND c.fact_id = a.id
+                AND NOT (c.reason = 'superseded' AND c.closed_by_fact_id IN (SELECT id FROM ancestors)))`,
         )
         .bind(JSON.stringify(commit.dependsOn), businessId, businessId, businessId)
         .all<{ id: string }>();
