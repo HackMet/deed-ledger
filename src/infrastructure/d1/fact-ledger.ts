@@ -46,7 +46,9 @@ const DEPENDENCIES_LIVE = `WITH RECURSIVE ancestors(id) AS (
  *   'inbound_message', as before order facts existed;
  * - a customer's order facts (order_version, order_confirm, order_cancel): at least one
  *   'inbound_message', no confirmation row (the customer's own message is the approval);
- * - order_status, a staff tap: exactly one 'member'.
+ * - order_status, a staff tap: exactly one 'member';
+ * - change_request, a customer's change after confirming: at least one 'inbound_message';
+ * - change_review, the owner's or staff's answer to it: exactly one 'member'.
  * The rule follows the stored kind, not the commit's, so P1 checks what was written.
  *
  * Inside the batch the fact always exists (S2 ran). The fence re-checks guards after a rolled-back
@@ -60,13 +62,29 @@ const EVIDENCE_COMPLETE = `WITH
   SELECT CASE
     WHEN NOT EXISTS (SELECT 1 FROM f) THEN 1
     WHEN NOT EXISTS (SELECT 1 FROM e) THEN NULL
-    WHEN (SELECT kind FROM f) IN ('order_version', 'order_confirm', 'order_cancel') THEN
+    WHEN (SELECT kind FROM f) IN ('order_version', 'order_confirm', 'order_cancel', 'change_request') THEN
       CASE WHEN EXISTS (SELECT 1 FROM e WHERE kind = 'inbound_message') THEN 1 END
-    WHEN (SELECT kind FROM f) = 'order_status' THEN
+    WHEN (SELECT kind FROM f) IN ('order_status', 'change_review') THEN
       CASE WHEN (SELECT count(*) FROM e WHERE kind = 'member') = 1 THEN 1 END
     WHEN (SELECT count(*) FROM e WHERE kind = 'confirmation') = 1
       AND EXISTS (SELECT 1 FROM e WHERE kind = 'inbound_message') THEN 1
   END`;
+
+/**
+ * G4b, after the statements: the fact just written and every ancestor exist and none is closed
+ * (KILLING_CLOSURE, with the fact itself among the ancestors, so the version it supersedes doesn't
+ * kill it). For a fact resting on another written earlier in the same batch. Holds when the fact is
+ * absent, so the fence's re-check after a rolled-back batch reports the real cause.
+ */
+const WRITTEN_LIVE = `WITH RECURSIVE ancestors(id) AS (
+    SELECT ?
+    UNION
+    SELECT d.depends_on_fact_id FROM fact_dependencies d
+    JOIN ancestors a ON d.fact_id = a.id WHERE d.business_id = ?
+  )
+  SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM facts WHERE business_id = ? AND id = ?) THEN 1
+    WHEN NOT EXISTS (${KILLING_CLOSURE}) AND (SELECT count(*) FROM facts f JOIN ancestors a ON f.id = a.id WHERE f.business_id = ?)
+      = (SELECT count(*) FROM ancestors) THEN 1 END`;
 
 export class D1FactLedger implements FactLedger {
   constructor(private readonly db: D1Database) {}
@@ -92,10 +110,11 @@ export class D1FactLedger implements FactLedger {
         error: () => new FactRefusedError("draft_not_pending"),
       });
     }
-    // G4: the gate.
+    // G4: the gate. A dependency written earlier in this batch doesn't exist yet: G4b checks it after.
+    const sameBatch = commit.sameBatch ?? [];
     guards.push({
       holdsSql: DEPENDENCIES_LIVE,
-      params: [JSON.stringify(commit.dependsOn), businessId, businessId, businessId],
+      params: [JSON.stringify(commit.dependsOn.filter((id) => !sameBatch.includes(id))), businessId, businessId, businessId],
       error: () => new FactRefusedError("dependency_not_live"),
     });
 
@@ -229,6 +248,13 @@ export class D1FactLedger implements FactLedger {
         error: () => new PermanentWriteError("fact admitted without its evidence"),
       },
     ];
+    if (sameBatch.length > 0) {
+      post.push({
+        holdsSql: WRITTEN_LIVE,
+        params: [commit.factId, businessId, businessId, commit.factId, businessId, businessId],
+        error: () => new FactRefusedError("dependency_not_live"),
+      });
+    }
     return { guards, statements, post };
   }
 }

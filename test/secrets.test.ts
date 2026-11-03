@@ -26,6 +26,7 @@ describe("test environment", () => {
       "0021_orders.sql",
       "0022_order_line_details.sql",
       "0023_order_facts.sql",
+      "0024_change_requests.sql",
     ]);
   });
 

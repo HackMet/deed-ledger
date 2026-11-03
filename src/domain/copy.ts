@@ -37,3 +37,9 @@ export function couldNotProcess(kind: MessageKind): string {
       return "Perdón, no pude revisar tu mensaje. ¿Me lo mandás otra vez?";
   }
 }
+
+/**
+ * K12: a customer's change once the order is listo or later: the window is closed (Q1's default).
+ * The engine answers `rejected`/`invalid_state` with the order in that state; the reply uses this.
+ */
+export const CHANGE_AFTER_READY = "Ya está listo, ¿querés hacer un pedido nuevo?";

@@ -1,5 +1,12 @@
 import { OrderMovedError } from "../../application/errors";
-import { fromThousandths, type OrderHead, type OrderStore, type OrderWrite, type StoredOrder } from "../../application/engine/order-engine";
+import {
+  fromThousandths,
+  type OrderHead,
+  type OrderStore,
+  type OrderWrite,
+  type StoredChangeRequest,
+  type StoredOrder,
+} from "../../application/engine/order-engine";
 import type { Commit, Tenant } from "../../application/ports";
 import type { EngineOutcome, OrderLineView, OrderState, OrderView } from "../../domain/contract/outcomes";
 import { toThousandths } from "../../domain/contract/numbers";
@@ -31,6 +38,39 @@ interface OrderRow {
   version_fact_id: string | null;
   confirm_fact_id: string | null;
 }
+
+interface ChangeFactRow {
+  id: string;
+  kind: "change_request" | "change_review";
+  body_json: string;
+  recorded_at_ms: number;
+  live: number;
+  job_id: string | null;
+}
+
+/**
+ * The change requests and reviews of one order (?2) with liveness: no ancestor, itself included, is
+ * closed, except by a supersede from another of its own ancestors (the rule of `orderFacts`). A request
+ * answered by a review, replaced by a newer request, or resting on a cancelled confirm isn't live.
+ */
+const CHANGE_FACTS_SQL = `WITH RECURSIVE
+  mine AS (
+    SELECT id, kind, body_json, recorded_at_ms, rowid AS seq FROM facts
+    WHERE business_id = ?1 AND kind IN ('change_request', 'change_review') AND json_extract(body_json, '$.orderId') = ?2
+  ),
+  anc(root, id) AS (
+    SELECT id, id FROM mine
+    UNION
+    SELECT a.root, d.depends_on_fact_id FROM fact_dependencies d JOIN anc a ON d.fact_id = a.id WHERE d.business_id = ?1
+  )
+SELECT m.id, m.kind, m.body_json, m.recorded_at_ms,
+  NOT EXISTS (
+    SELECT 1 FROM fact_closures c JOIN anc a ON c.fact_id = a.id AND a.root = m.id
+    WHERE c.business_id = ?1 AND NOT (c.reason = 'superseded' AND c.closed_by_fact_id IN (SELECT id FROM anc WHERE root = m.id))
+  ) AS live,
+  (SELECT e.ref_id FROM fact_evidence e WHERE e.business_id = ?1 AND e.fact_id = m.id AND e.kind = 'inbound_message'
+   ORDER BY e.ref_id LIMIT 1) AS job_id
+FROM mine m ORDER BY m.recorded_at_ms, m.seq`;
 
 interface LineRow {
   line_no: number;
@@ -150,6 +190,45 @@ export class D1OrderStore implements OrderStore {
         status: body.status ?? null,
       };
     });
+  }
+
+  async changeRequest(tenant: Tenant, changeRequestId: string): Promise<StoredChangeRequest | null> {
+    const row = await this.db
+      .prepare(`SELECT json_extract(body_json, '$.orderId') AS order_id FROM facts WHERE business_id = ? AND id = ? AND kind = 'change_request'`)
+      .bind(tenant.businessId, changeRequestId)
+      .first<{ order_id: string }>();
+    if (row === null) return null;
+    const { requests } = await this.changeFacts(tenant, row.order_id);
+    return requests.find((request) => request.id === changeRequestId) ?? null;
+  }
+
+  /** Every change request of an order, oldest first, and its latest review. */
+  private async changeFacts(
+    tenant: Tenant,
+    orderId: string,
+  ): Promise<{ readonly requests: readonly StoredChangeRequest[]; readonly lastReview: OrderView["lastReview"] }> {
+    const { results } = await this.db.prepare(CHANGE_FACTS_SQL).bind(tenant.businessId, orderId).all<ChangeFactRow>();
+    const requests: StoredChangeRequest[] = [];
+    let lastReview: OrderView["lastReview"] = null;
+    for (const row of results) {
+      if (row.kind === "change_review") {
+        const body = JSON.parse(row.body_json) as { decision: "approve" | "decline"; reason: string };
+        lastReview = { decision: body.decision, reason: body.reason, atMs: row.recorded_at_ms };
+        continue;
+      }
+      const body = JSON.parse(row.body_json) as Pick<StoredChangeRequest, "version" | "lines" | "fulfillment" | "diff">;
+      requests.push({
+        id: row.id,
+        orderId,
+        version: body.version,
+        lines: body.lines,
+        fulfillment: body.fulfillment,
+        diff: body.diff,
+        jobId: row.job_id,
+        live: row.live === 1,
+      });
+    }
+    return { requests, lastReview };
   }
 
   async preparationOrders(tenant: Tenant): Promise<readonly StoredOrder[]> {
@@ -351,6 +430,8 @@ export class D1OrderStore implements OrderStore {
       resumeState = event?.from_state ?? "confirmado";
     }
 
+    const changes = await this.changeFacts(tenant, row.id);
+    const openRequest = changes.requests.findLast((request) => request.live) ?? null;
     const packing = row.state === "confirmado" || row.state === "preparando";
     const view: OrderView = {
       orderId: row.id,
@@ -366,6 +447,8 @@ export class D1OrderStore implements OrderStore {
       total: row.total_centavos,
       queuePosition:
         packing && row.first_confirmed_at_ms !== null ? await this.queuePosition(tenant, row.id, row.first_confirmed_at_ms) : null,
+      openChangeRequest: openRequest === null ? null : { id: openRequest.id, diff: openRequest.diff },
+      lastReview: changes.lastReview,
     };
     return {
       view,
@@ -374,6 +457,7 @@ export class D1OrderStore implements OrderStore {
       resumeState,
       versionFactId: row.version_fact_id,
       confirmFactId: row.confirm_fact_id,
+      openRequest,
     };
   }
 }

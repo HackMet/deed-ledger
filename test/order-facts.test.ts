@@ -10,7 +10,20 @@ import { deriveOrderState } from "../src/domain/order-state";
 import { D1FactLedger } from "../src/infrastructure/d1/fact-ledger";
 import { guardedBatch } from "../src/infrastructure/d1/fence";
 import { firstOrder, ids, moreSugar, staleReady } from "./fixtures/contract";
-import { count, engine, footprint, newStore, placeFirstOrder, save, store, T0, tap } from "./helpers/orders";
+import {
+  changeAndApprove,
+  count,
+  engine,
+  footprint,
+  newStore,
+  placeFirstOrder,
+  reviewer,
+  reviewTap,
+  save,
+  store,
+  T0,
+  tap,
+} from "./helpers/orders";
 
 type Store = Awaited<ReturnType<typeof newStore>>;
 type StaffType = "start_preparing" | "mark_ready" | "mark_delivered";
@@ -235,20 +248,21 @@ describe("K2b: every order transition is exactly one fact, in the same batch", (
     const s = await newStore();
     const v1 = await placeFirstOrder(s);
     await save(await engine.onCustomerAction(s.context({ nowMs: T0 + 1000 }), confirmTap(v1.orderId, 1)));
-    await saveTransition(await engine.onBurst(s.context({ nowMs: T0 + 2000 }), moreSugar, []));
-    const [version1, confirm1, version2] = await factsOf(s.businessId, v1.orderId);
-    expect(version2).toMatchObject({ kind: "order_version", body: { orderId: v1.orderId, version: 2 }, dependsOn: [version1!.id] });
+    // K12: after confirming, v2 comes from an approved change request.
+    await changeAndApprove(s, moreSugar, T0 + 2000);
+    const [version1, confirm1, , review, version2, confirm2] = await factsOf(s.businessId, v1.orderId);
+    expect(version2).toMatchObject({ kind: "order_version", body: { orderId: v1.orderId, version: 2 } });
+    expect(version2!.dependsOn.sort()).toEqual([version1!.id, review!.id].sort());
     expect(await closureOf(version1!.id)).toEqual({ closedBy: version2!.id, reason: "superseded" });
-    expect(await orderRow(v1.orderId)).toMatchObject({ version_fact_id: version2!.id, confirm_fact_id: null });
+    expect(await orderRow(v1.orderId)).toMatchObject({ version_fact_id: version2!.id, confirm_fact_id: confirm2!.id });
     const live = new Map((await store.orderFacts(s.context(), v1.orderId)).map((fact) => [fact.id, fact.live]));
-    expect(live).toEqual(new Map([[version1!.id, false], [confirm1!.id, false], [version2!.id, true]]));
+    expect(live).toEqual(new Map([[version1!.id, false], [confirm1!.id, false], [version2!.id, true], [confirm2!.id, true]]));
 
     // A v3 rests on v2 through the chain: the gate lets it through, and v2 is superseded in turn.
-    await save(await engine.onCustomerAction(s.context({ nowMs: T0 + 3000 }), confirmTap(v1.orderId, 2)));
-    await saveTransition(await engine.onBurst(s.context({ nowMs: T0 + 4000 }), moreSugar, []));
+    await changeAndApprove(s, moreSugar, T0 + 4000);
     const facts = await factsOf(s.businessId, v1.orderId);
-    expect(await closureOf(version2!.id)).toEqual({ closedBy: facts.at(-1)!.id, reason: "superseded" });
-    expect(await derivedAndCached(s, v1.orderId)).toEqual({ derived: "por_confirmar", cached: "por_confirmar" });
+    expect(await closureOf(version2!.id)).toEqual({ closedBy: facts.at(-2)!.id, reason: "superseded" });
+    expect(await derivedAndCached(s, v1.orderId)).toEqual({ derived: "confirmado", cached: "confirmado" });
   });
 
   it("a cancel closes the live confirm when confirmed, the version otherwise", async () => {
@@ -325,21 +339,26 @@ describe("K2b: every order transition is exactly one fact, in the same batch", (
     const s = await newStore();
     const v1 = await placeFirstOrder(s);
     const states: { derived: OrderState; cached: OrderState }[] = [await derivedAndCached(s, v1.orderId)];
-    const step = async (result: Promise<EngineResult>) => {
-      await saveTransition(await result);
+    const step = async (result: Promise<EngineResult>, commits = 2) => {
+      const saved = await result;
+      expect(saved.commits).toHaveLength(commits);
+      await save(saved);
       states.push(await derivedAndCached(s, v1.orderId));
     };
     await step(engine.onCustomerAction(s.context({ nowMs: T0 + 1000 }), confirmTap(v1.orderId, 1)));
     await step(engine.onConsoleAction(member(s, T0 + 2000), staffTap("start_preparing", v1.orderId, 1)));
-    await step(engine.onBurst(s.context({ nowMs: T0 + 3000 }), moreSugar, []));
-    await step(engine.onCustomerAction(s.context({ nowMs: T0 + 4000 }), confirmTap(v1.orderId, 2)));
+    // K12: the change is a request, then approved: the review, v2 and v2's confirm, with the order commit.
+    const requested = await engine.onBurst(s.context({ nowMs: T0 + 3000 }), moreSugar, []);
+    await step(Promise.resolve(requested));
+    const requestId = requested.outcome.type === "order_status" ? requested.outcome.order!.openChangeRequest!.id : "";
+    await step(engine.onConsoleAction(reviewer(s, T0 + 4000), reviewTap(requestId)), 4);
     await step(engine.onConsoleAction(member(s, T0 + 5000), staffTap("mark_ready", v1.orderId, 2)));
     await step(engine.onConsoleAction(member(s, T0 + 6000), staffTap("mark_delivered", v1.orderId, 2)));
 
-    expect(states.map((x) => x.cached)).toEqual(["por_confirmar", "confirmado", "preparando", "por_confirmar", "preparando", "listo", "entregado"]);
+    expect(states.map((x) => x.cached)).toEqual(["por_confirmar", "confirmado", "preparando", "preparando", "preparando", "listo", "entregado"]);
     expect(states.map((x) => x.derived)).toEqual(states.map((x) => x.cached));
 
-    // The trap: the preparing tap rested on v1's confirm, dead since v2; the re-confirm's resumeState holds preparando.
+    // The trap: the preparing tap rested on v1's confirm, dead since v2; the approval's confirm holds preparando.
     const facts = await store.orderFacts(s.context(), v1.orderId);
     expect(facts.find((f) => f.kind === "order_status" && f.status === "preparing")?.live).toBe(false);
     expect(facts.find((f) => f.kind === "order_confirm" && f.version === 2)).toMatchObject({ live: true, resumeState: "preparando" });
@@ -388,9 +407,12 @@ describe("K2b: every order transition is exactly one fact, in the same batch", (
     await price(v1.orderId, 1);
     const v1Claims = [stateClaim(v1.orderId, 1, "confirmado"), totalClaim(v1.orderId, 1, 34_500)];
     expect(await engine.verifyClaims(s.context(), v1Claims)).toEqual([true, true]);
+    // K12: a request alone changes nothing the customer was told; the approval supersedes v1.
     await save(await engine.onBurst(s.context({ nowMs: T0 + 2000 }), moreSugar, []));
+    expect(await engine.verifyClaims(s.context(), v1Claims)).toEqual([true, true]);
+    await changeAndApprove(s, moreSugar, T0 + 3000);
     expect(await engine.verifyClaims(s.context(), v1Claims)).toEqual([false, false]);
-    expect(await engine.verifyClaims(s.context(), [stateClaim(v1.orderId, 2, "por_confirmar")])).toEqual([true]);
+    expect(await engine.verifyClaims(s.context(), [stateClaim(v1.orderId, 2, "confirmado")])).toEqual([true]);
 
     // The ledger, not the cache, answers: close v2's fact behind the cache's back and the claim fails.
     const v2Fact = (await orderRow(v1.orderId))!.version_fact_id!;
@@ -399,8 +421,8 @@ describe("K2b: every order transition is exactly one fact, in the same batch", (
     )
       .bind(s.businessId, v2Fact)
       .run();
-    expect((await orderRow(v1.orderId))!.state).toBe("por_confirmar");
-    expect(await engine.verifyClaims(s.context(), [stateClaim(v1.orderId, 2, "por_confirmar")])).toEqual([false]);
+    expect((await orderRow(v1.orderId))!.state).toBe("confirmado");
+    expect(await engine.verifyClaims(s.context(), [stateClaim(v1.orderId, 2, "confirmado")])).toEqual([false]);
 
     // A cache state the facts don't derive is not backed either.
     const other = await placeFirstOrder(s, "customer-other");

@@ -5,7 +5,7 @@ import { staffKey } from "../src/application/engine/order-engine";
 import type { ActionEnvelope, ConsoleAction } from "../src/domain/contract/actions";
 import type { Claim, OrderState } from "../src/domain/contract/outcomes";
 import { addAndPickup, ids, moreSugar, noHayAceite, offerMazola, staleReady } from "./fixtures/contract";
-import { count, engine, footprint, newStore, placeFirstOrder, save, store, T0, tap } from "./helpers/orders";
+import { changeAndApprove, count, engine, footprint, newStore, placeFirstOrder, save, store, T0, tap } from "./helpers/orders";
 
 type Store = Awaited<ReturnType<typeof newStore>>;
 
@@ -66,12 +66,8 @@ describe("verifyClaims: true only when the records back the claim now", () => {
     const claims = [stateClaim(v1.orderId, 1, "confirmado"), totalClaim(v1.orderId, 1, 34_500)];
     expect(await engine.verifyClaims(s.context(), claims)).toEqual([true, true]);
 
-    await save(await engine.onBurst(s.context({ nowMs: T0 + 2000 }), moreSugar, []));
-    expect(await engine.verifyClaims(s.context(), claims)).toEqual([false, false]);
-    expect(await engine.verifyClaims(s.context(), [stateClaim(v1.orderId, 2, "por_confirmar")])).toEqual([true]);
-
-    // Confirmed again at the same total: the same state and total, but on v2, so v1's claims stay false.
-    await confirm(s, v1.orderId, 2, T0 + 3000);
+    // K12: approved, at the same total: the same state and total, but on v2, so v1's claims turn false.
+    await changeAndApprove(s, moreSugar, T0 + 2000);
     await priceVersion(v1.orderId, 2, 34_500);
     expect(await engine.verifyClaims(s.context(), claims)).toEqual([false, false]);
     expect(
@@ -150,10 +146,7 @@ describe("preparationList: confirmado, preparando and listo, oldest confirmation
     const v1 = await placeFirstOrder(s);
     await confirm(s, v1.orderId, 1);
     // "Y otro jabón" plus pickup: v2 adds L5 and keeps L1-L4 as they were.
-    const change = await engine.onBurst(s.context({ nowMs: T0 + 2000 }), addAndPickup, []);
-    expect(change.outcome.type).toBe("order_changed");
-    await save(change);
-    await confirm(s, v1.orderId, 2, T0 + 3000);
+    await changeAndApprove(s, addAndPickup, T0 + 2000);
 
     // A quantity edited in place on v2 counts too, and a line equal to v1 doesn't.
     await env.DB.prepare(`UPDATE order_lines SET qty_milli = 5000 WHERE order_id = ? AND version = 2 AND line_no = 2`).bind(v1.orderId).run();
@@ -172,9 +165,7 @@ describe("preparationList: confirmado, preparando and listo, oldest confirmation
     expect((await engine.preparationList(s.context()))[0]?.changedLineIds).toEqual(["L1", "L2", "L3", "L4", "L5"]);
 
     // v3 is compared with v2, not v1: only the line it adds is new.
-    const again = await engine.onBurst(s.context({ nowMs: T0 + 4000 }), addAndPickup, []);
-    await save(again);
-    await confirm(s, v1.orderId, 3, T0 + 5000);
+    await changeAndApprove(s, addAndPickup, T0 + 4000);
     expect((await engine.preparationList(s.context()))[0]?.changedLineIds).toEqual(["L6"]);
   });
 });
@@ -365,8 +356,7 @@ describe("onConsoleAction: staff move an order along the list, every refusal ans
   it("refuses a tap on an older version as stale_version with the current view", async () => {
     const s = await newStore();
     const confirmed = await confirmedOrder(s);
-    await save(await engine.onBurst(s.context({ nowMs: T0 + 2000 }), addAndPickup, []));
-    await confirm(s, confirmed.orderId, 2, T0 + 3000);
+    await changeAndApprove(s, addAndPickup, T0 + 2000);
     const v2 = (await store.order(s.context(), confirmed.orderId))!.view;
     expect(v2).toMatchObject({ version: 2, state: "confirmado" });
     const before = await footprint(s.businessId);
@@ -435,7 +425,7 @@ describe("onConsoleAction: staff move an order along the list, every refusal ans
     expect(await footprint(s.businessId)).toEqual(before);
   });
 
-  it("D-43: once preparando a customer cancel is refused, and a re-confirm after a change returns to preparando", async () => {
+  it("D-43: once preparando a customer cancel is refused, and an approved change stays preparando", async () => {
     const s = await newStore();
     const confirmed = await confirmedOrder(s);
     await save(await engine.onConsoleAction(member(s), staffTap(step("start_preparing", confirmed.orderId))));
@@ -446,14 +436,13 @@ describe("onConsoleAction: staff move an order along the list, every refusal ans
     );
     expect(cancelTap.outcome).toMatchObject({ type: "rejected", reason: "invalid_state", order: { state: "preparando" } });
 
-    await save(await engine.onBurst(s.context({ nowMs: T0 + 12_000 }), addAndPickup, []));
-    await confirm(s, confirmed.orderId, 2, T0 + 13_000);
+    await changeAndApprove(s, addAndPickup, T0 + 12_000);
     expect(await orderRow(confirmed.orderId)).toMatchObject({ state: "preparando", current_version: 2 });
     const [card] = await engine.preparationList(s.context());
     expect(card).toMatchObject({ order: { state: "preparando", version: 2 }, changedLineIds: ["L5"], confirmedAtMs: T0 + 1000 });
   });
 
-  it("keys a tap by version: the same line marked again after a change and re-confirm is saved, not a duplicate", async () => {
+  it("keys a tap by version: the same line marked again after an approved change is saved, not a duplicate", async () => {
     const s = await newStore();
     const confirmed = await confirmedOrder(s);
     const { orderId } = confirmed;
@@ -461,9 +450,8 @@ describe("onConsoleAction: staff move an order along the list, every refusal ans
     const markL2 = (version: number): StaffAction => ({ type: "mark_line", orderId, version, lineId: "L2", mark: "no_hay", substituteProductId: null });
     await save(await engine.onConsoleAction(member(s, { nowMs: T0 + 11_000 }), staffTap(markL2(1))));
 
-    // The customer changes the order and re-confirms it; D-43 returns it to preparando at v2.
-    await save(await engine.onBurst(s.context({ nowMs: T0 + 12_000 }), addAndPickup, []));
-    await confirm(s, orderId, 2, T0 + 13_000);
+    // The customer changes the order and the owner approves it (K12): it stays preparando, at v2.
+    await changeAndApprove(s, addAndPickup, T0 + 12_000);
     const v2 = (await store.order(s.context(), orderId))!.view;
     expect(v2).toMatchObject({ state: "preparando", version: 2 });
     const before = await footprint(s.businessId);

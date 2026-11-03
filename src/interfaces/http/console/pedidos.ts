@@ -24,6 +24,8 @@ const KIND_LABELS: Record<TrailEntry["kind"], string> = {
   order_confirm: "Pedido confirmado",
   order_cancel: "Pedido cancelado",
   order_status: "Cambio de estado",
+  change_request: "Cambio pedido por el cliente",
+  change_review: "Cambio revisado",
 };
 
 const COLOUR_MARKS: Record<OrderColour, string> = { yellow: "Cambió", red: "Cancelado", check: "✓ Entregado", none: "" };

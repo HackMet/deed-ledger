@@ -1,7 +1,10 @@
 import { env } from "cloudflare:workers";
-import type { CustomerContext, EngineResult, LineMatch } from "../../src/application/engine";
+import type { CustomerContext, EngineResult, LineMatch, MemberContext } from "../../src/application/engine";
 import { OrderEngine } from "../../src/application/engine/order-engine";
-import type { ActionEnvelope, CustomerAction } from "../../src/domain/contract/actions";
+import { reviewKey } from "../../src/domain/change-request";
+import type { ActionEnvelope, ConsoleAction, CustomerAction } from "../../src/domain/contract/actions";
+import type { BurstReading } from "../../src/domain/contract/observation";
+import type { OrderView } from "../../src/domain/contract/outcomes";
 import { D1OrderStore } from "../../src/infrastructure/d1/order-store";
 import { D1FactLedger } from "../../src/infrastructure/d1/fact-ledger";
 import { guardedBatch } from "../../src/infrastructure/d1/fence";
@@ -75,4 +78,46 @@ export async function placeFirstOrder(s: Awaited<ReturnType<typeof newStore>>, c
   if (result.outcome.type !== "readback") throw new Error(`expected readback, got ${result.outcome.type}`);
   await save(result);
   return result.outcome.order;
+}
+
+/** The store's member who answers change requests in these tests. */
+export const reviewer = (s: Awaited<ReturnType<typeof newStore>>, nowMs = T0 + 50_000): MemberContext => ({
+  businessId: s.businessId,
+  memberId: ids.staff,
+  role: "owner",
+  canApproveFiado: false,
+  nowMs,
+});
+
+/** The owner's answer to a change request, under the key the engine derives for it. */
+export const reviewTap = (
+  changeRequestId: string,
+  decision: "approve" | "decline" = "approve",
+  reason = "Sí hay, va",
+): ActionEnvelope<ConsoleAction> => ({
+  operationKey: reviewKey(changeRequestId),
+  actor: { type: "member", memberId: ids.staff, role: "owner" },
+  action: { type: "review_change", changeRequestId, decision, reason },
+});
+
+/**
+ * K12: a customer's change after confirming, saved as a request, then approved and saved. Returns the
+ * order as approved (the new version, in the state it was in).
+ */
+export async function changeAndApprove(
+  s: Awaited<ReturnType<typeof newStore>>,
+  reading: BurstReading,
+  nowMs: number,
+  customerId: string = ids.customer,
+): Promise<OrderView> {
+  const requested = await engine.onBurst(s.context({ customerId, nowMs }), reading, []);
+  const request = requested.outcome.type === "order_status" ? requested.outcome.order?.openChangeRequest : null;
+  if (request === null || request === undefined) throw new Error(`expected a change request, got ${requested.outcome.type}`);
+  await save(requested);
+  const approved = await engine.onConsoleAction(reviewer(s, nowMs + 1), reviewTap(request.id));
+  if (approved.outcome.type !== "action_saved" || approved.outcome.order === null) {
+    throw new Error(`expected the approval saved, got ${JSON.stringify(approved.outcome)}`);
+  }
+  await save(approved);
+  return approved.outcome.order;
 }

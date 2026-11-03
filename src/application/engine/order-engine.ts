@@ -12,12 +12,14 @@
  * its guards report first; the fact commit's G4 refuses a transition resting on a dead fact.
  */
 import type { ActionEnvelope, ConsoleAction, CustomerAction, OrderRef } from "../../domain/contract/actions";
+import { CHANGE_WINDOW, changeRequestKey, lineDiff, reviewKey, reviewReason } from "../../domain/change-request";
 import { toThousandths } from "../../domain/contract/numbers";
 import { type BurstReading, type ItemLine, isCustomerKind, type OrderChange } from "../../domain/contract/observation";
 import type {
   Claim,
   CustomerNotice,
   EngineOutcome,
+  LineDiff,
   OrderLineView,
   OrderState,
   OrderView,
@@ -41,6 +43,24 @@ export interface StoredOrder {
   readonly versionFactId: string | null;
   /** The current version's confirm fact; null until the customer confirms this version. */
   readonly confirmFactId: string | null;
+  /** The customer's change waiting for review (K12); null when none is live. */
+  readonly openRequest: StoredChangeRequest | null;
+}
+
+/** A change_request fact as the review reads it: what the customer asked for, on which version. */
+export interface StoredChangeRequest {
+  readonly id: string;
+  readonly orderId: string;
+  /** The version the request was made on. */
+  readonly version: number;
+  /** The whole order as the customer asked for it, labelled. */
+  readonly lines: readonly OrderLineView[];
+  readonly fulfillment: OrderView["fulfillment"];
+  readonly diff: LineDiff;
+  /** The inbound job the customer asked with: the evidence an approved version rests on. */
+  readonly jobId: string | null;
+  /** Not answered, not replaced by a newer request, and its confirm not cancelled or superseded. */
+  readonly live: boolean;
 }
 
 /** The fact ids the cache keeps after a write, so the next transition can draw its edges. */
@@ -78,7 +98,10 @@ export interface OrderWrite {
     | "order_preparing"
     | "order_line_marked"
     | "order_ready"
-    | "order_delivered";
+    | "order_delivered"
+    | "change_requested"
+    | "change_approved"
+    | "change_declined";
   /** Who acted, for the audit row: a member on the console. Defaults to the customer. */
   readonly actorId?: string;
   /** More for the audit row's detail, next to the state change. */
@@ -106,6 +129,8 @@ export interface OrderStore {
   productNames(tenant: Tenant, productIds: readonly string[]): Promise<ReadonlyMap<string, string>>;
   /** The current version's number, state and total of an order in this store; null when absent. */
   orderHead(tenant: Tenant, orderId: string): Promise<OrderHead | null>;
+  /** A change request of this store, with its liveness; null when no such request exists here. */
+  changeRequest(tenant: Tenant, changeRequestId: string): Promise<StoredChangeRequest | null>;
   /** Every order fact of an order in this store (found by body.orderId), with its liveness. */
   orderFacts(tenant: Tenant, orderId: string): Promise<readonly OrderFact[]>;
   /** Orders confirmado, preparando or listo, oldest first confirmation first (ties by id). */
@@ -228,8 +253,9 @@ export class OrderEngine implements Engine {
       };
     };
 
-    let lines: readonly OrderLineView[] = open?.view.lines ?? [];
-    let fulfillment: OrderView["fulfillment"] = open?.view.fulfillment ?? null;
+    // With a change waiting for review, a further change adds to what the customer already asked for.
+    let lines: readonly OrderLineView[] = open?.openRequest?.lines ?? open?.view.lines ?? [];
+    let fulfillment: OrderView["fulfillment"] = open?.openRequest?.fulfillment ?? open?.view.fulfillment ?? null;
     let changed = false;
     let cancel = false;
     let info: EngineOutcome | null = null;
@@ -318,11 +344,13 @@ export class OrderEngine implements Engine {
       case "cancel_order":
         return this.cancel(context, envelope.operationKey, stored);
       case "remove_line": {
-        const index = indexOfLabel(view.lines.length, action.lineId);
+        // With a change waiting for review, the label points into what the customer asked for.
+        const base = stored.openRequest ?? view;
+        const index = indexOfLabel(base.lines.length, action.lineId);
         if (index === null) return result({ type: "rejected", reason: "not_found", order: view });
-        const next = nextVersion(view, { op: "remove", label: action.lineId });
+        const next = nextVersion({ version: view.version, lines: base.lines }, { op: "remove", label: action.lineId });
         if (next === null) return result({ type: "rejected", reason: "not_found", order: view });
-        return this.change(context, envelope.operationKey, stored, next.lines, view.fulfillment);
+        return this.change(context, envelope.operationKey, stored, next.lines, base.fulfillment);
       }
       default:
         return result({ type: "nothing" });
@@ -354,6 +382,7 @@ export class OrderEngine implements Engine {
     if (actor.type !== "member" || actor.memberId !== member.memberId || actor.role !== member.role) {
       return refused("not_allowed", null);
     }
+    if (action.type === "review_change") return this.review(member, envelope.operationKey, action);
     // Payments, fiado, prices, stock, observations, pause and replies: not in this cut, and never a throw.
     if (!isStaffAction(action)) return refused("not_allowed", null);
 
@@ -485,6 +514,8 @@ export class OrderEngine implements Engine {
       return result({ type: "rejected", reason: "invalid_state", order: open.view });
     }
     const labelled = lines.map((line, index) => ({ ...line, lineId: labelOf(index) }));
+    // After confirming, a change waits for the owner or staff (K12); before, the customer reconfirms (D-43).
+    if (open !== null && CHANGE_WINDOW.includes(open.view.state)) return this.request(context, operationKey, open, labelled, fulfillment);
     const fee = fulfillment === null ? null : fulfillment.mode === "pickup" ? 0 : fulfillment.fee;
     const order: OrderView = {
       orderId: open?.view.orderId ?? this.deps.ids.newId(),
@@ -494,6 +525,8 @@ export class OrderEngine implements Engine {
       fulfillment,
       total: totalOf(labelled, fee).total,
       queuePosition: null,
+      openChangeRequest: null,
+      lastReview: open?.view.lastReview ?? null,
     };
     const wasConfirmed = open !== null && open.firstConfirmedAtMs !== null;
     const outcome: EngineOutcome = wasConfirmed ? { type: "order_changed", order } : { type: "readback", order };
@@ -548,7 +581,8 @@ export class OrderEngine implements Engine {
   private cancel(context: CustomerContext, operationKey: string, stored: StoredOrder): EngineResult {
     const { view } = stored;
     if (!CANCELLABLE.includes(view.state)) return result({ type: "rejected", reason: "invalid_state", order: view });
-    const order: OrderView = { ...view, state: "cancelado", queuePosition: null };
+    // A change waiting for review rests on the confirm the cancel closes: it dies with it.
+    const order: OrderView = { ...view, state: "cancelado", queuePosition: null, openChangeRequest: null };
     // A confirmed order's confirm is what a cancel takes back; otherwise the version itself.
     const closed = view.state === "confirmado" && stored.confirmFactId !== null ? stored.confirmFactId : stored.versionFactId;
     const fact = this.customerFact(context, operationKey, order, {
@@ -570,6 +604,155 @@ export class OrderEngine implements Engine {
   }
 
   /**
+   * A change after confirming (K12): a change_request fact on the live confirm; the order stays as it
+   * is. A newer request replaces the one still waiting (it closes it `superseded` and rests on it).
+   * The customer hears their order with the request open; the reply says it waits for the store.
+   */
+  private request(
+    context: CustomerContext,
+    operationKey: string,
+    open: StoredOrder,
+    lines: readonly OrderLineView[],
+    fulfillment: OrderView["fulfillment"],
+  ): EngineResult {
+    const { view } = open;
+    const diff = lineDiff(view.lines, lines);
+    const previous = open.openRequest;
+    const fact = this.customerFact(context, changeRequestKey(view.orderId, context.jobId), view, {
+      kind: "change_request",
+      body: { lines, fulfillment, diff },
+      dependsOn: [...(open.confirmFactId === null ? [] : [open.confirmFactId]), ...(previous === null ? [] : [previous.id])],
+      closes: previous === null ? null : { factId: previous.id, reason: "superseded" },
+    });
+    const order: OrderView = { ...view, openChangeRequest: { id: fact.factId, diff } };
+    return this.save(context, fact, {
+      operationKey,
+      outcome: { type: "order_status", order },
+      base: open,
+      order,
+      newVersion: false,
+      confirming: false,
+      auditKind: "change_requested",
+      facts: { versionFactId: open.versionFactId, confirmFactId: open.confirmFactId },
+    });
+  }
+
+  /**
+   * The owner's or staff's answer to a change request, with a reason (K12). Reads first (D-42): the
+   * request resolves only inside this store, a second answer is the first one's duplicate, and a
+   * request no longer live (the order was cancelled, a newer request replaced it) is refused with the
+   * order. The review rests on the request, so a cancel landing after the read fails G4 in the batch.
+   *
+   * Approve: the review, the new version (resting on the review, superseding the old one) and its
+   * confirm (resting on the new version; the customer's request is the confirmation, D-38's
+   * resumeState keeps the order where it was). Decline: the review only; the order stays as it is.
+   */
+  private async review(
+    member: MemberContext,
+    operationKey: string,
+    action: Extract<ConsoleAction, { type: "review_change" }>,
+  ): Promise<EngineResult> {
+    const { store, ids, ledger } = this.deps;
+    const refused = (reason: "not_allowed" | "not_found" | "stale_version" | "invalid_state", order: OrderView | null) =>
+      result({ type: "rejected", reason, order });
+    const request = typeof action.changeRequestId === "string" ? await store.changeRequest(member, action.changeRequestId) : null;
+    if (request === null) return refused("not_found", null);
+    if (operationKey !== reviewKey(request.id)) return refused("not_allowed", null);
+    const first = await store.firstOutcome(member, operationKey);
+    if (first !== null) return result({ type: "duplicate", first });
+    const stored = await store.order(member, request.orderId);
+    if (stored === null) return refused("not_found", null);
+    const { view } = stored;
+    const reason = reviewReason(action.reason);
+    if (reason === null || (action.decision !== "approve" && action.decision !== "decline")) return refused("not_allowed", view);
+    if (!request.live) return refused("invalid_state", view);
+    if (request.version !== view.version) return refused("stale_version", view);
+    const approve = action.decision === "approve";
+    if (approve && !CHANGE_WINDOW.includes(view.state)) return refused("invalid_state", view);
+
+    const lastReview = { decision: action.decision, reason, atMs: member.nowMs };
+    const memberEvidence: EvidenceRef = { kind: "member", refId: member.memberId, contentSha256: null };
+    const reviewFact: FactCommit = {
+      factId: ids.newId(),
+      kind: "change_review",
+      operationKey,
+      draft: null,
+      actorUserId: member.memberId,
+      validFromMs: member.nowMs,
+      body: { orderId: view.orderId, version: view.version, changeRequestId: request.id, decision: action.decision, reason },
+      evidence: [memberEvidence],
+      dependsOn: [request.id],
+      // Answered: the review takes the request's place, so the review itself stays live.
+      closes: { factId: request.id, reason: "superseded" },
+      movements: [],
+    };
+    const facts: FactCommit[] = [reviewFact];
+    let order: OrderView = { ...view, openChangeRequest: null, lastReview };
+    let cacheFacts: OrderWrite["facts"] = { versionFactId: stored.versionFactId, confirmFactId: stored.confirmFactId };
+
+    if (approve) {
+      const fee = request.fulfillment === null ? null : request.fulfillment.mode === "pickup" ? 0 : request.fulfillment.fee;
+      order = { ...order, version: view.version + 1, lines: request.lines, fulfillment: request.fulfillment, total: totalOf(request.lines, fee).total };
+      // The customer's message asking for the change is what the new version and its confirm rest on.
+      const asked: EvidenceRef[] = request.jobId === null ? [] : [{ kind: "inbound_message", refId: request.jobId, contentSha256: null }];
+      const previous = stored.versionFactId;
+      const versionFact: FactCommit = {
+        factId: ids.newId(),
+        kind: "order_version",
+        operationKey: `${operationKey}:version`,
+        draft: null,
+        actorUserId: member.memberId,
+        validFromMs: member.nowMs,
+        body: { orderId: view.orderId, version: order.version, total: order.total, changeRequestId: request.id },
+        evidence: [...asked, memberEvidence],
+        dependsOn: [...(previous === null ? [] : [previous]), reviewFact.factId],
+        sameBatch: [reviewFact.factId],
+        closes: previous === null ? null : { factId: previous, reason: "superseded" },
+        movements: [],
+      };
+      const confirmFact: FactCommit = {
+        factId: ids.newId(),
+        kind: "order_confirm",
+        operationKey: `${operationKey}:confirm`,
+        draft: null,
+        actorUserId: stored.customerId,
+        validFromMs: member.nowMs,
+        body: { orderId: view.orderId, version: order.version, resumeState: view.state, changeRequestId: request.id },
+        evidence: asked,
+        dependsOn: [versionFact.factId],
+        sameBatch: [versionFact.factId],
+        closes: null,
+        movements: [],
+      };
+      facts.push(versionFact, confirmFact);
+      cacheFacts = { versionFactId: versionFact.factId, confirmFactId: confirmFact.factId };
+    }
+
+    const outcome: EngineOutcome = { type: "action_saved", order };
+    const notice: CustomerNotice["notice"] = approve ? { type: "change_approved", order } : { type: "change_declined", order, reason };
+    const commit = store.commitFor(member, {
+      operationKey,
+      outcome,
+      customerId: stored.customerId,
+      base: { orderId: view.orderId, version: view.version, state: view.state },
+      order,
+      newVersion: approve,
+      confirming: false,
+      auditId: ids.newId(),
+      auditKind: approve ? "change_approved" : "change_declined",
+      actorId: member.memberId,
+      auditDetail: { changeRequestId: request.id, decision: action.decision },
+      facts: cacheFacts,
+      nowMs: member.nowMs,
+    });
+    return {
+      outcome,
+      notices: [{ customerId: stored.customerId, notice }],
+      commits: [commit, ...facts.map((fact) => ledger.statementsFor(member, fact, member.nowMs))],
+    };
+  }
+
+  /**
    * A customer's order fact: the customer acted, and the message (or tap) they acted with is its
    * evidence. Its body names the order and version, so the order's fact trail can find it.
    */
@@ -578,7 +761,7 @@ export class OrderEngine implements Engine {
     operationKey: string,
     order: OrderView,
     fact: Pick<FactCommit, "dependsOn" | "closes"> & {
-      readonly kind: "order_version" | "order_confirm" | "order_cancel";
+      readonly kind: "order_version" | "order_confirm" | "order_cancel" | "change_request";
       readonly body: Readonly<Record<string, unknown>>;
     },
   ): FactCommit {

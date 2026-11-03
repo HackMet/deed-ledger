@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { burstKey } from "../src/application/engine/order-engine";
 import type { BurstReading } from "../src/domain/contract/observation";
 import { addAndPickup, firstOrder, ids, injectedInstructions, moreSugar } from "./fixtures/contract";
-import { count, engine, footprint, newStore, placeFirstOrder, save, store, T0, tap } from "./helpers/orders";
+import { count, engine, footprint, newStore, placeFirstOrder, reviewer, reviewTap, save, store, T0, tap } from "./helpers/orders";
 
 describe("order engine on local D1", () => {
   it("(a) turns a first order into v1 read back, and the confirming tap saves it once", async () => {
@@ -162,7 +162,7 @@ describe("order engine on local D1", () => {
     expect(removed.commits).toHaveLength(2);
   });
 
-  it("(d) a change after confirming makes v2 in por_confirmar; a tap on v1 saves nothing; v2 keeps its place", async () => {
+  it("(d) a change after confirming waits for review; approved, v2 keeps its place; a tap on v1 saves nothing", async () => {
     const s = await newStore();
     const v1 = await placeFirstOrder(s);
     await save(await engine.onCustomerAction(s.context({ nowMs: T0 + 1000 }), tap(v1.orderId, 1)));
@@ -173,14 +173,18 @@ describe("order engine on local D1", () => {
       actor: { type: "customer", customerId: "customer-later" },
     }));
 
+    // K12: the change is a request; the order stays on v1, confirmado, in its place.
     const change = await engine.onBurst(s.context({ nowMs: T0 + 4000 }), moreSugar, []);
-    expect(change.outcome.type).toBe("order_changed");
-    if (change.outcome.type !== "order_changed") return;
-    const v2 = change.outcome.order;
-    expect(v2).toMatchObject({ orderId: v1.orderId, version: 2, state: "por_confirmar", queuePosition: null });
-    expect(v2.lines.map((l) => l.quantity)).toEqual(["1", "3", "3", "2"]);
+    expect(change.outcome.type).toBe("order_status");
+    if (change.outcome.type !== "order_status" || change.outcome.order === null) return;
+    expect(change.outcome.order).toMatchObject({ orderId: v1.orderId, version: 1, state: "confirmado", queuePosition: 1 });
     await save(change);
-    expect((await store.openOrder(s.context(), ids.customer))?.view).toEqual(v2);
+    const approved = await engine.onConsoleAction(reviewer(s, T0 + 4500), reviewTap(change.outcome.order.openChangeRequest!.id));
+    await save(approved);
+    const v2 = (await store.openOrder(s.context(), ids.customer))!.view;
+    expect(approved.outcome).toEqual({ type: "action_saved", order: v2 });
+    expect(v2).toMatchObject({ orderId: v1.orderId, version: 2, state: "confirmado", queuePosition: 1, openChangeRequest: null });
+    expect(v2.lines.map((l) => l.quantity)).toEqual(["1", "3", "3", "2"]);
     const before = await footprint(s.businessId);
 
     // A cancel tap on v1 (its key is unused): refused as stale, nothing saved.
@@ -196,13 +200,8 @@ describe("order engine on local D1", () => {
     await save(stale);
     await save(replay);
     expect(await footprint(s.businessId)).toEqual(before);
-
-    // Confirmed again: back in line ahead of the later order, first confirmation time untouched.
-    const typed = await engine.typedAction(s.context({ nowMs: T0 + 5000 }), "confirm_order");
-    expect(typed?.operationKey).toBe(`confirm:${v1.orderId}:v2`);
-    const reconfirmed = await engine.onCustomerAction(s.context({ nowMs: T0 + 5000 }), typed!);
-    expect(reconfirmed.outcome).toEqual({ type: "order_confirmed", order: { ...v2, state: "confirmado", queuePosition: 1 } });
-    await save(reconfirmed);
+    // Approved, nothing waits for the customer's answer, and the first confirmation time is untouched.
+    expect(await engine.typedAction(s.context({ nowMs: T0 + 5000 }), "confirm_order")).toBeNull();
     const row = await env.DB.prepare(`SELECT first_confirmed_at_ms AS at FROM orders WHERE id = ?`).bind(v1.orderId).first();
     expect(row).toEqual({ at: T0 + 1000 });
   });

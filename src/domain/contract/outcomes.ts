@@ -43,6 +43,21 @@ export interface OrderView {
   readonly total: Centavos | null;
   /** Place in the preparation list, 1 is next. Null unless confirmado or preparando. */
   readonly queuePosition: number | null;
+  /**
+   * Proposed (K12), pending Angel's OK. The customer's change waiting for the owner or staff, with what
+   * it would change; null when none. Optional so views built before K12 still type-check: absent
+   * means the engine that built the view doesn't track requests.
+   */
+  readonly openChangeRequest?: { readonly id: string; readonly diff: LineDiff } | null;
+  /** Proposed (K12). The latest answer to a change request of this order; null when none. */
+  readonly lastReview?: { readonly decision: "approve" | "decline"; readonly reason: string; readonly atMs: number } | null;
+}
+
+/** Proposed (K12). What a change request would do to the current version's lines. */
+export interface LineDiff {
+  readonly added: readonly OrderLineView[];
+  readonly removed: readonly OrderLineView[];
+  readonly changed: readonly { readonly before: OrderLineView; readonly after: OrderLineView }[];
 }
 
 /** One order on the staff's preparation list. */
@@ -115,7 +130,11 @@ export interface CustomerNotice {
     | { readonly type: "line_unavailable"; readonly order: OrderView; readonly lineId: string }
     | { readonly type: "substitute_offered"; readonly order: OrderView; readonly lineId: string }
     | { readonly type: "payment_confirmed"; readonly paymentClaimId: string; readonly amount: Centavos }
-    | { readonly type: "payment_rejected"; readonly paymentClaimId: string };
+    | { readonly type: "payment_rejected"; readonly paymentClaimId: string }
+    /** Proposed (K12): "Tu cambio fue aprobado: …", with the new version. */
+    | { readonly type: "change_approved"; readonly order: OrderView }
+    /** Proposed (K12): "No pudimos hacer el cambio: <reason>". The order is unchanged. */
+    | { readonly type: "change_declined"; readonly order: OrderView; readonly reason: string };
 }
 
 // ---------------------------------------------------------------------------------------------

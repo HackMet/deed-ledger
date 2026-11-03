@@ -9,7 +9,7 @@ import { orderCode } from "../src/domain/order-code";
 import { hashToken, newToken } from "../src/infrastructure/tokens";
 import { addAndPickup, ids, moreSugar, staleReady } from "./fixtures/contract";
 import { type Harness, harness } from "./helpers/harness";
-import { engine, newStore, placeFirstOrder, save, T0, tap } from "./helpers/orders";
+import { changeAndApprove, engine, newStore, placeFirstOrder, save, T0, tap } from "./helpers/orders";
 import { newPhone, seedStore } from "./helpers/seed";
 
 type Store = Awaited<ReturnType<typeof newStore>>;
@@ -151,7 +151,7 @@ describe("K5: the Orders screen reads the ledger", () => {
     expect(page).toContain("Listo para entregar");
   });
 
-  it("colours a changed order yellow from its live v2 fact", async () => {
+  it("colours an order yellow while a change waits for review (K12)", async () => {
     const h = harness();
     const s = await storeWithSession();
     const orderId = await confirmed(s);
@@ -179,21 +179,22 @@ describe("K5: the Orders screen reads the ledger", () => {
     const h = harness();
     const s = await storeWithSession();
     const orderId = await confirmed(s);
-    await save(await engine.onBurst(s.context({ nowMs: T0 + 3000 }), moreSugar, []));
+    // K12: v2 comes from an approved change: request (3), review (4), v2 (5), v2's confirm (6).
+    await changeAndApprove(s, moreSugar, T0 + 3000);
     const cookie = await login(h, s);
     const response = await get(h, `/console/pedidos/${orderId}`, cookie);
     expect(response.status).toBe(200);
     const page = await response.text();
     expect(page).toContain("Pedido recibido");
     expect(page).toContain("Pedido confirmado");
-    expect(page).toMatch(/class="closed">cerrado por .*Pedido recibido \(paso 3\).*\(reemplazado\)/s);
+    expect(page).toMatch(/class="closed">cerrado por .*Pedido recibido \(paso 5\).*\(reemplazado\)/s);
     expect(page).toContain("Depende de: Pedido recibido (paso 1)");
-    expect(page).toContain("Bloquea: Pedido confirmado (paso 2), Pedido recibido (paso 3)");
+    expect(page).toContain("Bloquea: Pedido confirmado (paso 2), Pedido recibido (paso 5)");
     expect(page).toContain("mensaje");
 
     await cancelOrder(s, orderId, 2);
     const after = await (await get(h, `/console/pedidos/${orderId}`, cookie)).text();
-    expect(after).toMatch(/cerrado por .*Pedido cancelado \(paso 4\).*\(cancelado\)/s);
+    expect(after).toMatch(/cerrado por .*Pedido cancelado \(paso 7\).*\(cancelado\)/s);
     expect(after).toContain("Cancelado");
   });
 
@@ -282,14 +283,15 @@ describe("K5: the Orders screen reads the ledger", () => {
     const h = harness();
     const s = await storeWithSession();
     const orderId = await confirmed(s);
-    await save(await engine.onBurst(s.context({ nowMs: T0 + 3000 }), addAndPickup, []));
+    await changeAndApprove(s, addAndPickup, T0 + 3000);
     const cookie = await login(h, s);
     const page = await (await get(h, "/console/pedidos", cookie)).text();
     expect(page).toContain("un jabón más × 1");
     expect(page).toContain("azucar-1lb × 2");
-    expect(page).toContain("Cliente · Por confirmar");
+    expect(page).toContain("Cliente · Nuevo");
     const trail = await (await get(h, `/console/pedidos/${orderId}`, cookie)).text();
-    expect(trail).toContain("Por confirmar · Versión 2 · Cambió");
+    // Approved: the new version, and no longer yellow (K12).
+    expect(trail).toContain("Nuevo · Versión 2</p>");
   });
 
   it("ignores orders.current_version: a tampered cache changes neither version, lines nor state", async () => {

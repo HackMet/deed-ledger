@@ -4,7 +4,7 @@
  * store; an order of another store is simply not found.
  */
 import type { Tenant } from "../../application/ports";
-import type { OrderState } from "../../domain/contract/outcomes";
+import type { LineDiff, OrderState } from "../../domain/contract/outcomes";
 import { type OrderFact, deriveOrderState } from "../../domain/order-state";
 import { orderCode } from "../../domain/order-code";
 
@@ -19,15 +19,19 @@ export interface OrderListRow {
   readonly colour: OrderColour;
 }
 
+type TrailKind = OrderFact["kind"] | "change_request" | "change_review";
+
 export interface TrailEntry {
   readonly factId: string;
-  readonly kind: "order_version" | "order_confirm" | "order_cancel" | "order_status";
+  readonly kind: TrailKind;
   readonly recordedAtMs: number;
   readonly actor: string;
   readonly evidence: readonly { readonly kind: string; readonly refId: string }[];
   readonly closedBy: { readonly factId: string; readonly reason: "cancelled" | "superseded" } | null;
   readonly dependsOn: readonly string[];
   readonly blocks: readonly string[];
+  /** change_review only: the answer and its reason, as the member wrote it. */
+  readonly review: { readonly decision: "approve" | "decline"; readonly reason: string } | null;
 }
 
 export interface OrderTrail {
@@ -37,6 +41,8 @@ export interface OrderTrail {
   readonly changed: boolean;
   readonly cancelled: boolean;
   readonly delivered: boolean;
+  /** The customer's change waiting for review (K12), with what it would change; null when none. */
+  readonly openRequest: { readonly id: string; readonly diff: LineDiff } | null;
   readonly facts: readonly TrailEntry[];
 }
 
@@ -50,14 +56,17 @@ interface Standing {
 interface FactRow {
   id: string;
   order_id: string;
-  kind: OrderFact["kind"];
+  kind: TrailKind;
   body_json: string;
   recorded_at_ms: number;
   depends_json: string;
   live: number;
 }
 
-const ORDER_KINDS = `('order_version', 'order_confirm', 'order_cancel', 'order_status')`;
+const ORDER_KINDS = `('order_version', 'order_confirm', 'order_cancel', 'order_status', 'change_request', 'change_review')`;
+
+const isOrderFact = (row: FactRow): row is FactRow & { kind: OrderFact["kind"] } =>
+  row.kind !== "change_request" && row.kind !== "change_review";
 
 /**
  * Order facts with liveness, for one order (?2) or every order of the store (?2 NULL). Liveness is
@@ -82,7 +91,7 @@ SELECT m.id, m.order_id, m.kind, m.body_json, m.recorded_at_ms,
   ) AS live
 FROM mine m ORDER BY m.recorded_at_ms, m.seq`;
 
-const toOrderFact = (row: FactRow): OrderFact => {
+const toOrderFact = (row: FactRow & { kind: OrderFact["kind"] }): OrderFact => {
   const body = JSON.parse(row.body_json) as { version: number; resumeState?: OrderFact["resumeState"]; status?: OrderFact["status"] };
   return {
     id: row.id,
@@ -95,20 +104,31 @@ const toOrderFact = (row: FactRow): OrderFact => {
   };
 };
 
-/** Yellow: the live version fact is past v1. Red: a live cancel. Check: a live delivered tap. */
+/** The customer's change waiting for review: the latest live change_request. */
+const openRequestOf = (rows: readonly FactRow[]): FactRow | null =>
+  rows.filter((row) => row.kind === "change_request" && row.live === 1).at(-1) ?? null;
+
+/**
+ * Yellow: a change waits for review (K12), or the live version is past v1 and no review approved it
+ * (a change before confirming, waiting for the customer). An approved change is back to normal.
+ * Red: a live cancel. Check: a live delivered tap.
+ */
 function standingOf(rows: readonly FactRow[]): Standing {
   const live = rows.filter((row) => row.live === 1);
-  const liveVersions = live.filter((row) => row.kind === "order_version").map((row) => toOrderFact(row).version);
+  const orderFacts = live.filter(isOrderFact).map(toOrderFact);
+  const reviews = new Set(rows.filter((row) => row.kind === "change_review").map((row) => row.id));
+  const latest = orderFacts.filter((fact) => fact.kind === "order_version").sort((a, b) => b.version - a.version)[0];
+  const unreviewedChange = latest !== undefined && latest.version > 1 && !latest.dependsOn.some((id) => reviews.has(id));
   return {
-    changed: liveVersions.length > 0 && Math.max(...liveVersions) > 1,
-    cancelled: live.some((row) => row.kind === "order_cancel"),
-    delivered: live.some((row) => row.kind === "order_status" && toOrderFact(row).status === "delivered"),
+    changed: openRequestOf(rows) !== null || unreviewedChange,
+    cancelled: orderFacts.some((fact) => fact.kind === "order_cancel"),
+    delivered: orderFacts.some((fact) => fact.kind === "order_status" && fact.status === "delivered"),
   };
 }
 
 /** The current version is the highest live version fact; the `orders.current_version` cache is only a last resort. */
 const currentVersionOf = (rows: readonly FactRow[], cached: number): number => {
-  const live = rows.filter((row) => row.kind === "order_version" && row.live === 1).map((row) => toOrderFact(row).version);
+  const live = rows.filter(isOrderFact).filter((row) => row.kind === "order_version" && row.live === 1).map((row) => toOrderFact(row).version);
   return live.length === 0 ? cached : Math.max(...live);
 };
 
@@ -122,6 +142,11 @@ const quantityText = (milli: number | null): string | null => {
   const whole = Math.trunc(milli / 1000);
   const fraction = String(milli % 1000).padStart(3, "0").replace(/0+$/, "");
   return fraction === "" ? String(whole) : `${whole}.${fraction}`;
+};
+
+const reviewOf = (row: FactRow): TrailEntry["review"] => {
+  const body = JSON.parse(row.body_json) as { decision: "approve" | "decline"; reason: string };
+  return { decision: body.decision, reason: body.reason };
 };
 
 export class D1OrderTrail {
@@ -157,7 +182,7 @@ export class D1OrderTrail {
         lines: lines.results
           .filter((line) => line.order_id === order.id && line.version === currentVersion)
           .map((line) => ({ text: line.canonical_name ?? line.customer_text, quantity: quantityText(line.qty_milli) })),
-        state: deriveOrderState(mine.map(toOrderFact), currentVersion, order.state),
+        state: deriveOrderState(mine.filter(isOrderFact).map(toOrderFact), currentVersion, order.state),
         colour: colourOf(standingOf(mine)),
       });
     }
@@ -199,14 +224,17 @@ export class D1OrderTrail {
         closedBy: closure === undefined ? null : { factId: closure.closed_by_fact_id, reason: closure.reason },
         dependsOn: ids.filter((id) => edges.results.some((e) => e.fact_id === row.id && e.depends_on_fact_id === id)),
         blocks: ids.filter((id) => edges.results.some((e) => e.depends_on_fact_id === row.id && e.fact_id === id)),
+        review: row.kind === "change_review" ? reviewOf(row) : null,
       };
     });
     const currentVersion = currentVersionOf(rows, order.current_version);
+    const open = openRequestOf(rows);
     return {
       code: await orderCode(confirmIdOf(rows)),
-      state: deriveOrderState(rows.map(toOrderFact), currentVersion, order.state),
+      state: deriveOrderState(rows.filter(isOrderFact).map(toOrderFact), currentVersion, order.state),
       version: currentVersion,
       ...standingOf(rows),
+      openRequest: open === null ? null : { id: open.id, diff: (JSON.parse(open.body_json) as { diff: LineDiff }).diff },
       facts: entries,
     };
   }
