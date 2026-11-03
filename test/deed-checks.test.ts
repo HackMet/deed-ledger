@@ -4,6 +4,7 @@ import type { ActionEnvelope, ConsoleAction, CustomerAction } from "../src/domai
 import type { Claim } from "../src/domain/contract/outcomes";
 import { OrderEngine, staffKey } from "../src/application/engine/order-engine";
 import type { DeedChecks } from "../src/application/engine/deed-checks";
+import { priceKey } from "../src/domain/price";
 import { D1DeedChecks, D1DeedReads } from "../src/infrastructure/d1/deed-checks";
 import { D1FactLedger } from "../src/infrastructure/d1/fact-ledger";
 import { firstOrder, ids } from "./fixtures/contract";
@@ -127,19 +128,70 @@ describe("the Deed's checks: one row per decision the engine refuses or verifies
     expect((await engine.onConsoleAction(reviewer(s), price)).outcome).toMatchObject({ reason: "not_allowed" });
     const foreignKey = staffKey({ type: "start_preparing", orderId: order.orderId, version: 1 });
     expect((await engine.onConsoleAction(reviewer(other), staff(order.orderId, foreignKey))).outcome).toMatchObject({ reason: "not_found" });
+    // The five paths the review measured (B1). Each key is the one the engine derives from a typed id or version,
+    // so it passes the derived-key check and only the resolution of its ids keeps it out of the row.
+    const member = { type: "member" as const, memberId: ids.staff, role: "owner" as const };
+    const review: any = { type: "review_change", changeRequestId: typed, decision: "approve", reason: "x" };
+    expect((await engine.onConsoleAction(reviewer(s), { operationKey: `rev:${typed}`, actor: member, action: review })).outcome).toMatchObject({
+      reason: "not_found",
+    });
+    const proposal: any = { type: "propose_price", productId: typed, price: 100 };
+    const proposalEnvelope = { operationKey: priceKey(typed, reviewer(s).nowMs, "propose_price"), actor: member, action: proposal };
+    expect((await engine.onConsoleAction(reviewer(s), proposalEnvelope)).outcome).toMatchObject({ reason: "not_found" });
+    const line: any = { type: "mark_line", orderId: order.orderId, version: 9, lineId: typed, mark: "listo" };
+    expect((await engine.onConsoleAction(reviewer(s), { operationKey: staffKey(line), actor: member, action: line })).outcome).toMatchObject({
+      reason: "stale_version",
+    });
+    const removed = {
+      ...tap(order.orderId, 9),
+      operationKey: `remove:${order.orderId}:v9:${typed}`,
+      action: { type: "remove_line", orderId: order.orderId, version: 9, lineId: typed } as any,
+    };
+    expect((await engine.onCustomerAction(s.context(), removed)).outcome).toMatchObject({ reason: "stale_version" });
+    const cancelled: any = {
+      ...tap(order.orderId, 1),
+      operationKey: `cancel:${order.orderId}:v${typed}`,
+      action: { type: "cancel_order", orderId: order.orderId, version: typed },
+    };
+    expect((await engine.onCustomerAction(s.context(), cancelled)).outcome).toMatchObject({ reason: "stale_version" });
+    const ready: any = { type: "mark_ready", orderId: order.orderId, version: typed };
+    expect((await engine.onConsoleAction(reviewer(s), { operationKey: staffKey(ready), actor: member, action: ready })).outcome).toMatchObject({
+      reason: "stale_version",
+    });
 
+    // Oldest first: the customer's calls and the claim are at T0, the staff's at T0 + 50 s.
     expect(await rowsOf(s.businessId)).toEqual([
       expect.objectContaining({ source: "not_allowed", operation_key: null, order_id: null }),
       expect.objectContaining({ source: "not_found", operation_key: null, order_id: null }),
       expect.objectContaining({ source: "verify_claims", result: "fail", operation_key: null, order_id: null, claim_kind: "order_state" }),
+      expect.objectContaining({ source: "stale_version", operation_key: null, order_id: order.orderId }),
+      expect.objectContaining({ source: "stale_version", operation_key: null, order_id: order.orderId }),
       expect.objectContaining({ source: "not_allowed", operation_key: null, order_id: null }),
       expect.objectContaining({ source: "not_allowed", operation_key: null, order_id: null }),
+      expect.objectContaining({ source: "not_found", operation_key: null, order_id: null }),
+      expect.objectContaining({ source: "not_found", operation_key: null, order_id: null }),
+      expect.objectContaining({ source: "stale_version", operation_key: null, order_id: order.orderId }),
+      expect.objectContaining({ source: "stale_version", operation_key: null, order_id: order.orderId }),
     ]);
     expect(await rowsOf(other.businessId)).toEqual([expect.objectContaining({ source: "not_found", operation_key: null, order_id: null })]);
     const everything = JSON.stringify(await env.DB.prepare(`SELECT * FROM deed_checks`).all());
     expect(everything).not.toContain("50499998888");
     expect(everything).not.toContain("Maria");
-    expect(everything).not.toContain(order.orderId);
+    // The order id is stored on a refusal that names the order, so only the key column is checked against it.
+    const keys = JSON.stringify(await env.DB.prepare(`SELECT operation_key FROM deed_checks`).all());
+    expect(keys).not.toContain(order.orderId);
+  });
+
+  it("B1: a typed line label or change request id reaches no row, even on a refusal that names the order", async () => {
+    const s = await newStore();
+    const order = await placeFirstOrder(s);
+    const typed = "Maria Lopez 50499998888";
+    const actor = { type: "member" as const, memberId: ids.staff, role: "owner" as const };
+    const line: any = { type: "mark_line", orderId: order.orderId, version: 9, lineId: typed, mark: "listo" };
+    await checked().onConsoleAction(reviewer(s), { operationKey: staffKey(line), actor, action: line });
+    await checked().onConsoleAction(reviewer(s), { operationKey: `rev:${typed}`, actor,
+      action: { type: "review_change", changeRequestId: typed, decision: "approve", reason: "x" } as any });
+    expect(JSON.stringify(await rowsOf(s.businessId))).not.toContain("50499998888");
   });
 
   it("keeps the outcome identical when the recorder throws, for a refusal and for a claim", async () => {

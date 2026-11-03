@@ -304,7 +304,13 @@ export class OrderEngine implements Engine {
 
   async onBurst(context: CustomerContext, reading: BurstReading, matches: readonly LineMatch[]): Promise<EngineResult> {
     const decided = await this.decideBurst(context, reading, matches);
-    await this.recordRefusal(context, decided.outcome, { operationKey: burstKey(context.jobId), orderId: null, atMs: context.nowMs });
+    // The burst's key holds the job's own id, set by the queue and never typed, so it resolves by construction.
+    await this.recordRefusal(context, decided.outcome, {
+      operationKey: burstKey(context.jobId),
+      orderId: null,
+      atMs: context.nowMs,
+      resolved: async () => true,
+    });
     return decided;
   }
 
@@ -406,8 +412,19 @@ export class OrderEngine implements Engine {
       operationKey: derivedOnly(envelope.operationKey, actionKey(envelope.action)),
       orderId: "orderId" in envelope.action ? envelope.action.orderId : null,
       atMs: context.nowMs,
+      resolved: () => this.customerKeyResolves(context, envelope.action),
     });
     return decided;
+  }
+
+  /** Whether the order, the version and the line label a customer's key embeds all resolve here (B1). */
+  private async customerKeyResolves(context: CustomerContext, action: CustomerAction): Promise<boolean> {
+    if (action.type !== "confirm_order" && action.type !== "cancel_order" && action.type !== "remove_line") return false;
+    if (!Number.isSafeInteger(action.version)) return false;
+    const stored = await this.deps.store.customerOrder(context, context.customerId, action.orderId);
+    if (stored === null) return false;
+    // A label points into the change waiting for review when there is one, as the removal does.
+    return action.type !== "remove_line" || indexOfLabel((stored.openRequest ?? stored.view).lines.length, action.lineId) !== null;
   }
 
   private async decideCustomerAction(context: CustomerContext, envelope: ActionEnvelope<CustomerAction>): Promise<EngineResult> {
@@ -478,8 +495,24 @@ export class OrderEngine implements Engine {
       operationKey: derivedOnly(envelope.operationKey, consoleKeyOf(member, envelope.action)),
       orderId: "orderId" in envelope.action ? envelope.action.orderId : null,
       atMs: member.nowMs,
+      resolved: () => this.consoleKeyResolves(member, envelope.action),
     });
     return decided;
+  }
+
+  /** Whether the request, product, order, version or line label a staff key embeds all resolve here (B1). */
+  private async consoleKeyResolves(member: MemberContext, action: ConsoleAction): Promise<boolean> {
+    const { store } = this.deps;
+    if (action.type === "review_change") {
+      return typeof action.changeRequestId === "string" && (await store.changeRequest(member, action.changeRequestId)) !== null;
+    }
+    if (action.type === "propose_price" || action.type === "confirm_price") {
+      return typeof action.productId === "string" && (await store.productNames(member, [action.productId])).size > 0;
+    }
+    if (!isStaffAction(action) || !Number.isSafeInteger(action.version)) return false;
+    const stored = await store.order(member, action.orderId);
+    if (stored === null) return false;
+    return action.type !== "mark_line" || indexOfLabel(stored.view.lines.length, action.lineId) !== null;
   }
 
   private async decideConsoleAction(member: MemberContext, envelope: ActionEnvelope<ConsoleAction>): Promise<EngineResult> {
@@ -605,7 +638,13 @@ export class OrderEngine implements Engine {
   private async recordRefusal(
     tenant: Tenant,
     outcome: EngineOutcome,
-    meta: { readonly operationKey: string | null; readonly orderId: string | null; readonly atMs: number },
+    meta: {
+      readonly operationKey: string | null;
+      readonly orderId: string | null;
+      readonly atMs: number;
+      /** Whether every id and version the key embeds resolved in this store (B1). */
+      readonly resolved: () => Promise<boolean>;
+    },
   ): Promise<void> {
     const { checks, ids, log } = this.deps;
     if (checks === undefined || (outcome.type !== "rejected" && outcome.type !== "duplicate")) return;
@@ -614,10 +653,16 @@ export class OrderEngine implements Engine {
     // there is the customer's own open one, not the id they sent). A duplicate's order was resolved first.
     const orderId =
       outcome.type === "duplicate" ? meta.orderId : outcome.reason === "not_found" ? null : (outcome.order?.orderId ?? null);
-    // A key is written only with the order it names when that order resolved here: a key that names an
-    // unknown order (another store's, or none) is kept out of the row, so the row never carries its text.
-    const operationKey = meta.operationKey !== null && (meta.orderId === null || orderId !== null) ? meta.operationKey : null;
     try {
+      // A key is written only with the order it names when that order resolved here, and only when every id
+      // it embeds (a request, a product, a line label, the order) and its version resolve too. Otherwise a
+      // typed name would reach the append-only row (B1). A duplicate's key was saved, so its ids did resolve.
+      const operationKey =
+        meta.operationKey !== null &&
+        (meta.orderId === null || orderId !== null) &&
+        (outcome.type === "duplicate" || (await meta.resolved()))
+          ? meta.operationKey
+          : null;
       const decidingFactId =
         outcome.type === "rejected" && outcome.reason === "invalid_state" && outcome.order?.state === "cancelado" && orderId !== null
           ? await this.cancelFactOf(tenant, orderId)
