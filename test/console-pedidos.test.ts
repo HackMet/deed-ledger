@@ -7,9 +7,9 @@ import type { ActionEnvelope, ConsoleAction } from "../src/domain/contract/actio
 import { INVITE_TTL_MS } from "../src/domain/console-auth";
 import { orderCode } from "../src/domain/order-code";
 import { hashToken, newToken } from "../src/infrastructure/tokens";
-import { addAndPickup, ids, moreSugar, staleReady } from "./fixtures/contract";
+import { addAndPickup, firstOrder, ids, moreSugar, staleReady } from "./fixtures/contract";
 import { type Harness, harness } from "./helpers/harness";
-import { changeAndApprove, engine, firstPickupOrder, newStore, placeFirstOrder, save, T0, tap } from "./helpers/orders";
+import { changeAndApprove, engine, firstDeliveryOrder, firstPickupOrder, newStore, placeFirstOrder, save, T0, tap } from "./helpers/orders";
 import { newPhone, seedStore } from "./helpers/seed";
 
 type Store = Awaited<ReturnType<typeof newStore>>;
@@ -378,40 +378,42 @@ describe("K5: the Orders screen reads the ledger", () => {
   });
 });
 
+/** The real engine, keeping each console result so the test saves it where saveConsoleAction (#63) will. */
+function recordingEngine() {
+  const results: EngineResult[] = [];
+  const wrapped: Engine = {
+    onBurst: (...a) => engine.onBurst(...a),
+    onCustomerAction: (...a) => engine.onCustomerAction(...a),
+    verifyClaims: (...a) => engine.verifyClaims(...a),
+    preparationList: (...a) => engine.preparationList(...a),
+    onConsoleAction: async (...a) => {
+      const result = await engine.onConsoleAction(...a);
+      results.push(result);
+      return result;
+    },
+  };
+  return { wrapped, results };
+}
+
+async function post(h: Harness, path: string, cookie: string, fields: Record<string, string>) {
+  const ctx = createExecutionContext();
+  const response = await h.worker.fetch(
+    new IncomingRequest(`https://worker.test${path}`, {
+      method: "POST",
+      headers: { origin: "https://worker.test", cookie },
+      body: new URLSearchParams(fields),
+      redirect: "manual",
+    }),
+    h.env,
+    ctx,
+  );
+  await waitOnExecutionContext(ctx);
+  return response;
+}
+
+const csrfOf = (page: string) => /name="csrf" value="([^"]+)"/.exec(page)?.[1] ?? "";
+
 describe("K12: Pedidos shows a change waiting for review and sends the answer to the engine", () => {
-  /** The real engine, keeping each console result so the test saves it where saveConsoleAction (#63) will. */
-  function recordingEngine() {
-    const results: EngineResult[] = [];
-    const wrapped: Engine = {
-      onBurst: (...a) => engine.onBurst(...a),
-      onCustomerAction: (...a) => engine.onCustomerAction(...a),
-      verifyClaims: (...a) => engine.verifyClaims(...a),
-      preparationList: (...a) => engine.preparationList(...a),
-      onConsoleAction: async (...a) => {
-        const result = await engine.onConsoleAction(...a);
-        results.push(result);
-        return result;
-      },
-    };
-    return { wrapped, results };
-  }
-
-  async function post(h: Harness, path: string, cookie: string, fields: Record<string, string>) {
-    const ctx = createExecutionContext();
-    const response = await h.worker.fetch(
-      new IncomingRequest(`https://worker.test${path}`, {
-        method: "POST",
-        headers: { origin: "https://worker.test", cookie },
-        body: new URLSearchParams(fields),
-        redirect: "manual",
-      }),
-      h.env,
-      ctx,
-    );
-    await waitOnExecutionContext(ctx);
-    return response;
-  }
-
   /** A confirmed order with "agregale un jabón más, lo paso a traer" waiting for review. */
   async function withRequest(s: Store) {
     const orderId = await confirmed(s);
@@ -420,8 +422,6 @@ describe("K12: Pedidos shows a change waiting for review and sends the answer to
     const requestId = result.outcome.type === "order_status" ? result.outcome.order!.openChangeRequest!.id : "";
     return { orderId, requestId };
   }
-
-  const csrfOf = (page: string) => /name="csrf" value="([^"]+)"/.exec(page)?.[1] ?? "";
 
   it("shows the request yellow with its diff and both answers, each with a required reason", async () => {
     const h = harness();
@@ -486,5 +486,121 @@ describe("K12: Pedidos shows a change waiting for review and sends the answer to
     const again = await post(h, path, cookie, { csrf, cambio: requestId, decision: "approve", motivo: "Mejor sí" });
     expect(again.headers.get("location")).toBe(`/console/pedidos/${orderId}?aviso=rechazado`);
     expect(results[1]!.outcome.type).toBe("duplicate");
+  });
+});
+
+describe("K13: Pedidos dispatches a ready delivery order with a courier and shows it blue until delivered", () => {
+  /** Names the store's members, so the screen and the notice can show them; returns the staff member's id. */
+  async function nameMembers(s: Store): Promise<string> {
+    await env.DB.prepare(
+      `UPDATE users SET display_name = CASE (SELECT role FROM memberships WHERE business_id = ?1 AND user_id = users.id)
+         WHEN 'staff' THEN 'Marvin' ELSE 'Doña Johana' END
+       WHERE id IN (SELECT user_id FROM memberships WHERE business_id = ?1)`,
+    )
+      .bind(s.businessId)
+      .run();
+    return (await env.DB.prepare(`SELECT user_id FROM memberships WHERE business_id = ? AND role = 'staff'`).bind(s.businessId).first<{ user_id: string }>())!
+      .user_id;
+  }
+
+  /** An order placed with `reading`, confirmed and taken to listo through the engine; returns its id. */
+  async function readyOrder(s: Store, reading = firstDeliveryOrder): Promise<string> {
+    const v1 = await placeFirstOrder(s, ids.customer, T0, reading);
+    await save(await engine.onCustomerAction(s.context({ nowMs: T0 + 1000 }), tap(v1.orderId, 1)));
+    for (const [i, type] of (["start_preparing", "mark_ready"] as const).entries()) {
+      await save(await engine.onConsoleAction(member(s, T0 + 5000 + i), staffTap(type, v1.orderId, 1)));
+    }
+    return v1.orderId;
+  }
+
+  it("lists only active members, dispatches through the engine, then shows blue with the courier until delivered", async () => {
+    const { wrapped, results } = recordingEngine();
+    const h = harness({ engine: wrapped });
+    const s = await storeWithSession();
+    const marvin = await nameMembers(s);
+    const orderId = await readyOrder(s);
+    const cookie = await login(h, s);
+    // Added after signing in, so the login helper's staff member is the active one.
+    const goneId = crypto.randomUUID();
+    await env.DB.batch([
+      env.DB.prepare(`INSERT INTO users (id, phone, display_name, created_at_ms) VALUES (?, ?, 'Ya no trabaja', 0)`).bind(goneId, newPhone()),
+      env.DB.prepare(`INSERT INTO memberships (business_id, user_id, role, active, created_at_ms) VALUES (?, ?, 'staff', 0, 0)`).bind(s.businessId, goneId),
+    ]);
+    const ready = await (await get(h, `/console/pedidos/${orderId}`, cookie)).text();
+    expect(ready).toContain("¿Quién lo lleva?");
+    expect(ready).toContain(`<option value="${marvin}">Marvin</option>`);
+    expect(ready).toContain("Doña Johana");
+    expect(ready).not.toContain("Ya no trabaja");
+    expect(ready).not.toContain("Entregado ✓");
+
+    const path = `/console/pedidos/${orderId}/paso`;
+    const csrf = csrfOf(ready);
+    const sent = await post(h, path, cookie, { csrf, paso: "despachar", version: "1", repartidor: marvin });
+    expect(sent.headers.get("location")).toBe(`/console/pedidos/${orderId}?aviso=despachado`);
+    expect(results[0]).toMatchObject({
+      outcome: { type: "action_saved", order: { state: "en_camino" } },
+      notices: [{ notice: { type: "order_dispatched", courierName: "Marvin" } }],
+    });
+    await save(results[0]!);
+
+    const list = await (await get(h, "/console/pedidos", cookie)).text();
+    expect(row(list, orderId)).toBe("blue");
+    expect(list).toContain("Cliente · En camino · Lo lleva Marvin");
+    const out = await (await get(h, `/console/pedidos/${orderId}?aviso=despachado`, cookie)).text();
+    expect(out).toContain("Va en camino. Le avisamos al cliente.");
+    expect(out).toContain("En camino con Marvin");
+    expect(out).toContain("Entregado ✓");
+    expect(out).not.toContain("¿Quién lo lleva?");
+
+    // A second dispatch tap is the first one's duplicate: the screen reports it saved.
+    expect((await post(h, path, cookie, { csrf, paso: "despachar", version: "1", repartidor: marvin })).headers.get("location")).toBe(
+      `/console/pedidos/${orderId}?aviso=despachado`,
+    );
+    expect(results[1]!.outcome.type).toBe("duplicate");
+
+    const done = await post(h, path, cookie, { csrf, paso: "entregar", version: "1" });
+    expect(done.headers.get("location")).toBe(`/console/pedidos/${orderId}?aviso=entregado`);
+    await save(results[2]!);
+    expect(row(await (await get(h, "/console/pedidos", cookie)).text(), orderId)).toBe("check");
+    const trail = await (await get(h, `/console/pedidos/${orderId}`, cookie)).text();
+    expect(trail).toContain("En camino con Marvin");
+    expect(trail).not.toContain("Entregado ✓</button>");
+  });
+
+  it("a courier the store doesn't have is named in the notice; a bad form never reaches the engine", async () => {
+    const { wrapped, results } = recordingEngine();
+    const h = harness({ engine: wrapped });
+    const s = await storeWithSession();
+    await nameMembers(s);
+    const orderId = await readyOrder(s);
+    const cookie = await login(h, s);
+    const csrf = csrfOf(await (await get(h, `/console/pedidos/${orderId}`, cookie)).text());
+    const path = `/console/pedidos/${orderId}/paso`;
+    for (const fields of [{ paso: "volar", version: "1" }, { paso: "despachar", version: "1" }, { paso: "entregar", version: "uno" }]) {
+      expect((await post(h, path, cookie, { csrf, ...fields })).status).toBe(400);
+    }
+    expect(results).toHaveLength(0);
+    const refused = await post(h, path, cookie, { csrf, paso: "despachar", version: "1", repartidor: "member-made-up" });
+    expect(refused.headers.get("location")).toBe(`/console/pedidos/${orderId}?aviso=repartidor`);
+    expect((await post(h, path, cookie, { csrf, paso: "entregar", version: "1" })).headers.get("location")).toBe(
+      `/console/pedidos/${orderId}?aviso=paso`,
+    );
+  });
+
+  it("pickup offers Entregado at listo; with no fulfillment recorded, it says what is missing instead", async () => {
+    const h = harness();
+    const s = await storeWithSession();
+    const pickupId = await readyOrder(s, firstPickupOrder);
+    const cookie = await login(h, s);
+    const pickupPage = await (await get(h, `/console/pedidos/${pickupId}`, cookie)).text();
+    expect(pickupPage).toContain("Entregado ✓");
+    expect(pickupPage).not.toContain("¿Quién lo lleva?");
+
+    const t = await storeWithSession();
+    const unknownId = await readyOrder(t, firstOrder);
+    const unknownPage = await (await get(h, `/console/pedidos/${unknownId}`, await login(h, t))).text();
+    expect(unknownPage).toContain("Falta saber si lo recogen o se lo llevamos.");
+    expect(unknownPage).not.toContain("Entregado ✓");
+    expect(unknownPage).not.toContain("¿Quién lo lleva?");
   });
 });

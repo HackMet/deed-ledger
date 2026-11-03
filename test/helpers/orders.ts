@@ -80,6 +80,15 @@ export const footprint = async (businessId: string) => ({
  */
 export const firstPickupOrder: BurstReading = { ...firstOrder, observations: [...firstOrder.observations, ...pickup.observations] };
 
+/** The same, with "me lo traen frente a la iglesia" instead (K13): a delivery order. */
+export const firstDeliveryOrder: BurstReading = {
+  ...firstOrder,
+  observations: [
+    ...firstOrder.observations,
+    { kind: "fulfillment", mode: "delivery", pin: null, placeText: "frente a la iglesia, casa verde", sameAsBefore: false, issues: [] },
+  ],
+};
+
 export async function placeFirstOrder(
   s: Awaited<ReturnType<typeof newStore>>,
   customerId: string = ids.customer,
