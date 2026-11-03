@@ -64,6 +64,7 @@ export async function processConversation(deps: Deps, conversation: Conversation
 
 async function runRounds(deps: Deps, lease: Lease): Promise<ProcessOutcome> {
   let processedAny = false;
+  let typingShown = false;
   for (let round = 0; round < MAX_ROUNDS; round++) {
     const now = deps.clock.now();
     // One statement decides "settled?" and lists the jobs, so nothing can slip in between.
@@ -86,6 +87,10 @@ async function runRounds(deps: Deps, lease: Lease): Promise<ProcessOutcome> {
         // then continue in order with it included.
         return handOff(deps, lease, settleDelaySeconds(at, at), "settling");
       }
+      if (!typingShown) {
+        typingShown = true;
+        await showTyping(deps, lease, snapshot.jobs.at(-1) ?? job);
+      }
       const result = await runJob(deps, lease, job, index === newestOfBurst);
       if (result.status === "deferred") {
         return handOff(deps, lease, secondsUntil(deps.clock.now(), result.retryAfterMs), "deferred");
@@ -101,6 +106,26 @@ async function runRounds(deps: Deps, lease: Lease): Promise<ProcessOutcome> {
   }
   // Still busy after several rounds: hand over to a fresh doorbell instead of holding on.
   return handOff(deps, lease, 0, "processed");
+}
+
+/**
+ * Marks the newest message being worked on read and shows "typing…", before any download or model
+ * call, so the customer isn't left in silence. The replies go out after processing returns, so it
+ * always comes first. Best effort: a failure is logged with IDs and the work goes on. A customer
+ * who typed ALTO gets no automated answer, so no indicator either.
+ */
+async function showTyping(deps: Deps, lease: Lease, newest: Job): Promise<void> {
+  if (!deps.channel.configured) return;
+  const fields = { ...ids(lease), inboundId: newest.id };
+  try {
+    if (await deps.customerControls.isStopped(lease, lease.conversationId)) return;
+    const target = await deps.jobs.typingTarget(lease, newest.id);
+    if (target === null) return;
+    const result = await deps.channel.showTyping(target);
+    if (!result.ok) deps.log.warn("typing_indicator_failed", { ...fields, reason: result.errorCode });
+  } catch (error) {
+    deps.log.warn("typing_indicator_failed", { ...fields, reason: describeError(error) });
+  }
 }
 
 async function handOff(deps: Deps, lease: Lease, delaySeconds: number, outcome: ProcessOutcome): Promise<ProcessOutcome> {
