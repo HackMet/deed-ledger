@@ -6,10 +6,21 @@
  * K12: an order with a customer's change waiting shows it (added, removed, changed lines) with
  * Aprobar ✓ / Rechazar ✗, each with a required reason. The answer goes to the engine as one
  * `review_change` action under the key it derives; the engine reads, decides and returns the commits.
+ *
+ * K13: a ready delivery order is dispatched from here with a courier picked from the store's active
+ * members; out, it shows blue with the courier's name, and is marked delivered from here too.
  */
 import { type Context, type Hono } from "hono";
 import { html } from "hono/html";
-import { D1OrderTrail, type OrderColour, type OrderListRow, type OrderTrail, type TrailEntry } from "../../../infrastructure/d1/order-trail";
+import { staffKey } from "../../../application/engine/order-engine";
+import {
+  type Courier,
+  D1OrderTrail,
+  type OrderColour,
+  type OrderListRow,
+  type OrderTrail,
+  type TrailEntry,
+} from "../../../infrastructure/d1/order-trail";
 import { REASON_MAX, reviewKey, reviewReason } from "../../../domain/change-request";
 import type { ActionEnvelope, ConsoleAction } from "../../../domain/contract/actions";
 import type { EngineOutcome, LineDiff, OrderLineView, OrderState } from "../../../domain/contract/outcomes";
@@ -48,7 +59,23 @@ const REVIEW_NOTICES = {
 } as const;
 type ReviewNotice = keyof typeof REVIEW_NOTICES;
 
-const COLOUR_MARKS: Record<OrderColour, string> = { yellow: "Cambió", red: "Cancelado", check: "✓ Entregado", none: "" };
+/** What a dispatch or a delivered tap tells the person who tapped (K13). */
+const STEP_NOTICES = {
+  despachado: "Va en camino. Le avisamos al cliente.",
+  entregado: "Pedido entregado.",
+  repartidor: "Esa persona no está activa en la tienda. Elegí a otra.",
+  paso: "Ese pedido ya cambió. La página ya está al día.",
+  sinpedido: "Ese pedido no está en la lista.",
+  permiso: "Eso no se puede desde tu cuenta.",
+} as const;
+type StepNotice = keyof typeof STEP_NOTICES;
+
+const NOTICES: Readonly<Record<string, string>> = { ...REVIEW_NOTICES, ...STEP_NOTICES };
+
+/** The steps this screen sends, by the form's `paso`. */
+const STEPS = { despachar: "dispatch", entregar: "mark_delivered" } as const;
+
+const COLOUR_MARKS: Record<OrderColour, string> = { yellow: "Cambió", red: "Cancelado", check: "✓ Entregado", blue: "En camino", none: "" };
 const EVIDENCE_LABELS: Record<string, string> = { inbound_message: "mensaje", media_asset: "foto", member: "miembro" };
 const CLOSURE_LABELS = { cancelled: "cancelado", superseded: "reemplazado" } as const;
 
@@ -64,11 +91,43 @@ export function pedidosScreen(app: Hono<ConsoleEnv>) {
   });
 
   app.get("/pedidos/:orderId", async (c) => {
-    const trail = await new D1OrderTrail(c.env.DB).trail({ businessId: c.get("member").businessId }, c.req.param("orderId"));
+    const reads = new D1OrderTrail(c.env.DB);
+    const tenant = { businessId: c.get("member").businessId };
+    const trail = await reads.trail(tenant, c.req.param("orderId"));
     if (trail === null) return notFound(c);
     const notice = c.req.query("aviso");
-    const shown = notice !== undefined && notice in REVIEW_NOTICES ? REVIEW_NOTICES[notice as ReviewNotice] : null;
-    return c.html(page(`Pedido ${trail.code ?? "—"}`, trailBody(trail, c.req.param("orderId"), c.get("csrf"), shown), true));
+    const shown = notice !== undefined && Object.hasOwn(NOTICES, notice) ? NOTICES[notice]! : null;
+    const members = trail.state === "listo" && trail.fulfillment === "delivery" ? await reads.activeMembers(tenant) : [];
+    return c.html(page(`Pedido ${trail.code ?? "—"}`, trailBody(trail, c.req.param("orderId"), c.get("csrf"), shown, members), true));
+  });
+
+  app.post("/pedidos/:orderId/paso", async (c) => {
+    const orderId = c.req.param("orderId");
+    const back = (notice: StepNotice) => c.redirect(`/console/pedidos/${encodeURIComponent(orderId)}?aviso=${notice}`, 303);
+    const form = await c.req.parseBody();
+    const paso = typeof form["paso"] === "string" && Object.hasOwn(STEPS, form["paso"]) ? STEPS[form["paso"] as keyof typeof STEPS] : null;
+    const version = typeof form["version"] === "string" && /^[1-9][0-9]{0,5}$/.test(form["version"]) ? Number(form["version"]) : null;
+    const courierMemberId = typeof form["repartidor"] === "string" && form["repartidor"].length <= 64 ? form["repartidor"] : null;
+    if (orderId.length > 64 || paso === null || version === null || (paso === "dispatch" && courierMemberId === null)) {
+      return c.text("Bad request", 400);
+    }
+
+    const { engine, deps } = c.get("runtime");
+    if (engine === null) return c.html(page("Pedidos", html`<p class="empty">La lista de pedidos no está lista todavía.</p>`, true), 503);
+    const member = memberContext(c);
+    const action =
+      paso === "dispatch"
+        ? ({ type: "dispatch", orderId, version, courierMemberId: courierMemberId! } as const)
+        : ({ type: "mark_delivered", orderId, version } as const);
+    const envelope: ActionEnvelope<ConsoleAction> = {
+      operationKey: staffKey(action),
+      actor: { type: "member", memberId: member.memberId, role: member.role },
+      action,
+    };
+    // PENDING: the commits run where every console action's do (saveConsoleAction, #63).
+    const { outcome } = await engine.onConsoleAction(member, envelope);
+    deps.log.info("console_action", { businessId: member.businessId, outcome: outcome.type });
+    return back(stepNoticeFor(outcome, paso));
   });
 
   app.post("/pedidos/:orderId/revision", async (c) => {
@@ -114,6 +173,21 @@ function reviewNoticeFor(outcome: EngineOutcome, decision: "approve" | "decline"
   }
 }
 
+function stepNoticeFor(outcome: EngineOutcome, paso: "dispatch" | "mark_delivered"): StepNotice {
+  // A second tap answers with the first: the screen reports the step that was saved.
+  const answered = outcome.type === "duplicate" ? outcome.first : outcome;
+  if (answered.type !== "rejected") return paso === "dispatch" ? "despachado" : "entregado";
+  switch (answered.reason) {
+    case "not_found":
+      // The order resolved (the outcome carries it): what wasn't found is the courier.
+      return answered.order === null ? "sinpedido" : "repartidor";
+    case "not_allowed":
+      return "permiso";
+    default:
+      return "paso";
+  }
+}
+
 function notFound(c: Context<ConsoleEnv>) {
   return c.html(page("Pedidos", html`<p class="empty">Ese pedido no está en la lista.</p>`, true), 404);
 }
@@ -121,17 +195,22 @@ function notFound(c: Context<ConsoleEnv>) {
 function orderRow(row: OrderListRow) {
   return html`<li class="order ${row.colour}"><a href="/console/pedidos/${encodeURIComponent(row.orderId)}">
 <div class="head"><strong>${row.code ?? "—"}</strong><span>${COLOUR_MARKS[row.colour]}</span></div>
-<p class="meta">${row.customerLabel} · ${STATE_LABELS[row.state]}</p>
+<p class="meta">${row.customerLabel} · ${STATE_LABELS[row.state]}${row.courier === null ? "" : ` · Lo lleva ${courierName(row.courier)}`}</p>
 <p>${row.lines.map((line) => `${line.text} × ${line.quantity ?? "?"}`).join(", ")}</p>
 </a></li>`;
 }
 
-function trailBody(trail: OrderTrail, orderId: string, csrf: string, notice: string | null) {
-  const marks = COLOUR_MARKS[trail.cancelled ? "red" : trail.delivered ? "check" : trail.changed ? "yellow" : "none"];
+const courierName = (courier: Courier) => courier.name ?? "Sin nombre";
+
+function trailBody(trail: OrderTrail, orderId: string, csrf: string, notice: string | null, members: readonly Courier[]) {
+  const colour = trail.cancelled ? "red" : trail.delivered ? "check" : trail.changed ? "yellow" : trail.dispatched ? "blue" : "none";
+  const marks = COLOUR_MARKS[colour];
   const names = new Map(trail.facts.map((entry, n) => [entry.factId, `${KIND_LABELS[entry.kind]} (paso ${n + 1})`]));
   return html`${notice === null ? "" : html`<p class="notice">${notice}</p>`}
 <p class="meta">${STATE_LABELS[trail.state]} · Versión ${trail.version}${marks === "" ? "" : ` · ${marks}`}</p>
+${trail.courier === null || trail.delivered ? "" : html`<p class="meta">Lo lleva ${courierName(trail.courier)}</p>`}
 ${trail.openRequest === null ? "" : changeBox(trail.openRequest, orderId, csrf)}
+${stepBox(trail, orderId, csrf, members)}
 <ol class="trail">${trail.facts.map((entry) => trailEntry(entry, names))}</ol>`;
 }
 
@@ -160,12 +239,41 @@ ${answer("decline", "Rechazar ✗")}
 </section>`;
 }
 
+/**
+ * K13: the next step out the door. A ready delivery order is dispatched with a courier; once out, or
+ * ready for pickup, it is marked delivered. With no fulfillment recorded, neither: the screen says why.
+ */
+function stepBox(trail: OrderTrail, orderId: string, csrf: string, members: readonly Courier[]) {
+  if (trail.cancelled || trail.delivered) return "";
+  const action = `/console/pedidos/${encodeURIComponent(orderId)}/paso`;
+  const hidden = (paso: keyof typeof STEPS) => html`<input type="hidden" name="csrf" value="${csrf}">
+<input type="hidden" name="paso" value="${paso}"><input type="hidden" name="version" value="${trail.version}">`;
+  if (trail.state === "listo" && trail.fulfillment === null) {
+    return html`<p class="notice">Falta saber si lo recogen o se lo llevamos. Preguntale al cliente.</p>`;
+  }
+  if (trail.state === "listo" && trail.fulfillment === "delivery") {
+    return html`<section class="step"><form method="post" action="${action}">${hidden("despachar")}
+<label>¿Quién lo lleva?<select name="repartidor" required>
+${members.map((m) => html`<option value="${m.memberId}">${courierName(m)}</option>`)}
+</select></label>
+<button type="submit">Mandar en camino</button>
+</form></section>`;
+  }
+  if (trail.state === "en_camino" || (trail.state === "listo" && trail.fulfillment === "pickup")) {
+    return html`<section class="step"><form method="post" action="${action}">${hidden("entregar")}
+<button type="submit">Entregado ✓</button>
+</form></section>`;
+  }
+  return "";
+}
+
 function trailEntry(entry: TrailEntry, names: ReadonlyMap<string, string>) {
   const chips = entry.evidence.filter((e) => e.kind in EVIDENCE_LABELS);
   const refs = (ids: readonly string[]) => ids.map((id) => names.get(id) ?? "otro paso").join(", ");
   return html`<li id="${entry.factId}">
 <div class="head"><strong>${KIND_LABELS[entry.kind]}</strong><time>${formatTime(entry.recordedAtMs)}</time></div>
 <p class="meta">${entry.actor}</p>
+${entry.courier === null ? "" : html`<p class="courier">En camino con ${courierName(entry.courier)}</p>`}
 ${entry.review === null ? "" : html`<p class="review ${entry.review.decision}">${DECISION_LABELS[entry.review.decision]}: ${entry.review.reason}</p>`}
 ${chips.length === 0 ? "" : html`<p>${chips.map((e) => html`<span class="chip">${EVIDENCE_LABELS[e.kind]}</span>`)}</p>`}
 ${entry.closedBy === null ? "" : html`<p class="closed">cerrado por <a href="#${entry.closedBy.factId}">${refs([entry.closedBy.factId])}</a> (${CLOSURE_LABELS[entry.closedBy.reason]})</p>`}
@@ -205,6 +313,10 @@ ul,ol{list-style:none;margin:0;padding:0}p{margin:4px 0}.meta{font-size:14px;col
 .orders li{margin:10px;border-radius:10px;background:#fff;border-left:6px solid #bbb}
 .orders li a{display:block;padding:12px;color:inherit;text-decoration:none}
 .orders .yellow{border-left-color:#f0b400}.orders .red{border-left-color:#b33}.orders .check{border-left-color:#2f6f45}
+.orders .blue{border-left-color:#2563c9}.courier{color:#2563c9;font-weight:600}
+.step{margin:10px 14px;padding:12px;border-radius:10px;background:#fff;border-left:6px solid #2563c9}
+.step form{display:flex;flex-direction:column;gap:6px}.step select{width:100%;padding:8px;font:inherit;border:1px solid #bbb;border-radius:6px}
+.step button{padding:10px;font:inherit;font-weight:600;border:0;border-radius:8px;color:#fff;background:#2563c9}
 .head{display:flex;justify-content:space-between;gap:8px}
 .trail{margin:10px 14px;border-left:3px solid #2f6f45}.trail li{margin:0 0 12px 12px;padding:10px;border-radius:8px;background:#fff}
 .chip{font-size:12px;background:#e3efe6;padding:1px 8px;border-radius:10px;margin-right:4px}

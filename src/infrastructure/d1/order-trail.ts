@@ -8,7 +8,16 @@ import type { LineDiff, OrderState } from "../../domain/contract/outcomes";
 import { type OrderFact, deriveOrderState } from "../../domain/order-state";
 import { orderCode } from "../../domain/order-code";
 
-export type OrderColour = "yellow" | "red" | "check" | "none";
+export type OrderColour = "yellow" | "red" | "check" | "blue" | "none";
+
+/** Who took the order out (K13): the member the dispatch fact records, with the store's name for them. */
+export interface Courier {
+  readonly memberId: string;
+  readonly name: string | null;
+}
+
+/** How the current version leaves the store; null when nobody recorded it. */
+export type FulfillmentMode = "pickup" | "delivery" | null;
 
 export interface OrderListRow {
   readonly orderId: string;
@@ -17,6 +26,8 @@ export interface OrderListRow {
   readonly lines: readonly { readonly text: string; readonly quantity: string | null }[];
   readonly state: OrderState;
   readonly colour: OrderColour;
+  /** The courier of the live dispatch (K13); null when the order isn't out. */
+  readonly courier: Courier | null;
 }
 
 type TrailKind = OrderFact["kind"] | "change_request" | "change_review";
@@ -32,6 +43,8 @@ export interface TrailEntry {
   readonly blocks: readonly string[];
   /** change_review only: the answer and its reason, as the member wrote it. */
   readonly review: { readonly decision: "approve" | "decline"; readonly reason: string } | null;
+  /** A dispatch only (K13): the courier it records. */
+  readonly courier: Courier | null;
 }
 
 export interface OrderTrail {
@@ -41,6 +54,10 @@ export interface OrderTrail {
   readonly changed: boolean;
   readonly cancelled: boolean;
   readonly delivered: boolean;
+  readonly dispatched: boolean;
+  readonly fulfillment: FulfillmentMode;
+  /** The courier of the live dispatch (K13); null when the order isn't out. */
+  readonly courier: Courier | null;
   /** The customer's change waiting for review (K12), with what it would change; null when none. */
   readonly openRequest: { readonly id: string; readonly diff: LineDiff } | null;
   readonly facts: readonly TrailEntry[];
@@ -51,6 +68,7 @@ interface Standing {
   readonly changed: boolean;
   readonly cancelled: boolean;
   readonly delivered: boolean;
+  readonly dispatched: boolean;
 }
 
 interface FactRow {
@@ -111,7 +129,7 @@ const openRequestOf = (rows: readonly FactRow[]): FactRow | null =>
 /**
  * Yellow: a change waits for review (K12), or the live version is past v1 and no review approved it
  * (a change before confirming, waiting for the customer). An approved change is back to normal.
- * Red: a live cancel. Check: a live delivered tap.
+ * Red: a live cancel. Check: a live delivered tap. Blue: a live dispatch (K13), out with a courier.
  */
 function standingOf(rows: readonly FactRow[]): Standing {
   const live = rows.filter((row) => row.live === 1);
@@ -123,8 +141,25 @@ function standingOf(rows: readonly FactRow[]): Standing {
     changed: openRequestOf(rows) !== null || unreviewedChange,
     cancelled: orderFacts.some((fact) => fact.kind === "order_cancel"),
     delivered: orderFacts.some((fact) => fact.kind === "order_status" && fact.status === "delivered"),
+    dispatched: orderFacts.some((fact) => fact.kind === "order_status" && fact.status === "dispatched"),
   };
 }
+
+/** The member a dispatch fact records, named from the store's members; null for any other fact. */
+const courierOf = (row: FactRow, names: ReadonlyMap<string, string | null>): Courier | null => {
+  if (row.kind !== "order_status") return null;
+  const body = JSON.parse(row.body_json) as { status?: string; courierMemberId?: string };
+  if (body.status !== "dispatched" || typeof body.courierMemberId !== "string") return null;
+  return { memberId: body.courierMemberId, name: names.get(body.courierMemberId) ?? null };
+};
+
+/** The courier of the latest live dispatch. */
+const liveCourierOf = (rows: readonly FactRow[], names: ReadonlyMap<string, string | null>): Courier | null =>
+  rows
+    .filter((row) => row.live === 1)
+    .map((row) => courierOf(row, names))
+    .filter((courier) => courier !== null)
+    .at(-1) ?? null;
 
 /** The current version is the highest live version fact; the `orders.current_version` cache is only a last resort. */
 const currentVersionOf = (rows: readonly FactRow[], cached: number): number => {
@@ -132,7 +167,8 @@ const currentVersionOf = (rows: readonly FactRow[], cached: number): number => {
   return live.length === 0 ? cached : Math.max(...live);
 };
 
-const colourOf = (s: Standing): OrderColour => (s.cancelled ? "red" : s.delivered ? "check" : s.changed ? "yellow" : "none");
+const colourOf = (s: Standing): OrderColour =>
+  s.cancelled ? "red" : s.delivered ? "check" : s.changed ? "yellow" : s.dispatched ? "blue" : "none";
 
 /** The code comes from the order's latest confirm fact, live or not, so a change does not blank it. */
 const confirmIdOf = (rows: readonly FactRow[]): string | null => rows.filter((row) => row.kind === "order_confirm").at(-1)?.id ?? null;
@@ -152,8 +188,29 @@ const reviewOf = (row: FactRow): TrailEntry["review"] => {
 export class D1OrderTrail {
   constructor(private readonly db: D1Database) {}
 
+  /** The store's active members, who may take an order out (K13, Q4: any of them). */
+  async activeMembers(tenant: Tenant): Promise<Courier[]> {
+    const { results } = await this.db
+      .prepare(
+        `SELECT m.user_id, u.display_name FROM memberships m JOIN users u ON u.id = m.user_id
+         WHERE m.business_id = ?1 AND m.active = 1 ORDER BY u.display_name, m.user_id`,
+      )
+      .bind(tenant.businessId)
+      .all<{ user_id: string; display_name: string | null }>();
+    return results.map((row) => ({ memberId: row.user_id, name: row.display_name }));
+  }
+
+  /** Every member's name, active or not: a courier keeps their name in the trail once they leave. */
+  private async memberNames(tenant: Tenant): Promise<Map<string, string | null>> {
+    const { results } = await this.db
+      .prepare(`SELECT m.user_id, u.display_name FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.business_id = ?1`)
+      .bind(tenant.businessId)
+      .all<{ user_id: string; display_name: string | null }>();
+    return new Map(results.map((row) => [row.user_id, row.display_name]));
+  }
+
   async listOrders(tenant: Tenant): Promise<OrderListRow[]> {
-    const [orders, facts, lines] = await Promise.all([
+    const [orders, facts, lines, names] = await Promise.all([
       this.db
         .prepare(`SELECT id, state, current_version FROM orders WHERE business_id = ?1 ORDER BY created_at_ms DESC, id`)
         .bind(tenant.businessId)
@@ -167,6 +224,7 @@ export class D1OrderTrail {
         )
         .bind(tenant.businessId)
         .all<{ order_id: string; version: number; customer_text: string; qty_milli: number | null; canonical_name: string | null }>(),
+      this.memberNames(tenant),
     ]);
     const factsByOrder = Map.groupBy(facts.results, (row) => row.order_id);
     const rows: OrderListRow[] = [];
@@ -184,6 +242,7 @@ export class D1OrderTrail {
           .map((line) => ({ text: line.canonical_name ?? line.customer_text, quantity: quantityText(line.qty_milli) })),
         state: deriveOrderState(mine.filter(isOrderFact).map(toOrderFact), currentVersion, order.state),
         colour: colourOf(standingOf(mine)),
+        courier: liveCourierOf(mine, names),
       });
     }
     return rows;
@@ -198,7 +257,7 @@ export class D1OrderTrail {
     if (order === null) return null;
     const { results: rows } = await this.db.prepare(FACTS_SQL).bind(tenant.businessId, orderId).all<FactRow>();
     const ids = rows.map((row) => row.id);
-    const [evidence, closures, edges] = await Promise.all([
+    const [evidence, closures, edges, names, version] = await Promise.all([
       this.db
         .prepare(`SELECT fact_id, kind, ref_id FROM fact_evidence WHERE business_id = ?1 ORDER BY kind, ref_id`)
         .bind(tenant.businessId)
@@ -211,6 +270,11 @@ export class D1OrderTrail {
         .prepare(`SELECT fact_id, depends_on_fact_id FROM fact_dependencies WHERE business_id = ?1`)
         .bind(tenant.businessId)
         .all<{ fact_id: string; depends_on_fact_id: string }>(),
+      this.memberNames(tenant),
+      this.db
+        .prepare(`SELECT fulfillment_mode FROM order_versions WHERE business_id = ?1 AND order_id = ?2 AND version = ?3`)
+        .bind(tenant.businessId, orderId, currentVersionOf(rows, order.current_version))
+        .first<{ fulfillment_mode: FulfillmentMode }>(),
     ]);
     const entries: TrailEntry[] = rows.map((row) => {
       const proof = evidence.results.filter((e) => e.fact_id === row.id).map((e) => ({ kind: e.kind, refId: e.ref_id }));
@@ -225,6 +289,7 @@ export class D1OrderTrail {
         dependsOn: ids.filter((id) => edges.results.some((e) => e.fact_id === row.id && e.depends_on_fact_id === id)),
         blocks: ids.filter((id) => edges.results.some((e) => e.depends_on_fact_id === row.id && e.fact_id === id)),
         review: row.kind === "change_review" ? reviewOf(row) : null,
+        courier: courierOf(row, names),
       };
     });
     const currentVersion = currentVersionOf(rows, order.current_version);
@@ -234,6 +299,8 @@ export class D1OrderTrail {
       state: deriveOrderState(rows.filter(isOrderFact).map(toOrderFact), currentVersion, order.state),
       version: currentVersion,
       ...standingOf(rows),
+      fulfillment: version?.fulfillment_mode ?? null,
+      courier: liveCourierOf(rows, names),
       openRequest: open === null ? null : { id: open.id, diff: (JSON.parse(open.body_json) as { diff: LineDiff }).diff },
       facts: entries,
     };
