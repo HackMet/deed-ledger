@@ -59,9 +59,10 @@ describe("pairOrderState: a claim of state pairs with the live fact of that stat
     expect(pairOrderState({ version: 2, state: "listo" }, facts).state).toBe("sin_pareja");
   });
 
-  it("pairs a cancelled claim with the live cancel of the order, whatever version was said", () => {
-    const facts = [fact({ id: "f-cancel", kind: "order_cancel", version: null })];
+  it("pairs a cancelled claim with the live cancel of its version, and not with a cancel of another version", () => {
+    const facts = [fact({ id: "f-cancel", kind: "order_cancel", version: 3 })];
     expect(pairOrderState({ version: 3, state: "cancelado" }, facts).state).toBe("emparejado");
+    expect(pairOrderState({ version: 2, state: "cancelado" }, facts).state).toBe("sin_pareja");
   });
 
   it("reads a confirm that resumed into preparando as the state preparando", () => {

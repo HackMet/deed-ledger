@@ -14,7 +14,7 @@ export type PairState = "emparejado" | "sin_pareja" | "en_duda" | "bloqueado";
 
 export type FactKind = "order_version" | "order_confirm" | "order_cancel" | "order_status";
 
-/** One order fact as the book lane needs it. `version` is null for an order_cancel, which records none. */
+/** One order fact as the book lane needs it. `version` is the order version the fact's body records; null when none. */
 export interface LibroFact {
   readonly id: string;
   readonly kind: FactKind;
@@ -135,10 +135,10 @@ export function stateOf(fact: LibroFact): OrderState | null {
 
 /**
  * `order_state` claim ↔ the order's fact that records that state at that version. A live fact pairs; a closed
- * one, or none, does not. An order_cancel records no version, so it answers for the order whatever version was said.
+ * one, or none, does not. A fact of another version never pairs.
  */
 export function pairOrderState(claim: { readonly version: number; readonly state: OrderState }, facts: readonly LibroFact[]): { readonly state: PairState; readonly fact: LibroFact | null } {
-  const matching = facts.filter((fact) => stateOf(fact) === claim.state && (fact.kind === "order_cancel" || fact.version === claim.version));
+  const matching = facts.filter((fact) => stateOf(fact) === claim.state && fact.version === claim.version);
   const live = matching.find((fact) => fact.live);
   if (live !== undefined) return { state: "emparejado", fact: live };
   return { state: "sin_pareja", fact: matching.at(-1) ?? null };

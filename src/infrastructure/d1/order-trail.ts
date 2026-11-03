@@ -94,7 +94,7 @@ const isOrderFact = (row: FactRow): row is FactRow & { kind: OrderFact["kind"] }
  * the rule of `D1OrderStore.orderFacts`: no ancestor, itself included, is closed, except by a
  * supersede from another of its own ancestors.
  */
-const FACTS_SQL = `WITH RECURSIVE
+export const FACTS_SQL = `WITH RECURSIVE
   mine AS (
     SELECT id, kind, body_json, recorded_at_ms, operation_key, json_extract(body_json, '$.orderId') AS order_id, rowid AS seq FROM facts
     WHERE business_id = ?1 AND kind IN ${ORDER_KINDS} AND (?2 IS NULL OR json_extract(body_json, '$.orderId') = ?2)
