@@ -159,6 +159,12 @@ Gate: Saturday Oct 31, 8:00 PM Honduras time.
 - Workers Free gives 10 ms of CPU per invocation. Angel's account is on Workers Paid (30 s by default, up to 5 min).
 - In a D1 batch, an `UPDATE` that matches 0 rows doesn't roll anything back. Guards must fail loudly (UNIQUE or
   CHECK).
+- Eval detectors: a readiness claim needs a present-tense predicate on the pedido ("está listo") — the classic
+  confirmation opens with "Listo, \<name\>" and promises "te aviso cuando esté listo" (subjunctive), which is the
+  opposite of a claim. Money mentions must be backed by per-step order snapshots, not just the final order, or
+  mid-run totals read as lies after an unpriced line lands.
+- `npm run eval` must survive a scenario error with a transcript: one crashing scenario once took down the whole
+  run's `all.md`/`results.json` (E22).
 - Inside workerd, timers don't advance during synchronous work, so measure CPU-heavy code elsewhere.
 - This machine restricts unprivileged user namespaces, so bubblewrap sandboxes can fail to start: Codex warns but
   still runs read-only commands; Muse may refuse shell commands. See [workflow.md](workflow.md#muse-code).
