@@ -229,7 +229,8 @@ describe("onConsoleAction: staff move an order along the list, every refusal ans
     const preparing = { ...confirmed, state: "preparando" as const };
     expect(start.outcome).toEqual({ type: "action_saved", order: preparing });
     expect(start.notices).toEqual([]);
-    expect(start.commits.every((c) => c.post === undefined || c.post.length === 0)).toBe(true);
+    // The order commit carries no post guards; its order_status fact carries P1 only (K2b).
+    expect(start.commits.map((c) => c.post?.length ?? 0)).toEqual([0, 1]);
     await save(start);
     expect(await orderRow(orderId)).toEqual({
       state: "preparando",
@@ -260,7 +261,7 @@ describe("onConsoleAction: staff move an order along the list, every refusal ans
     for (const [index, mark] of marks.entries()) {
       const marked = await engine.onConsoleAction(member(s, { nowMs: T0 + 11_000 + index }), staffTap(mark));
       expect(marked.outcome).toEqual({ type: "action_saved", order: preparing });
-      expect(marked.commits.every((c) => c.post === undefined || c.post.length === 0)).toBe(true);
+      expect(marked.commits.map((c) => c.post?.length ?? 0)).toEqual([0, 1]);
       noticesOf.push(marked.notices);
       await save(marked);
       expect(await lastAudit(orderId)).toMatchObject({

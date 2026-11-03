@@ -147,6 +147,13 @@ export function actionKey(action: CustomerAction): string | null {
 /** The console actions on an order this cut saves: staff move it along the preparation list. */
 type StaffAction = Extract<ConsoleAction, { type: "start_preparing" | "mark_line" | "mark_ready" | "mark_delivered" }>;
 
+/** The status an order_status fact records for each staff step; a line mark records the line instead. */
+const STAFF_STATUS: Readonly<Record<Exclude<StaffAction["type"], "mark_line">, "preparing" | "ready" | "delivered">> = {
+  start_preparing: "preparing",
+  mark_ready: "ready",
+  mark_delivered: "delivered",
+};
+
 /** Each staff action's only pre-state and the state it leaves. mark_line records a mark and keeps preparando. */
 const STAFF_STEPS: Readonly<Record<StaffAction["type"], { from: OrderState; to: OrderState; audit: OrderWrite["auditKind"] }>> = {
   start_preparing: { from: "confirmado", to: "preparando", audit: "order_preparing" },
@@ -372,7 +379,7 @@ export class OrderEngine implements Engine {
       notices.push(notice({ type: "substitute_offered", order, lineId: action.lineId }));
     }
 
-    // Guarded by what was read: a race the read couldn't see fails the batch (no post guards: D-42).
+    // Guarded by what was read: a race the read couldn't see fails the order commit's guards (D-42).
     const commit = store.commitFor(member, {
       operationKey: envelope.operationKey,
       outcome,
@@ -391,7 +398,29 @@ export class OrderEngine implements Engine {
       facts: { versionFactId: stored.versionFactId, confirmFactId: stored.confirmFactId },
       nowMs: member.nowMs,
     });
-    return { outcome, notices, commits: [commit] };
+    // The tap rests on the live confirm: after a cancel or a supersede, G4 refuses it inside the batch
+    // (R3). The member who tapped is its evidence. PENDING: the console session, once MemberContext
+    // carries one. P1 is a post guard: saveConsoleAction must run post guards for staff taps.
+    const fact: FactCommit = {
+      factId: this.deps.ids.newId(),
+      kind: "order_status",
+      operationKey: envelope.operationKey,
+      draft: null,
+      actorUserId: member.memberId,
+      validFromMs: member.nowMs,
+      body: {
+        orderId: view.orderId,
+        version: view.version,
+        ...(action.type === "mark_line"
+          ? { line: action.lineId, mark: action.mark, substituteProductId: action.substituteProductId }
+          : { status: STAFF_STATUS[action.type] }),
+      },
+      evidence: [{ kind: "member", refId: member.memberId, contentSha256: null }],
+      dependsOn: stored.confirmFactId === null ? [] : [stored.confirmFactId],
+      closes: null,
+      movements: [],
+    };
+    return { outcome, notices, commits: [commit, this.deps.ledger.statementsFor(member, fact, member.nowMs)] };
   }
 
   async verifyClaims(tenant: Tenant, claims: readonly Claim[]): Promise<readonly boolean[]> {
