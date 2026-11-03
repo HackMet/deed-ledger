@@ -17,7 +17,7 @@ const rowsOf = async (businessId: string) =>
   (
     await env.DB.prepare(
       `SELECT source, result, reason_code, order_id, claim_kind, deciding_fact_id, operation_key FROM deed_checks
-       WHERE business_id = ? ORDER BY at_ms, id`,
+       WHERE business_id = ? ORDER BY at_ms, rowid`,
     )
       .bind(businessId)
       .all<{
