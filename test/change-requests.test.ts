@@ -270,6 +270,33 @@ describe("K12: a change after confirming is a request the owner or staff answer 
     expect(reviewReason(` ${"x".repeat(200)} `)).toBe("x".repeat(200));
   });
 
+  it("another store's change_request naming this store's order never shows in this store's view", async () => {
+    const s = await newStore();
+    const other = await newStore();
+    const { v1, order, requestId } = await requested(s);
+    const mine = (await fact(requestId))!;
+    // Store B records a later, live request whose body names store A's order: the read must not see it.
+    const foreign: FactCommit = {
+      factId: crypto.randomUUID(),
+      kind: "change_request",
+      operationKey: changeRequestKey(v1.orderId, "job-of-other-store"),
+      draft: null,
+      actorUserId: ids.customer,
+      validFromMs: T0 + 3000,
+      body: mine.body,
+      evidence: [{ kind: "inbound_message", refId: "job-of-other-store", contentSha256: null }],
+      dependsOn: [],
+      closes: null,
+      movements: [],
+    };
+    const commit = ledger.statementsFor(other.context(), foreign, T0 + 3000);
+    await guardedBatch(env.DB, commit.guards, commit.statements, commit.post);
+    expect(await count(`facts WHERE business_id = ? AND kind = 'change_request'`, other.businessId)).toBe(1);
+
+    expect((await store.order(s.context(), v1.orderId))!.view).toEqual(order);
+    expect(order.openChangeRequest!.id).toBe(requestId);
+  });
+
   it("a second change while one waits replaces it, adding to what the customer asked for", async () => {
     const s = await newStore();
     const { v1, requestId } = await requested(s);

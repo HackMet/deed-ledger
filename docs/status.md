@@ -109,6 +109,7 @@ staff use the preparation list on their own phones. If the console can't pass, i
 | Decisions made since Oct 28 aren't in [decisions.md](decisions.md) yet | Angel → Claude Code | Oct 28 |
 | Product and team name: "Johan AI" is a working title | Team | Oct 27 |
 | K12 contract additions (`review_change`, `change_approved`, `change_declined`, `OrderView.openChangeRequest`, `OrderView.lastReview`) are Proposed and need Angel's OK | Angel | Nov 3 |
+| K12 touched two of Angel's files: `src/domain/copy.ts` gains the owner-facing copy `CHANGE_AFTER_READY` (new copy, not compile-only), and `test/secrets.test.ts` lists `0024_change_requests.sql` (compile-only); both need Angel's OK | Angel | Nov 3 |
 | D-41 (fact memory under `Commit`) and D-42 (read before every guard) are Proposed and need Angel's acceptance | Angel | Oct 30 |
 | D-43 (customer cancel refused once preparando; re-confirm returns to the interrupted state) and D-44 (operation keys derived from the customer's own order and action) are Proposed and need Angel's acceptance | Angel | Oct 30 |
 | Issue #12: `preparationList`, `verifyClaims` and the console taps are not built | Teammate | Oct 30 |
