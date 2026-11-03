@@ -85,6 +85,7 @@ export type LogFields = {
     | "outboxId"
     | "leaseId"
     | "assetId"
+    | "draftId"
     | "channelAccountId"
     | "count"
     | "attempts"

@@ -131,12 +131,17 @@ export const requireMember: MiddlewareHandler<ConsoleEnv> = async (c, next) => {
 };
 
 const MAX_FORM_BYTES = 16 * 1024;
+/** The invoice upload (K14): a 10 MB photo and the multipart framing around it. */
+export const INVOICE_UPLOAD_PATH = "/console/facturas/nueva";
+const MAX_UPLOAD_FORM_BYTES = 10 * 1024 * 1024 + 64 * 1024;
 const crossSiteCheck = csrf();
 const sizeCheck = bodyLimit({ maxSize: MAX_FORM_BYTES, onError: (c) => formRefused(c, 413) });
+const uploadSizeCheck = bodyLimit({ maxSize: MAX_UPLOAD_FORM_BYTES, onError: (c) => c.redirect(`${INVOICE_UPLOAD_PATH}?aviso=tamano`, 303) });
 
 /**
  * Refuses form posts from another site, the login form included (its invite would otherwise let a
- * stranger swap the victim's session for one in their store), and forms larger than any console form.
+ * stranger swap the victim's session for one in their store), and forms larger than any console form
+ * (the invoice upload has its own, larger limit).
  */
 export const sameSiteForms: MiddlewareHandler<ConsoleEnv> = async (c, next) => {
   try {
@@ -145,7 +150,7 @@ export const sameSiteForms: MiddlewareHandler<ConsoleEnv> = async (c, next) => {
     if (error instanceof HTTPException && error.status === 403) return formRefused(c, 403);
     throw error;
   }
-  return sizeCheck(c, next);
+  return (c.req.path === INVOICE_UPLOAD_PATH ? uploadSizeCheck : sizeCheck)(c, next);
 };
 
 /** A POST must carry the session's CSRF value. */

@@ -19,6 +19,7 @@ import {
   sameSiteForms,
   simplePage,
 } from "./console/auth";
+import { facturasScreen } from "./console/facturas";
 import { negocioScreen } from "./console/negocio";
 import { pedidosScreen } from "./console/pedidos";
 import { productosScreen } from "./console/productos";
@@ -63,6 +64,7 @@ export function consoleRoutes() {
   pedidosScreen(app);
   productosScreen(app);
   negocioScreen(app);
+  facturasScreen(app);
 
   app.post("/acciones", async (c) => {
     const { engine, deps } = c.get("runtime");

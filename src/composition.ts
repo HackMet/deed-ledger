@@ -8,14 +8,17 @@ import { fixturePerceptionHandler } from "./application/engine/fixture-perceptio
 import { OrderEngine } from "./application/engine/order-engine";
 import { BusinessService } from "./application/business";
 import { CatalogService } from "./application/catalog";
+import type { ReceiptReader } from "./application/receipt-reader";
+import { ReceiptService } from "./application/receipts";
 import type { BusinessContext, Deps } from "./application/ports";
 import { type Config, readConfig } from "./infrastructure/config";
 import { D1BusinessContext } from "./infrastructure/d1/business-context";
 import { D1CatalogStore } from "./infrastructure/d1/catalog-store";
 import { D1CommitRunner } from "./infrastructure/d1/commit-runner";
 import { D1ConsoleAuthRepository } from "./infrastructure/d1/console-auth-repository";
+import { D1ConsoleReceipts } from "./infrastructure/d1/console-receipts";
 import { D1IntakeRepository } from "./infrastructure/d1/intake-repository";
-import { D1FactLedger } from "./infrastructure/d1/fact-ledger";
+import { D1FactLedger, D1FactPrecheck } from "./infrastructure/d1/fact-ledger";
 import { D1OrderStore } from "./infrastructure/d1/order-store";
 import { D1JobRepository } from "./infrastructure/d1/job-repository";
 import { D1OutboxRepository } from "./infrastructure/d1/outbox-repository";
@@ -26,9 +29,11 @@ import { MemoryEngine } from "./infrastructure/memory/memory-engine";
 import { QueueDoorbell } from "./infrastructure/queue-doorbell";
 import { R2MediaStore } from "./infrastructure/r2-media-store";
 import { consoleLogger, randomIds, realSleep, systemClock } from "./infrastructure/runtime";
+import { RecordedReceiptReader } from "./integrations/perception/recorded-receipt-reader";
 import { WhatsAppCloudChannel } from "./integrations/whatsapp/client";
 import { unavailableMediaSource } from "./integrations/whatsapp/media";
 import { SEND_TIMEOUT_MS } from "./domain/outbox";
+import { receiptRecordings } from "../test/fixtures/receipts";
 
 export interface Runtime {
   readonly config: Config;
@@ -37,6 +42,8 @@ export interface Runtime {
   readonly catalog: CatalogService;
   /** What the store says about itself (K6, K15): saved by the owner, read by `business.context.current`. */
   readonly business: { readonly service: BusinessService; readonly context: BusinessContext };
+  /** Supplier invoices on the console (K14). */
+  readonly receipts: ReceiptService;
   /** Null until the real engine is wired in, except for the dev console's pretend engine. */
   readonly engine: Engine | null;
 }
@@ -49,7 +56,7 @@ export type RuntimeOverrides = Partial<
     Deps,
     "clock" | "ids" | "log" | "sleep" | "hasher" | "doorbell" | "channel" | "mediaSource" | "mediaStore" | "jobHandler"
   >
-> & { readonly db?: D1Database; readonly engine?: Engine };
+> & { readonly db?: D1Database; readonly engine?: Engine; readonly receiptReader?: ReceiptReader };
 
 export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtime {
   const config = readConfig(env);
@@ -61,11 +68,25 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
   const ledger = new D1FactLedger(db);
   const runner = new D1CommitRunner(db);
   const businessInfo = new D1BusinessContext(db);
+  const mediaStore = overrides.mediaStore ?? new R2MediaStore(env.MEDIA);
+  // Recorded readings of synthetic invoices until the Muse Spark adapter lands (PR #63, decision Q2):
+  // every other photo is refused as unreadable, never guessed.
+  const receiptReader = overrides.receiptReader ?? new RecordedReceiptReader(receiptRecordings);
   return {
     config,
     engine,
     catalog: new CatalogService({ catalog: new D1CatalogStore(db), ledger, runner, ids, engine }),
     business: { service: new BusinessService({ store: businessInfo, ledger, runner, ids }), context: businessInfo },
+    receipts: new ReceiptService({
+      store: new D1ConsoleReceipts(db, env.MEDIA),
+      media: mediaStore,
+      reader: receiptReader,
+      context: businessInfo,
+      ledger,
+      precheck: new D1FactPrecheck(db),
+      runner,
+      ids,
+    }),
     deps: {
       clock,
       ids,
@@ -87,7 +108,7 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
           fetch: (input, init) => fetch(input, init),
         }),
       mediaSource: overrides.mediaSource ?? unavailableMediaSource,
-      mediaStore: overrides.mediaStore ?? new R2MediaStore(env.MEDIA),
+      mediaStore,
       // Fixture perception stands in until the teammate's perception lands (D-37); see its header.
       jobHandler: overrides.jobHandler ?? fixturePerceptionHandler({ engine: new OrderEngine({ store: orders, ids, ledger: new D1FactLedger(db) }), orders, clock }),
     },
