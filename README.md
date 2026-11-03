@@ -11,7 +11,7 @@ Three numbers, each with where it was measured:
 | Number | Value | Measured |
 |---|---|---|
 | Tests | 1014 passed, 68 files, 0 failed; typecheck exit 0 | `npm test` and `npm run typecheck` on this branch (`claude/submission-docs`, on `origin/main` `7bec048`), 2026-11-03. On the stack top `claude/owner-on-main` (`3e7d97f`): 1147 passed, 78 files, 0 failed; typecheck exit 0, 2026-11-03 |
-| Adversary attacks | [TBD: attacks N, false facts admitted M, from the K8 run] | The K8 run has not produced a report yet |
+| Adversary attacks | 9 attacks that reach the engine, 0 false facts admitted, 0 wrong notices (one more attack is intake-only and not counted) | `node scripts/adversary.mjs` on `claude/adversary` (`dd3a342`), exit 0: twice by the RK8 review (PASS, each defence removed on purpose turns its row red) and once by the coordinator, 2026-11-03. Perception is recorded fixtures (8 fixture, 0 muse); engine, ledger and console are live code |
 | Witness check | Every commit our agents claimed exists: 0 of 31 claimed commits missing (25 of the 31 stated by the agents themselves). Of the 31: 1 is an ancestor of `origin/main`, 8 landed rewritten (same `git patch-id`), 3 were superseded by a later run, 19 are not on `main` yet (16 on a live branch, 3 only on a backup ref) | RK9 review (PASS), `origin/main` `c15155b`, 2026-11-02. It shows the commits exist, not that their tests passed |
 
 `./demo.sh` exits 0: 29 steps, 29 passed, on `claude/demo-on-main` (`47a2d5c`, twice) and on `claude/owner-on-main` (`e446233`, `DEMO_PORT=8795 ./demo.sh`), 2026-11-03. The staff-side steps that failed on `claude/demo-env` (Preparación taps, console saves, customer notices) pass there: each console tap saves through `runConsoleAction` (#63) and the customer's notice is read back from the outbox. See `docs/demo-video-script.md` for what the video may and may not show.
@@ -36,7 +36,7 @@ Pull requests (`gh pr list --state all`, 2026-11-03):
 | #63 | Add the customer order flow, replies, reading, media and console screens | Angel-Rodas | 2026-10-31 12:13Z | merged 2026-11-03 16:53Z |
 | #64 | Renumber our migrations to 0020-0022 to clear Angel's 0004-0017 | kercmari | 2026-11-02 18:28Z | merged 2026-11-02 18:36Z |
 
-Not yet on `origin/main`, on stacked local branches (commits counted against the parent, in merge order; `claude/adversary` is the K8 attack run, still in progress):
+Not yet on `origin/main`, on stacked local branches (commits counted against the parent, in merge order; `claude/adversary` is the K8 attack run, reviewed PASS):
 
 | Branch | Commits | Parent |
 |---|---|---|
@@ -52,7 +52,7 @@ Not yet on `origin/main`, on stacked local branches (commits counted against the
 | `claude/stack-on-main` | 2 | `origin/main` |
 | `claude/demo-on-main` | 4 | `claude/stack-on-main` |
 | `claude/owner-on-main` | 2 | `claude/demo-on-main` |
-| `claude/adversary` | in progress | `claude/demo-on-main` |
+| `claude/adversary` | 2 | `claude/demo-on-main` |
 
 `claude/stack-on-main` is the stack above (through `claude/dispatch`) merged onto `main`, `claude/demo-on-main` adds `claude/demo-env` on top of it, and `claude/owner-on-main` adds `claude/facturas` (with `claude/console-negocio`). Their counts leave out the commits already counted in the rows above (`git log B ^parent ^claude/dispatch`, `git log B ^parent ^claude/demo-env` and `git log B ^parent ^claude/facturas`), so only the new ones remain, merges included.
 
