@@ -239,9 +239,14 @@ export function buildBurstReader(
     spend: new D1SpendLedger(overrides.db ?? env.DB),
     clock: deps.clock,
     log: deps.log,
-    ...(overrides.dailyCapMicroUsd === undefined ? {} : { dailyCapMicroUsd: overrides.dailyCapMicroUsd }),
+    ...dailyCap(overrides.dailyCapMicroUsd ?? readConfig(env).modelDailyCapMicroUsd),
     ...(overrides.settings === undefined ? {} : { settings: overrides.settings }),
   });
+}
+
+/** MODEL_DAILY_CAP_USD for every metered call (reader, planner, one call); nothing: the default. */
+function dailyCap(microUsd: number | null | undefined): { dailyCapMicroUsd?: number } {
+  return microUsd == null ? {} : { dailyCapMicroUsd: microUsd };
 }
 
 /**
@@ -298,6 +303,7 @@ export function buildOrderReading(
               clock: deps.clock,
               log: deps.log,
               settings: config.plannerModel,
+              ...dailyCap(config.modelDailyCapMicroUsd),
             }),
             retrieval: overrides.retrieval ?? new D1RetrievalRepository(overrides.db ?? env.DB),
             source: plannerSource,
@@ -306,7 +312,14 @@ export function buildOrderReading(
     oneCall:
       plannerSource === null || !config.fastText
         ? null
-        : { provider, spend: new D1SpendLedger(overrides.db ?? env.DB), clock: deps.clock, log: deps.log, settings: config.fastTextModel },
+        : {
+            provider,
+            spend: new D1SpendLedger(overrides.db ?? env.DB),
+            clock: deps.clock,
+            log: deps.log,
+            settings: config.fastTextModel,
+            ...dailyCap(config.modelDailyCapMicroUsd),
+          },
   });
 }
 

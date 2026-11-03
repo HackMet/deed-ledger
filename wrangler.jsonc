@@ -39,6 +39,9 @@
     // How long Meta keeps a prompt-cache entry: "in_memory" or "24h". Blank sends none (Meta's
     // default). A cached prefix can hold a customer's messages, so "24h" needs the privacy check first.
     "PROMPT_CACHE_RETENTION": "",
+    // The most one store may spend on Muse Spark calls in a day, in US dollars ("15", "7.5", up to
+    // 100). Each call reserves its largest possible cost first. Blank or invalid: US$2.
+    "MODEL_DAILY_CAP_USD": "",
     // "1" turns on WhatsApp test commands (/new, /help) for the store's own members. Blank: off. The
     // simulator sets it; on the live number only for testing (docs/deploy.md).
     "TEST_COMMANDS": "",

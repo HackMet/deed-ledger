@@ -72,7 +72,8 @@ or piped into `wrangler secret put`; never paste them into a file, a chat or a l
 
 `.github/workflows/deploy.yml` deploys the demo on every merge to `main` (and by hand from the Actions tab): tests,
 then `d1 migrations apply --remote`, then `wrangler deploy` with the demo's `--var`s (pretend engine, planner path,
-test commands on). One deploy runs at a time.
+test commands on, and a US$15 daily Muse Spark budget for the store, `MODEL_DAILY_CAP_USD`, so judges trying it
+at once don't hit the US$2 default). One deploy runs at a time.
 
 Setup, once:
 
