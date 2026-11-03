@@ -14,6 +14,49 @@ export function toneOgg(): Uint8Array {
 }
 
 /**
+ * The same file with the end-of-stream flag cleared on its last page, the way WhatsApp writes voice
+ * notes, and that page's CRC recomputed so it is still valid Ogg.
+ */
+export function withoutEndOfStream(ogg: Uint8Array): Uint8Array {
+  const out = ogg.slice();
+  let last = 0;
+  for (let at = 0; at < out.length; ) {
+    last = at;
+    at = pageEnd(out, at);
+  }
+  out[last + 5] = out[last + 5]! & ~0x04;
+  new DataView(out.buffer).setUint32(last + 22, oggPageCrc(out.subarray(last, pageEnd(out, last))), true);
+  return out;
+}
+
+function pageEnd(ogg: Uint8Array, start: number): number {
+  const segments = ogg[start + 26]!;
+  let body = 0;
+  for (let i = 0; i < segments; i++) body += ogg[start + 27 + i]!;
+  return start + 27 + segments + body;
+}
+
+const OGG_CRC_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let i = 0; i < 256; i++) {
+    let r = i << 24;
+    for (let bit = 0; bit < 8; bit++) r = r & 0x80000000 ? (r << 1) ^ 0x04c11db7 : r << 1;
+    table[i] = r >>> 0;
+  }
+  return table;
+})();
+
+/** An Ogg page's CRC (RFC 3533: polynomial 0x04c11db7, computed with the CRC field as zeros). */
+export function oggPageCrc(page: Uint8Array): number {
+  let crc = 0;
+  for (let i = 0; i < page.length; i++) {
+    const byte = i >= 22 && i < 26 ? 0 : page[i]!;
+    crc = ((crc << 8) ^ OGG_CRC_TABLE[((crc >>> 24) ^ byte) & 0xff]!) >>> 0;
+  }
+  return crc;
+}
+
+/**
  * Builds an Ogg Opus file around the given audio packets. Page CRCs are left at zero: the reader
  * doesn't check them, and these files never reach libopus (they test what's refused before it).
  */

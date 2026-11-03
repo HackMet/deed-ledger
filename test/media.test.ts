@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { processConversation } from "../src/application/processor";
 import { COULD_NOT_OPEN_MEDIA, couldNotDownload, RECEIVED_PLACEHOLDER } from "../src/domain/copy";
+import { MediaDownloadError } from "../src/integrations/whatsapp/media";
 import { bytes, FakeMediaSource } from "./helpers/fakes";
 import { conversationOf, expireLease, type Harness, harness, rows } from "./helpers/harness";
 import { newPhone, seedIntroducedCustomer, seedStore } from "./helpers/seed";
@@ -85,10 +86,14 @@ describe("media downloads", () => {
     expect(couldNotDownload("image")).toBe("No pude descargar la foto. ¿Me la mandás otra vez o me escribís lo que necesitás?");
   });
 
-  it("treats a download that throws the same way", async () => {
+  it.each([
+    ["a dropped connection", new Error("connection reset")],
+    // Bytes that don't match Meta's declared sha256 or file_size (#27): a cut-off voice note.
+    ["an incomplete download", new MediaDownloadError("incomplete")],
+  ])("treats a download that throws (%s) the same way", async (_label, failure) => {
     const media = new FakeMediaSource();
     media.respond = async (_id, call) => {
-      if (call === 1) throw new Error("connection reset");
+      if (call === 1) throw failure;
       return bytes("ok");
     };
     const h = harness({ mediaSource: media });

@@ -43,7 +43,10 @@ Last updated: Mon Nov 2, 2026, night Honduras time, by Claude Code (latency lane
   - customers (#14–#16), the full order trip (#17), console taps that message the customer (#18);
   - Spanish replies, the claim check and reply buttons (#19, #20); reading orders with Muse Spark (#21);
   - console login (#22, PR #61) and shell with Empleados (#23); the Anotar reader (#26);
-  - media download, voice notes decoded and transcribed, both read in orders (#27);
+  - media download, voice notes decoded and transcribed, both read in orders (#27). Settled Nov 3: real WhatsApp
+    voice notes have no Ogg end-of-stream flag, so the decoder no longer requires it; a cut-off download is caught
+    instead by checking the bytes against the `sha256` and `file_size` Meta declares (retried like a timeout).
+    Both real notes decode locally (about 9.0 s and 7.9 s); not yet tried on the deployed bot;
   - first message, ALTO, handoff and deletion, a privacy page (#30); the two-minute message (#31);
   - delivery to a saved place (#29): pins from the webhook, saved places offered with Sí / Otro lugar (migration
     0017; contract additions proposed in [contract.md](contract.md) "Proposed (#29)");
@@ -166,6 +169,10 @@ Gate: Saturday Oct 31, 8:00 PM Honduras time.
   `MODEL_API_KEY`.
 - Muse's sandbox keeps `.git` read-only: it can't commit, so Angel commits its work.
 - WhatsApp voice notes have to become WAV (mono, 16-bit, 16 or 24 kHz) before Muse Voice Transcribe accepts them.
+- WhatsApp voice notes end without the Ogg end-of-stream flag (#27). Don't make the decoder require it again: a
+  cut-off note is caught at download, against Meta's `sha256` and `file_size`. Meta's `sha256` encoding is
+  undocumented; the download reads hex or base64. If every media download fails after a deploy, that check is the
+  suspect: the log says only `media_not_downloaded` with reason `MediaDownloadError`, not the error's code.
 - Workers Free gives 10 ms of CPU per invocation. Angel's account is on Workers Paid (30 s by default, up to 5 min).
 - In a D1 batch, an `UPDATE` that matches 0 rows doesn't roll anything back. Guards must fail loudly (UNIQUE or
   CHECK).

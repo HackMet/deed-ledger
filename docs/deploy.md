@@ -47,7 +47,8 @@ or piped into `wrangler secret put`; never paste them into a file, a chat or a l
 - Meta's "Verify and save" in step 7 succeeds (that's the webhook GET).
 - From a registered phone: "Hola" gets the introduction; an order gets a readback with Confirmar / Corregir /
   Cancelar; Confirmar puts it on the console's list; "Pedido listo" in the console sends "Tu pedido ya está listo".
-- A voice note and a photo are read (the first real voice note also checks the end-of-stream rule; see #27).
+- A voice note and a photo are read. The first real download is also the first live run of the media size and hash
+  check (#27): if media fails with `media_not_downloaded` and then "No pude descargar…", suspect that check first.
 - `npx wrangler tail` while sending a message shows IDs only: no phone numbers, message text or secrets.
 
 ## Testing on the live number

@@ -188,16 +188,22 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
   a usable media ID ends at once with its own reply.
 - **Media.** The consumer downloads a message's media and stores it in R2 at `stores/<store>/media/<asset>/<sha256>`,
   an immutable key. D1 records the key only through a fenced write. The download asks Graph for a fresh URL on every
-  attempt, then fetches the bytes (15 s per request, 16 MiB at most); a failure takes the job's retries and ends with
-  "No pude descargar…". `MediaStore.read` reads a stored object back, inside the store's prefix only.
+  attempt, then fetches the bytes (15 s per request, 16 MiB at most). The bytes must match the lookup's `file_size`
+  and `sha256` (hex or base64: Meta's docs don't name the encoding; a value that is neither isn't checked), or the
+  download is `incomplete`. This is what stops a cut-off voice note (#27, below). A failure, `incomplete` included,
+  takes the job's retries and ends with "No pude descargar…". `MediaStore.read` reads a stored object back, inside
+  the store's prefix only.
 - **Voice notes.** `transcribeVoiceNote` (`src/application/voice-note.ts`) reads a job's stored voice note, decodes
   OGG/Opus to 16 kHz mono WAV in the consumer (A1: libopus Wasm from `opus-decoder`, extracted at build time, since
-  Workers can't compile Wasm at runtime; refused: over 10 minutes, a cut-off file (including one cut right after a
-  whole page: the end-of-stream page is required), an invalid Opus packet, or more than 240,000 audio packets, the
-  most 10 minutes of 2.5 ms packets can hold, checked while reading), and calls Muse Voice
+  Workers can't compile Wasm at runtime; refused: over 10 minutes, a file that ends inside an Ogg page or a packet,
+  a missing page, an invalid Opus packet, or more than 240,000 audio packets, the most 10 minutes of 2.5 ms packets
+  can hold, checked while reading), and calls Muse Voice
   Transcribe (90 s timeout, Spanish bias, one attempt). It throws on any failure, so a handler that calls it gets the
   job's retries and then "no pude escuchar tu nota de voz". The order reading calls it (below). The decoder's
-  errors extend `UnreadableMediaError`: the same bytes fail the same way, so they aren't retried.
+  errors extend `UnreadableMediaError`: the same bytes fail the same way, so they aren't retried. Real WhatsApp voice
+  notes don't set the Ogg end-of-stream flag on their last page (#27, Nov 3: both real notes were refused while the
+  flag was required), so the decoder can't tell a note cut on a page boundary from a whole one and accepts a stream
+  that ends with the bytes on a page boundary. A cut like that is caught by the download's size and hash check.
 - **Handler.** `JobHandler` (`src/application/ports.ts`) is where the engine plugs in: it gets the job and
   `isNewestOfBurst`, and returns replies already rendered plus optional `commits`. With an engine wired in, the order
   handler (`src/application/order-handler.ts`) runs; without one, `placeholderHandler` acknowledges a burst with one
