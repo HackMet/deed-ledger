@@ -53,8 +53,9 @@ async function send(json: unknown): Promise<string[]> {
 describe("a photo of a list with no quantities", () => {
   it("every line the reader returns reaches the order", async () => {
     const [reply] = await send(reading(allLines()));
-    expect(reply).toContain("11 productos");
-    for (const item of ITEMS) expect(reply?.toLowerCase()).toContain(item);
+    // Each of the 11 is named once, on its own line of the quantities question.
+    const named = reply!.split("\n").filter((row) => row.startsWith("• "));
+    expect(named).toEqual(ITEMS.map((item) => `• ${item.charAt(0).toUpperCase()}${item.slice(1)}`));
   });
 
   it("a line cut by the photo's edge, read as illegible, is asked about and kept", async () => {
@@ -68,6 +69,7 @@ describe("a photo of a list with no quantities", () => {
     const lines = allLines();
     lines[10] = line("sal", "sal", null, null, box(0, [0.1, 0.94, 0.3, 1.03]));
     const replies = await send(reading(lines));
-    expect(replies).toEqual(["Anotado ✅ tus 10 productos.\nNo alcancé a leer bien sal. ¿Me lo escribís?"]);
+    // The ten read are echoed (four by name, the rest counted), the eleventh is asked about.
+    expect(replies).toEqual(["Anotado ✅\n• Arroz\n• Frijoles\n• Azucar\n• Cafe\n• y 6 más\n\nNo alcancé a leer bien sal. ¿Me lo escribís?"]);
   });
 });

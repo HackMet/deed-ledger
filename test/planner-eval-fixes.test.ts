@@ -73,7 +73,8 @@ describe("E19, E09b: an option list always resolves or moves on", () => {
     await t.say("deme un aciete y 2 jabones");
     expect(t.last()).toContain("Para un aciete tengo:");
     await t.say("esa de 34");
-    expect(t.last()).toBe("Anotado ✅ 1 × Aceite Clover 500 ml, 2 × Jabón Xtra barra.\n¿Lo recogés en la tienda o te lo llevamos?");
+    // Only the line the pick changed: the jabones were noted with the list already.
+    expect(t.last()).toBe("Anotado ✅\n• 1 Aceite Clover 500 ml\n\n¿Lo recogés en la tienda o te lo llevamos?");
   });
 
   it("'mazola, la de marca' picks it even when the planner asks the same list again", async () => {
@@ -88,7 +89,7 @@ describe("E19, E09b: an option list always resolves or moves on", () => {
     });
     await t.say("deme un aciete y 2 jabones");
     await t.say("mazola, la de marca porfa");
-    expect(t.last()).toBe("Anotado ✅ 1 × Aceite Mazola 1 L, 2 × Jabón Xtra barra.\n¿Lo recogés en la tienda o te lo llevamos?");
+    expect(t.last()).toBe("Anotado ✅\n• 1 Aceite Mazola 1 L\n\n¿Lo recogés en la tienda o te lo llevamos?");
   });
 
   it("never asks the same list a third time: the line is left for the store to confirm, and the order moves on", async () => {
@@ -133,7 +134,7 @@ describe("E21: a voice note is read like the same words typed", () => {
     expect(spoken.provider.requests.map((r) => r.schemaName)).toEqual([ONE_CALL_SCHEMA_NAME]);
     expect(spoken.provider.textOf(0)).toContain(`[0] nota de voz (transcripcion): ${JSON.stringify(SAID)}`);
     expect(spoken.last()).toBe(typed.last());
-    expect(spoken.last()).toContain("• 2 × Arroz 1 lb · L 36");
+    expect(spoken.last()).toContain("• 2 Arroz 1 lb · L 36");
   });
 });
 
@@ -158,6 +159,6 @@ describe("E11: 'me manda una' right after a product question orders that product
     await t.say("buenas, tiene miel de abeja don pancho?");
     expect(t.last()).toContain("Miel de abeja Don Pancho 500 ml: te confirmo si hay.");
     await t.say("me manda una porfa");
-    expect(t.last()).toBe("Anotado ✅ 1 × Miel de abeja Don Pancho 500 ml.\n¿Lo recogés en la tienda o te lo llevamos?");
+    expect(t.last()).toBe("Anotado ✅\n• 1 Miel de abeja Don Pancho 500 ml\n\n¿Lo recogés en la tienda o te lo llevamos?");
   });
 });

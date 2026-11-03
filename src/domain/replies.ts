@@ -50,6 +50,13 @@ export interface RenderedReply {
   readonly body: string;
   readonly claims: readonly ClaimCheck[];
   readonly buttons: readonly ReplyButton[];
+  /** WhatsApp's grey line under the buttons, sent only with them. Plain text, one line. */
+  readonly footer?: string;
+  /**
+   * The typed choices, put under the body only when it goes out as plain text (its buttons can't
+   * be shown): the text fallback every decision needs. With the buttons, the footer stands in.
+   */
+  readonly textFallback?: string;
 }
 
 /** What a reply was rendered from: the first check reads its claims back from this. */
@@ -112,8 +119,15 @@ export const COPY = {
   slowNotice: "Recibimos tu mensaje, lo estamos revisando.",
   /** The typed choices where no button goes with them (a status answer). */
   typedFallback: "Respondé Confirmar, Corregir o Cancelar.",
-  /** The readback's last line, under its buttons: the typed fallback PRD §6.1 requires, softly. */
+  /**
+   * The readback's typed fallback (PRD §6.1), softly: under the body when its buttons couldn't be
+   * shown and it went as plain text. With the buttons, the footer (fixHint) says it instead.
+   */
   typedFallbackSoft: "_O escribí: confirmar, corregir o cancelar._",
+  /** The readback's footer, in grey under its buttons. At most 60 characters (WhatsApp). */
+  fixHint: "Si algo está mal, escribime o mandame un audio.",
+  /** After the readback's items, for lines with no product or no confirmed price. */
+  confirmLater: "De estos te confirmo si hay y el precio",
   readbackTitle: "Tu pedido:",
   changedTitle: "Listo, así queda tu pedido:",
   staleTapTitle: "Tu pedido cambió desde ese mensaje. Así está ahora:",
@@ -170,7 +184,7 @@ export const COPY = {
   anythingElse: "¿Qué más te mando?",
   /** Under a list of options for an unclear line. */
   pickOption: "¿Cuál te mando? Respondé con el número.",
-  /** Before the next question, what the order holds so far: the customer sees it was understood. */
+  /** Before the next question, what this burst added or changed: the customer sees it was understood. */
   noted: "Anotado ✅",
   /** Planner path (D-47): every missing quantity in one question. */
   quantitiesTitle: "¿Cuántos querés de estos?",
@@ -311,21 +325,25 @@ export interface RenderContext {
 
 export function renderOutcome(outcome: EngineOutcome, context: RenderContext): RenderedReply | null {
   switch (outcome.type) {
-    case "ask":
-      if (outcome.question === "same_place") return samePlaceReply(outcome.order, context.savedPlace ?? null);
-      if (outcome.questions !== undefined && outcome.order !== null) return plannedAskReply(outcome.order, outcome.questions, outcome.assumed ?? []);
+    case "ask": {
+      const noted = notedLines(outcome);
+      if (outcome.question === "same_place") return samePlaceReply(outcome.order, context.savedPlace ?? null, noted);
+      if (outcome.questions !== undefined && outcome.order !== null) {
+        return plannedAskReply(outcome.order, outcome.questions, outcome.assumed ?? [], noted);
+      }
       // A question about an order holds only while that version is still open: once it's
       // cancelled or delivered, asking about it would be wrong.
       if (outcome.options !== undefined && outcome.options.length > 1 && outcome.order !== null) {
-        return optionsReply(outcome.order, outcome.line, outcome.options);
+        return optionsReply(outcome.order, outcome.line, outcome.options, noted);
       }
       return reply(
         "ask",
         outcome.question === "customer_name" && context.nameAsked === true
           ? COPY.askNameAgain
-          : withEcho(outcome.question, outcome.order, askText(outcome.question, outcome.line, outcome.order), outcome.line),
+          : withEcho(outcome.question, outcome.order, askText(outcome.question, outcome.line, outcome.order), outcome.line, noted),
         outcome.order === null ? [] : [stateIn(outcome.order, OPEN_STATES)],
       );
+    }
     case "readback":
       return readbackReply("readback", COPY.readbackTitle, outcome.order);
     case "order_changed":
@@ -454,64 +472,92 @@ export function firstName(name: string): string {
   return title.test(words[0]!) && words[1] !== undefined ? `${words[0]} ${words[1]}` : words[0]!;
 }
 
+/** A message's blocks, one blank line apart; absent or empty ones are left out. */
+export function joinBlocks(...parts: readonly (string | null | undefined)[]): string {
+  return parts.filter((part): part is string => part != null && part !== "").join("\n\n");
+}
+
 /**
- * "Anotado ✅ 5 × Arroz 1 lb, 5 × Azúcar 1 lb." before a question about how the order goes, so the
- * customer sees what was understood before answering. Lists up to four lines; more are counted.
+ * The lines an ask echoes back: those this burst added or changed (`noted`). An outcome that
+ * doesn't say (an engine that doesn't track bursts) echoes every line, as before.
  */
-function withEcho(question: QuestionCode, order: OrderView | null, text: string, lineIndex: number | null = null): string {
-  const echoed: readonly QuestionCode[] = ["pickup_or_delivery", "delivery_place", "same_place"];
+function notedLines(outcome: Extract<EngineOutcome, { type: "ask" }>): readonly OrderLineView[] {
+  const lines = outcome.order?.lines ?? [];
+  const noted = outcome.noted;
+  return noted === undefined ? lines : lines.filter((line) => noted.includes(line.lineId));
+}
+
+/** A line the quantities question lists (it names the line itself, so the echo doesn't). */
+function waitsForQuantity(line: OrderLineView): boolean {
+  return line.quantity === null && !line.restricted;
+}
+
+/**
+ * "Anotado ✅" with what this burst added or changed, before a question about how the order goes
+ * or about one of its lines, so the customer sees what was understood before answering. A line the
+ * question names itself isn't echoed: each line is accounted for once. Nothing new: no echo.
+ */
+function withEcho(
+  question: QuestionCode,
+  order: OrderView | null,
+  text: string,
+  lineIndex: number | null,
+  noted: readonly OrderLineView[],
+): string {
+  const echoed: readonly QuestionCode[] = ["pickup_or_delivery", "delivery_place"];
   const aboutLine: readonly QuestionCode[] = ["quantity", "ambiguous_size", "ambiguous_product", "illegible"];
-  if (order === null || order.lines.length === 0) return text;
-  if (echoed.includes(question)) return `${echoLine(order.lines)}\n${text}`;
-  if (question === "quantities") {
-    const known = order.lines.filter((line) => line.quantity !== null);
-    return known.length > 0 ? `${echoLine(known)}\n${text}` : `${COPY.noted} ${order.lines.length} productos.\n${text}`;
+  if (order === null) return text;
+  let shown: readonly OrderLineView[] = [];
+  if (echoed.includes(question)) shown = noted;
+  else if (question === "quantities") shown = noted.filter((line) => !waitsForQuantity(line));
+  else if (aboutLine.includes(question) && lineIndex !== null && order.lines[lineIndex] !== undefined) {
+    const asked = order.lines[lineIndex]!.lineId;
+    shown = noted.filter((line) => line.lineId !== asked);
   }
-  if (aboutLine.includes(question) && lineIndex !== null && order.lines[lineIndex] !== undefined) {
-    const others = order.lines.filter((_, n) => n !== lineIndex);
-    if (others.length > 0) return `${echoLine(others)}\n${text}`;
-  }
-  return text;
+  return joinBlocks(shown.length > 0 ? echoBlock(shown) : null, text);
 }
 
-/** "Anotado ✅ 5 × Arroz 1 lb, 5 × Azúcar 1 lb." Up to four lines; more are counted. */
-function echoLine(lines: readonly OrderLineView[]): string {
-  const items = lines.length <= 4 ? lines.map(shortLine).join(", ") : `tus ${lines.length} productos`;
-  return `${COPY.noted} ${items}.`;
+/** At most this many items are echoed by name; the rest are counted ("• y 2 más"). */
+const ECHO_MAX_ITEMS = 4;
+
+/** "Anotado ✅" alone, then one "• 2 Arroz 1 lb" per item, up to four; the rest counted. */
+export function echoBlock(lines: readonly OrderLineView[]): string {
+  const shown = lines.slice(0, ECHO_MAX_ITEMS).map((line) => `• ${shortLine(line)}`);
+  if (lines.length > ECHO_MAX_ITEMS) shown.push(`• y ${lines.length - ECHO_MAX_ITEMS} más`);
+  return [COPY.noted, ...shown].join("\n");
 }
 
+/** "2 Arroz 1 lb", "2 libras de Pollo entero", "Piña" (no quantity yet). */
 function shortLine(line: OrderLineView): string {
-  const quantity = line.quantity === null ? null : quantityShown(line);
-  return quantity === null ? lineName(line) : `${quantity} ${lineName(line)}`;
+  return line.quantity === null ? itemName(line) : `${quantityShown(line)} ${itemName(line)}`;
 }
 
 // --- Planner path (D-46, D-47): blocks in a fixed order, echo → assumed → step, in one message.
 
 /**
- * One question about one kind of thing, after what was understood: the lines the question doesn't
- * name ("Anotado ✅ 1 × Arroz 1 lb, Piña y 3 más."), then what was assumed ("Te puse 1 de piña."),
- * then the question, which names its own lines. Every line the customer sent is accounted for
- * exactly once: the echo's count never silently leaves out the one being asked about.
+ * One question about one kind of thing, after what was understood: what this burst added or
+ * changed that the question doesn't name ("Anotado ✅ • 1 Arroz 1 lb"), then what was assumed ("Te
+ * puse 1 de piña."), then the question, which names its own lines. Every line the burst brought is
+ * accounted for exactly once: the echo's count never silently leaves out the one being asked about.
  */
-function plannedAskReply(order: OrderView, questions: AskQuestions, assumedIds: readonly string[]): RenderedReply {
+function plannedAskReply(
+  order: OrderView,
+  questions: AskQuestions,
+  assumedIds: readonly string[],
+  noted: readonly OrderLineView[],
+): RenderedReply {
   const claims: ClaimCheck[] = [stateIn(order, OPEN_STATES)];
   const asked = new Set(
     questions.kind === "options" ? questions.lineIds.filter((id) => (questions.options?.[id] ?? []).length > 0) : questions.lineIds,
   );
   const assumed = order.lines.filter((line) => assumedIds.includes(line.lineId) && !asked.has(line.lineId));
-  const echoed = order.lines.filter((line) => !asked.has(line.lineId) && !assumedIds.includes(line.lineId));
-  const blocks: string[] = [];
-  if (echoed.length > 0) blocks.push(echoBlock(echoed));
-  if (assumed.length > 0) blocks.push(assumedBlock(assumed));
-  blocks.push(plannedStepText(order, questions, claims));
-  return reply("ask", blocks.join("\n"), claims);
-}
-
-/** "Anotado ✅ 2 × Arroz 1 lb, Piña, Catsup y 6 más." Up to four lines by name, the rest counted. */
-export function echoBlock(lines: readonly OrderLineView[]): string {
-  const named = lines.slice(0, 4).map(shortLine).join(", ");
-  const rest = lines.length - 4;
-  return `${COPY.noted} ${rest > 0 ? `${named} y ${rest} más` : named}.`;
+  const echoed = noted.filter((line) => !asked.has(line.lineId) && !assumedIds.includes(line.lineId));
+  const body = joinBlocks(
+    echoed.length > 0 ? echoBlock(echoed) : null,
+    assumed.length > 0 ? assumedBlock(assumed) : null,
+    plannedStepText(order, questions, claims),
+  );
+  return reply("ask", body, claims);
 }
 
 /** "Te puse 1 de piña y catsup. Si querés más, decime." Names only, never a price. */
@@ -538,12 +584,12 @@ function plannedStepText(order: OrderView, questions: AskQuestions, claims: Clai
         const line = lines[0]!;
         return weighed(line) ? `¿Cuántas libras querés de ${lineName(line)}?` : `¿Cuánto querés de ${lineName(line)}?`;
       }
-      const shown = lines.slice(0, 12).map((line) => `• ${lineName(line)}${weighed(line) ? " (¿cuántas libras?)" : ""}`);
+      const shown = lines.slice(0, 12).map((line) => `• ${itemName(line)}${weighed(line) ? " (¿cuántas libras?)" : ""}`);
       if (lines.length > 12) shown.push(`…y ${lines.length - 12} más`);
       const example = lines
         .slice(0, 2)
         .map((line, n) => {
-          const name = lineName(line).toLocaleLowerCase("es");
+          const name = itemName(line).toLocaleLowerCase("es");
           return weighed(line) ? `${n === 0 ? "2 libras" : "1 libra"} de ${name}` : `${n === 0 ? 2 : 1} ${name}`;
         })
         .join(", ");
@@ -585,8 +631,16 @@ function plannedStepText(order: OrderView, questions: AskQuestions, claims: Clai
   }
 }
 
-/** An unclear line's options, numbered, each with its confirmed price (a claim) when there is one. */
-function optionsReply(order: OrderView, lineIndex: number | null, options: readonly ProductOption[]): RenderedReply {
+/**
+ * An unclear line's options, numbered, each with its confirmed price (a claim) when there is one,
+ * after what else this burst added or changed.
+ */
+function optionsReply(
+  order: OrderView,
+  lineIndex: number | null,
+  options: readonly ProductOption[],
+  noted: readonly OrderLineView[],
+): RenderedReply {
   const line = lineIndex === null ? undefined : order.lines[lineIndex];
   const claims: ClaimCheck[] = [stateIn(order, OPEN_STATES)];
   const rows = options.map((option, n) => {
@@ -595,9 +649,9 @@ function optionsReply(order: OrderView, lineIndex: number | null, options: reado
     return `${n + 1}. ${quote(option.name)} · ${formatLempiras(option.unitPrice)}`;
   });
   const head = line === undefined ? "Tengo estos:" : `Para ${lineName(line)} tengo:`;
-  const others = order.lines.filter((_, n) => n !== lineIndex);
-  const echo = others.length > 0 ? [echoLine(others)] : [];
-  return reply("ask", [...echo, head, ...rows, COPY.pickOption].join("\n"), claims);
+  const others = noted.filter((other) => other.lineId !== line?.lineId);
+  const echo = others.length > 0 ? echoBlock(others) : null;
+  return reply("ask", joinBlocks(echo, [head, ...rows, COPY.pickOption].join("\n")), claims);
 }
 
 /**
@@ -656,13 +710,13 @@ function askText(question: QuestionCode, lineIndex: number | null, order: OrderV
  * from the first two, so the customer answers them all in one message.
  */
 function quantitiesText(order: OrderView | null): string {
-  const waiting = (order?.lines ?? []).filter((line) => line.quantity === null && !line.restricted);
+  const waiting = (order?.lines ?? []).filter(waitsForQuantity);
   if (waiting.length === 0) return "¿Cuántos querés de cada uno?";
-  const shown = waiting.slice(0, 12).map((line) => `• ${lineName(line)}`);
+  const shown = waiting.slice(0, 12).map((line) => `• ${itemName(line)}`);
   if (waiting.length > 12) shown.push(`…y ${waiting.length - 12} más`);
   const example = waiting
     .slice(0, 2)
-    .map((line, n) => `${n === 0 ? 2 : 1} ${lineName(line).toLocaleLowerCase("es")}`)
+    .map((line, n) => `${n === 0 ? 2 : 1} ${itemName(line).toLocaleLowerCase("es")}`)
     .join(", ");
   return ["¿Cuántos querés de cada uno?", ...shown, `Escribime, por ejemplo: «${example}».`].join("\n");
 }
@@ -672,7 +726,7 @@ function quantitiesText(order: OrderView | null): string {
  * place is the one the engine was given in the customer's context (our records); the outcome
  * names none yet (proposed in the contract). Without it, the question goes with the typed choices.
  */
-function samePlaceReply(order: OrderView | null, place: SavedPlace | null): RenderedReply {
+function samePlaceReply(order: OrderView | null, place: SavedPlace | null, noted: readonly OrderLineView[]): RenderedReply {
   const claims = order === null ? [] : [stateIn(order, OPEN_STATES)];
   const lines: string[] = [COPY.samePlace];
   if (place?.placeText != null) lines.push(`La vez pasada te lo llevamos a: ${quote(place.placeText)}.`);
@@ -687,62 +741,86 @@ function samePlaceReply(order: OrderView | null, place: SavedPlace | null): Rend
           { id: same, title: PLACE_BUTTON_TITLES.same },
           { id: other, title: PLACE_BUTTON_TITLES.other },
         ];
-  return reply("ask", lines.join("\n"), claims, buttons);
+  return reply("ask", joinBlocks(noted.length > 0 ? echoBlock(noted) : null, lines.join("\n")), claims, buttons);
 }
 
 // --- Readback
 
+/**
+ * The summary, in three blocks: the items (and which ones the store still has to confirm), then
+ * how it's received and what it costs, then the question. With buttons, the footer says that a
+ * correction can be written or spoken; the typed choices go only if it ends up as plain text.
+ */
 function readbackReply(template: "readback" | "order_changed" | "rejected_tap", title: string, order: OrderView): RenderedReply {
   const awaiting = order.state === "por_confirmar";
-  const lines = [title, ...order.lines.map((line) => readbackLine(line)), ...fulfillmentLines(order)];
   const claims: ClaimCheck[] = [stateIn(order, [order.state])];
-  const fee = feeOf(order);
-  if (order.total !== null) {
-    lines.push(
-      fee === null
-        ? `*Total: ${formatLempiras(order.total)}*`
-        : `*Total: ${formatLempiras(order.total + fee)}* (${formatLempiras(order.total)} + ${formatLempiras(fee)} de envío)`,
-    );
-    claims.push(one({ type: "order_total", orderId: order.orderId, version: order.version, total: order.total }));
-  } else {
-    lines.push(COPY.totalUnknown);
+  const items = [title, ...order.lines.map(readbackLine)];
+  const later = order.lines.filter(confirmedLater);
+  if (later.length > 0) {
+    items.push(later.length === order.lines.length ? `${COPY.confirmLater}.` : `${COPY.confirmLater}: ${spokenList(later.map(itemName))}.`);
   }
-  const pay = payLine(order);
-  if (pay !== null) lines.push(pay);
   const buttons = awaiting ? decisionButtons(order) : [];
-  if (awaiting) {
-    lines.push(COPY.confirmQuestion);
-    // With buttons, the typed words are a soft last line; without, the instruction itself.
-    lines.push(buttons.length > 0 ? COPY.typedFallbackSoft : COPY.typedFallback);
-  }
-  return reply(template, lines.join("\n"), claims, buttons);
+  // Without buttons to tap, the typed choices are the instruction itself.
+  const question = !awaiting ? null : buttons.length > 0 ? COPY.confirmQuestion : `${COPY.confirmQuestion}\n${COPY.typedFallback}`;
+  const body = joinBlocks(items.join("\n"), [...fulfillmentLines(order), moneyLine(order, claims)].join("\n"), question);
+  const rendered = reply(template, body, claims, buttons);
+  return buttons.length === 0 ? rendered : { ...rendered, footer: COPY.fixHint, textFallback: COPY.typedFallbackSoft };
 }
 
 /**
- * "• 5 × Arroz 1 lb · L 90", the way a receipt reads. A weight in parts keeps its unit ("• Queso
- * seco 1 lb, 1.5 libras · L 105"). What isn't known says so, never a guessed number.
+ * "• 5 Arroz 1 lb · L 90", the way a receipt reads; the amount only when the store confirmed the
+ * price. A weight keeps its unit ("• 1.5 libras de Queso seco · L 105"). What isn't known says so,
+ * never a guessed number.
  */
 function readbackLine(line: OrderLineView): string {
-  const name = lineName(line);
+  const name = itemName(line);
   if (line.restricted) return `• ${name}: eso solo lo vendemos aquí en la tienda.`;
   if (!countsTowardTotal(line)) return `• ${name}: no nos queda.`;
   if (line.quantity === null) return `• ${name}: falta la cantidad.`;
-  // A quantity nobody said is shown openly (D-46): "1 × Piña (te puse 1)".
+  // A quantity nobody said is shown openly (D-46): "1 Piña (te puse 1)".
   const assumed = line.quantitySource === "suggested" || line.quantitySource === "store_usual" ? ` (te puse ${formatQuantity(line.quantity, null)})` : "";
-  const item = `${quantityShown(line)} ${name}${assumed}`;
+  const item = `• ${quantityShown(line)} ${name}${assumed}`;
   const amount = countedLineAmount(line);
-  if (line.productId === null) return `• ${item}: te confirmo si hay y el precio.`;
-  if (line.unitPrice === null || amount === null) return `• ${item}: el precio te lo confirmo.`;
-  return `• ${item} · ${formatLempiras(amount)}`;
+  return confirmedLater(line) || amount === null ? item : `${item} · ${formatLempiras(amount)}`;
 }
 
-/** "5 ×" for whole numbers; "1.5 libras" with its unit otherwise (before the name: "1.5 libras de"). */
+/** A line the summary lists under "De estos te confirmo…": no product, or no confirmed price. */
+function confirmedLater(line: OrderLineView): boolean {
+  if (line.restricted || !countsTowardTotal(line) || line.quantity === null) return false;
+  return line.productId === null || line.unitPrice === null || countedLineAmount(line) === null;
+}
+
+/**
+ * "💵 Total: L 104. Pagás cuando lo recogés." The total only when every line's price is known (a
+ * claim); a fee only when the store set one. Then how it's paid, once it says how it's received.
+ */
+function moneyLine(order: OrderView, claims: ClaimCheck[]): string {
+  const fee = feeOf(order);
+  let total: string = COPY.totalUnknown;
+  if (order.total !== null) {
+    total =
+      fee === null
+        ? `Total: ${formatLempiras(order.total)}.`
+        : `Total: ${formatLempiras(order.total + fee)} (${formatLempiras(order.total)} + ${formatLempiras(fee)} de envío).`;
+    claims.push(one({ type: "order_total", orderId: order.orderId, version: order.version, total: order.total }));
+  }
+  const pay = payLine(order);
+  return `💵 ${pay === null ? total : `${total} ${pay}`}`;
+}
+
+/** "5" for whole numbers or no unit; "1.5 libras de" with its unit otherwise. Never "×". */
 function quantityShown(line: OrderLineView): string {
   const quantity = line.quantity!;
-  // In pounds (planner path): "2 libras de Pollo entero", never "2 ×", which reads as two chickens.
+  // In pounds (planner path): "2 libras de Pollo entero", never "2 Pollo entero", two chickens.
   if (line.byWeight === true) return `${formatQuantity(quantity, line.unit ?? "libra")} de`;
-  if (/^\d+$/u.test(quantity)) return `${quantity} ×`;
-  return `${formatQuantity(quantity, line.unit)}${line.unit === null ? " ×" : " de"}`;
+  if (/^\d+$/u.test(quantity) || line.unit === null) return formatQuantity(quantity, null);
+  return `${formatQuantity(quantity, line.unit)} de`;
+}
+
+/** Whether quantityShown says the line's unit ("2 libras de"), so the name needn't say it again. */
+function unitShown(line: OrderLineView): boolean {
+  if (line.quantity === null) return false;
+  return line.byWeight === true || (!/^\d+$/u.test(line.quantity) && line.unit !== null);
 }
 
 /** How the order is paid, once it says how it's received. */
@@ -751,19 +829,20 @@ function payLine(order: OrderView): string | null {
   return order.fulfillment.mode === "pickup" ? COPY.payOnPickup : COPY.payOnDelivery;
 }
 
+/** "🏪 Lo recogés en la tienda." or "📍 Te lo llevamos a: <the place as said>". */
 function fulfillmentLines(order: OrderView): string[] {
   const fulfillment = order.fulfillment;
   if (fulfillment === null) return [];
-  if (fulfillment.mode === "pickup") return [COPY.pickup];
+  if (fulfillment.mode === "pickup") return [`🏪 ${COPY.pickup}`];
   const place =
     fulfillment.placeText !== null
-      ? `Te lo llevamos a: ${quote(fulfillment.placeText)}.`
+      ? `Te lo llevamos a: ${capitalize(quote(fulfillment.placeText))}`
       : fulfillment.pin != null
         ? COPY.deliveryToPin
         : fulfillment.placeId !== null
           ? "Te lo llevamos al lugar que nos diste."
           : "Te lo llevamos. Falta la dirección.";
-  return [place];
+  return [`📍 ${place}`];
 }
 
 /** A fee shows only when the store set one above zero. */
@@ -947,8 +1026,73 @@ function substituteReply(order: OrderView, lineId: string): RenderedReply {
 
 // --- Helpers
 
+/** A line named inside a sentence: the catalog name, or the customer's words as they came. */
 function lineName(line: OrderLineView): string {
   return line.productName !== null ? quote(line.productName) : quote(line.text) || "un producto";
+}
+
+/**
+ * A line as a list shows it: a matched product's catalog name; otherwise the customer's words
+ * without a leading article or the number (and unit) the list already shows, first letter up,
+ * spelling as written: "un carton de huevos" → "Carton de huevos".
+ */
+export function itemName(line: OrderLineView): string {
+  if (line.productName !== null) return quote(line.productName);
+  const said = saidName(line);
+  return said === "" ? "Un producto" : capitalize(said);
+}
+
+const LEADING_ARTICLE = /^(?:unos|unas|una|un|los|las|el|la)\s+/iu;
+/** Number words that say a quantity the list already shows as a digit. */
+const NUMBER_WORDS: Readonly<Record<string, readonly string[]>> = {
+  "0.5": ["media", "medio"],
+  "2": ["dos"],
+  "3": ["tres"],
+  "4": ["cuatro"],
+  "5": ["cinco"],
+  "6": ["seis"],
+  "7": ["siete"],
+  "8": ["ocho"],
+  "9": ["nueve"],
+  "10": ["diez"],
+};
+
+function saidName(line: OrderLineView): string {
+  let said = quote(line.text);
+  if (line.quantity !== null) {
+    const number = formatQuantity(line.quantity, null);
+    const words = [number, ...(NUMBER_WORDS[number] ?? [])];
+    const lead = said.split(" ")[0]!.toLocaleLowerCase("es");
+    if (words.includes(lead) && said.includes(" ")) said = said.slice(said.indexOf(" ") + 1);
+  }
+  said = said.replace(LEADING_ARTICLE, "");
+  if (unitShown(line)) said = said.replace(unitWords(line.unit ?? "libra"), "");
+  return said.trim();
+}
+
+/** "libras de ", "lb ", the line's own unit and its plural, at the start of the words. */
+function unitWords(unit: string): RegExp {
+  const own = unit.trim().replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  return new RegExp(`^(?:${own === "" ? "" : `${own}(?:e?s)?|`}libras?|lbs?\\.?)\\s+(?:de\\s+)?`, "iu");
+}
+
+/** What goes with a reply's buttons and travels with them: the footer and the text fallback. */
+export interface ButtonExtras {
+  readonly footer?: string;
+  readonly textFallback?: string;
+}
+
+/** Only the extras that are set, so a draft or row without them carries no empty keys. */
+export function buttonExtras(from: ButtonExtras): ButtonExtras {
+  return {
+    ...(from.footer === undefined ? {} : { footer: from.footer }),
+    ...(from.textFallback === undefined ? {} : { textFallback: from.textFallback }),
+  };
+}
+
+/** A body that goes as plain text, without its buttons: the typed fallback under it, if it has one. */
+export function plainTextBody(body: string, textFallback: string | undefined): string {
+  return textFallback === undefined || textFallback === "" ? body : `${body}\n${textFallback}`;
 }
 
 /** Customer or catalog words, flattened to one line and capped. Data, never instructions. */

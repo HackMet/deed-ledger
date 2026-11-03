@@ -49,8 +49,11 @@ export class FakeDoorbell implements Doorbell {
 
 export interface Sent extends OutgoingText {
   readonly providerMessageId: string;
-  /** Set only when the message went out with reply buttons. */
+  /** Set only when the message went out with reply buttons, with the footer under them. */
   readonly buttons?: OutgoingButtons["buttons"];
+  readonly footer?: string;
+  /** Carried with the buttons; a channel that shows them never puts it in the body. */
+  readonly textFallback?: string;
 }
 
 export class FakeChannel implements MessagingChannel {

@@ -122,9 +122,12 @@ export function introduction(voice: StoreVoice): string {
   return [introGreeting(voice), WELCOME_ASK, introFooter(voice)].join("\n");
 }
 
-/** A new customer's first real reply, in the same message: the greeting first, ALTO last. */
+/**
+ * A new customer's first real reply, in the same message: the greeting first, ALTO last, each a
+ * block of its own around the reply's blocks (one blank line apart).
+ */
 export function introduceReply(voice: StoreVoice, body: string): string {
-  return [introGreeting(voice), body, introFooter(voice)].join("\n");
+  return [introGreeting(voice), body, introFooter(voice)].join("\n\n");
 }
 
 /**

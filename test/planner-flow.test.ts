@@ -103,19 +103,20 @@ describe("the pretend engine with a plan", () => {
       plan({ move: "readback", changes: [{ lineRef: "N1", productId: "p-pollo" }] }),
     );
     expect(body(readback)).toContain("• 2 libras de Pollo entero · L 90");
-    expect(body(readback)).toContain("• 1.5 libras de chuleta: te confirmo si hay y el precio.");
-    expect(body(readback)).toContain("• 3 libras de arroz: te confirmo si hay y el precio.");
+    expect(body(readback)).toContain("• 1.5 libras de Chuleta\n");
+    expect(body(readback)).toContain("• 3 libras de Arroz\n");
+    expect(body(readback)).toContain("De estos te confirmo si hay y el precio: Chuleta y Arroz.");
     // Classic: a count, as before.
     const classic = customer();
     await classic.burst([order(item("Pollo entero", "2")), pickup]);
-    expect(body(await classic.burst([]))).toContain("• 2 × Pollo entero · L 90");
+    expect(body(await classic.burst([]))).toContain("• 2 Pollo entero · L 90");
   });
 
   it("keeps the last word on readiness: a readback with pickup or delivery unknown asks it", async () => {
     const c = customer();
     const asked = await c.burst([order(item("arroz", "2"))], plan({ move: "readback" }));
     expect(asked).toMatchObject({ type: "ask", question: "pickup_or_delivery", questions: { kind: "fulfillment", lineIds: [] } });
-    expect(body(asked)).toBe("Anotado ✅ 2 × arroz.\n¿Lo recogés en la tienda o te lo llevamos?");
+    expect(body(asked)).toBe("Anotado ✅\n• 2 Arroz\n\n¿Lo recogés en la tienda o te lo llevamos?");
   });
 
   it("applies an assumed 1 openly, restates its question with no plan, and moves on after asking twice", async () => {
@@ -127,15 +128,16 @@ describe("the pretend engine with a plan", () => {
     const [pina, platanos] = orderOf(asked).lines;
     expect(pina).toMatchObject({ quantity: "1", quantitySource: "suggested" });
     expect(asked).toMatchObject({ question: "quantity", assumed: [pina!.lineId] });
-    expect(body(asked)).toBe("Te puse 1 de piña. Si querés más, decime.\n¿Cuánto querés de platanos?");
+    expect(body(asked)).toBe("Te puse 1 de piña. Si querés más, decime.\n\n¿Cuánto querés de platanos?");
     // "ok" (no plan): the same question again, never the classic queue's.
     const again = await c.burst([]);
     expect(again).toMatchObject({ type: "ask", questions: { kind: "quantities", lineIds: [platanos!.lineId] } });
     // Asked twice: the order moves on, the quantity unknown, never made up.
     const readback = await c.burst([]);
     expect(readback.type).toBe("readback");
-    expect(body(readback)).toContain("• 1 × piña (te puse 1): te confirmo si hay y el precio.");
-    expect(body(readback)).toContain("• platanos: falta la cantidad.");
+    expect(body(readback)).toContain("• 1 Piña (te puse 1)\n");
+    expect(body(readback)).toContain("• Platanos: falta la cantidad.");
+    expect(body(readback)).toContain("De estos te confirmo si hay y el precio: Piña.");
     const confirmed = await c.confirm(orderOf(readback).orderId, orderOf(readback).version);
     expect(orderOf(confirmed).lines[0]).toEqual(expect.not.objectContaining({ quantitySource: expect.anything() }));
     expect(orderOf(confirmed).lines[0]!.quantity).toBe("1");
@@ -197,15 +199,15 @@ const building = (lines: OrderLineView[]): OrderView => ({ orderId: "o-1", versi
 describe("reply blocks (planner path)", () => {
   it("echoes up to four names, then counts the rest: never 'tus N productos'", () => {
     const lines = ["Plátanos", "Piña", "Sandía", "Catsup", "Arroz", "Sal"].map((name, n) => view(`l${n}`, name));
-    expect(echoBlock(lines)).toBe("Anotado ✅ Plátanos, Piña, Sandía, Catsup y 2 más.");
-    expect(echoBlock(lines.slice(0, 2))).toBe("Anotado ✅ Plátanos, Piña.");
+    expect(echoBlock(lines)).toBe("Anotado ✅\n• Plátanos\n• Piña\n• Sandía\n• Catsup\n• y 2 más");
+    expect(echoBlock(lines.slice(0, 2))).toBe("Anotado ✅\n• Plátanos\n• Piña");
   });
 
   it("accounts for every item once: the one being asked about is named in the question, not dropped from a count", () => {
     const names = ["arroz", "frijoles", "azucar", "cafe", "leche", "huevos", "jabon", "pan", "aceite", "cebolla", "sal"];
     const order = building(names.map((name, n) => view(`l${n}`, name, { quantity: "1" })));
     const outcome: EngineOutcome = { type: "ask", question: "illegible", line: 10, order, questions: { kind: "unreadable", lineIds: ["l10"] } };
-    expect(body(outcome)).toBe("Anotado ✅ 1 × arroz, 1 × frijoles, 1 × azucar, 1 × cafe y 6 más.\nNo alcancé a leer bien sal. ¿Me lo escribís?");
+    expect(body(outcome)).toBe("Anotado ✅\n• 1 Arroz\n• 1 Frijoles\n• 1 Azucar\n• 1 Cafe\n• y 6 más\n\nNo alcancé a leer bien sal. ¿Me lo escribís?");
   });
 
   it("asks every missing quantity in one message, weighed ones in pounds", () => {
@@ -213,11 +215,13 @@ describe("reply blocks (planner path)", () => {
     const outcome: EngineOutcome = { type: "ask", question: "quantities", line: 0, order, questions: { kind: "quantities", lineIds: ["a", "b", "c"], byWeight: ["b"] } };
     expect(body(outcome)).toBe(
       [
-        "Anotado ✅ 2 × Arroz 1 lb.",
+        "Anotado ✅",
+        "• 2 Arroz 1 lb",
+        "",
         "¿Cuántos querés de estos?",
-        "• plátanos",
-        "• pollo (¿cuántas libras?)",
-        "• tomates",
+        "• Plátanos",
+        "• Pollo (¿cuántas libras?)",
+        "• Tomates",
         "Escribime todo junto, por ejemplo: «2 plátanos, 1 libra de pollo».",
       ].join("\n"),
     );
@@ -394,10 +398,14 @@ describe("the planner path on local D1, from a photo of a list to one confirmed 
     expect(t.h.sentTo(t.phone)).toEqual([
       [
         "Ya vi tu lista 👍",
-        "Anotado ✅ 1 × Arroz 1 lb.",
+        "",
+        "Anotado ✅",
+        "• 1 Arroz 1 lb",
+        "",
         "Te puse 1 de piña y Salsa de tomate Naturas 400 g. Si querés más, decime.",
+        "",
         "¿Cuántos querés de estos?",
-        "• platanos",
+        "• Platanos",
         "• Pollo entero (¿cuántas libras?)",
         "• Tomate",
         "Escribime todo junto, por ejemplo: «2 platanos, 1 libra de pollo entero».",
@@ -409,20 +417,24 @@ describe("the planner path on local D1, from a photo of a list to one confirmed 
     expect(readback.body).toBe(
       [
         "Va 👍",
+        "",
         "Tu pedido:",
-        "• 6 × platanos: te confirmo si hay y el precio.",
+        "• 6 Platanos",
         "• 2 libras de Pollo entero · L 90",
-        "• 4 × Tomate · L 20",
-        "• 1 × Arroz 1 lb · L 18",
-        "• 1 × piña (te puse 1): te confirmo si hay y el precio.",
-        "• 1 × Salsa de tomate Naturas 400 g (te puse 1) · L 28",
-        "Lo recogés en la tienda.",
-        "El total te lo confirmo.",
-        "Pagás cuando lo recogés.",
+        "• 4 Tomate · L 20",
+        "• 1 Arroz 1 lb · L 18",
+        "• 1 Piña (te puse 1)",
+        "• 1 Salsa de tomate Naturas 400 g (te puse 1) · L 28",
+        "De estos te confirmo si hay y el precio: Platanos y Piña.",
+        "",
+        "🏪 Lo recogés en la tienda.",
+        "💵 El total te lo confirmo. Pagás cuando lo recogés.",
+        "",
         "¿Te lo preparo así?",
-        "_O escribí: confirmar, corregir o cancelar._",
       ].join("\n"),
     );
+    // Under the buttons, the footer instead of the typed choices.
+    expect(readback.footer).toBe("Si algo está mal, escribime o mandame un audio.");
     const confirm = readback.buttons!.find((button) => button.title === "Confirmar")!;
     expect(await t.engine.preparationList(t.tenant)).toEqual([]);
 

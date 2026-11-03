@@ -130,7 +130,7 @@ export function hoursKeyOf(hours) {
  * Every money mention in bot texts must be backed by records. The runner builds
  * the backing set with allowedAmountsFor: catalog prices, the delivery fee, the
  * order total, total + fee (readbacks show it that way), and each counted
- * line's extended amount ("5 × ... · L 90" in readbacks).
+ * line's extended amount ("• 5 Arroz 1 lb · L 90" in readbacks).
  */
 export function checkMoneyBacked(botTexts, backing) {
   const allowed = new Set(backing);
@@ -464,7 +464,7 @@ export function compareRuns(a, b) {
 /**
  * Every amount the bot may legitimately mention, as integer centavos: catalog
  * prices, the delivery fee, the order total, total + fee (readbacks show it
- * that way), and each line's extended amount ("• 5 × ... · L 90"). The runner
+ * that way), and each line's extended amount ("• 5 Arroz 1 lb · L 90"). The runner
  * feeds this set into checkMoneyBacked.
  */
 export function allowedAmountsFor({ order = null, catalogPrices = [], feeCentavos = null }) {

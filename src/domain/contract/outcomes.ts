@@ -162,6 +162,11 @@ export type EngineOutcome =
       readonly questions?: AskQuestions;
       /** Proposed (Nov 2, planner, D-46): lines whose quantity was assumed in this burst. */
       readonly assumed?: readonly string[];
+      /**
+       * Proposed (Nov 3): lines this burst added or changed, which the reply echoes back
+       * ("Anotado ✅"). Empty: nothing new, no echo. Absent: the engine doesn't say, every line.
+       */
+      readonly noted?: readonly string[];
     }
   | { readonly type: "readback"; readonly order: OrderView }
   | { readonly type: "order_confirmed"; readonly order: OrderView }
