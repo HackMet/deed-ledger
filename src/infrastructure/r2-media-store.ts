@@ -20,4 +20,16 @@ export class R2MediaStore implements MediaStore {
     await this.bucket.put(key, media.bytes, { httpMetadata: { contentType: media.contentType }, sha256 });
     return { key, sha256, size: media.bytes.byteLength };
   }
+
+  async read(tenant: Tenant, key: string): Promise<MediaBytes | null> {
+    if (!isUnderStorePrefix(tenant.businessId, key)) {
+      throw new Error("media key is outside the store's prefix");
+    }
+    const object = await this.bucket.get(key);
+    if (object === null) return null;
+    return {
+      bytes: await object.arrayBuffer(),
+      contentType: object.httpMetadata?.contentType ?? "application/octet-stream",
+    };
+  }
 }

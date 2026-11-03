@@ -15,6 +15,7 @@ import type { ConsoleMember } from "../../../application/ports";
 import type { Runtime } from "../../../composition";
 import { isWellFormedToken, SESSION_COOKIE, SESSION_TTL_MS } from "../../../domain/console-auth";
 import { csrfToken, hashToken, newToken, sameToken } from "../../../infrastructure/tokens";
+import { simplePage } from "./layout";
 
 export type ConsoleEnv = {
   Bindings: Env;
@@ -27,6 +28,7 @@ const DEV_MEMBER: ConsoleMember = {
   sessionId: "dev",
   role: "staff",
   canApproveFiado: false,
+  displayName: "Rosa",
 };
 const DEV_CSRF = "dev";
 
@@ -98,7 +100,9 @@ export function registerEntryRoutes(app: Hono<ConsoleEnv>) {
       maxAge: Math.floor(SESSION_TTL_MS / 1000),
     });
     deps.log.info("console_session_opened", { businessId: member.businessId });
-    return c.redirect("/console/preparacion", 303);
+    // Until the member has read the voice-note notice, logging in shows it first.
+    const seen = await deps.consoleAuth.voiceNoticeSeen(member, member.userId);
+    return c.redirect(seen ? "/console/preparacion" : "/console/bienvenida", 303);
   });
 }
 
@@ -118,7 +122,10 @@ async function sessionMember(c: Context<ConsoleEnv>): Promise<ConsoleMember | nu
 export const requireMember: MiddlewareHandler<ConsoleEnv> = async (c, next) => {
   const { config } = c.get("runtime");
   if (config.devConsole) {
-    c.set("member", DEV_MEMBER);
+    // The simulator store's owner, so its console shows the orders typed in `npm run chat`; without
+    // that store, a fixed staff member of an empty demo store.
+    const owner = config.devStorePhoneNumberId === "" ? null : await c.get("runtime").deps.consoleAuth.devOwner(config.devStorePhoneNumberId);
+    c.set("member", owner ?? DEV_MEMBER);
     c.set("csrf", DEV_CSRF);
     return next();
   }
@@ -137,16 +144,19 @@ const sizeCheck = bodyLimit({ maxSize: MAX_FORM_BYTES, onError: (c) => formRefus
 /**
  * Refuses form posts from another site, the login form included (its invite would otherwise let a
  * stranger swap the victim's session for one in their store), and forms larger than any console form.
+ * Screens that take uploads (`uploadPaths`) set their own size limit instead.
  */
-export const sameSiteForms: MiddlewareHandler<ConsoleEnv> = async (c, next) => {
-  try {
-    await crossSiteCheck(c, async () => {});
-  } catch (error) {
-    if (error instanceof HTTPException && error.status === 403) return formRefused(c, 403);
-    throw error;
-  }
-  return sizeCheck(c, next);
-};
+export function sameSiteForms(uploadPaths: readonly string[] = []): MiddlewareHandler<ConsoleEnv> {
+  return async (c, next) => {
+    try {
+      await crossSiteCheck(c, async () => {});
+    } catch (error) {
+      if (error instanceof HTTPException && error.status === 403) return formRefused(c, 403);
+      throw error;
+    }
+    return uploadPaths.includes(c.req.path) ? next() : sizeCheck(c, next);
+  };
+}
 
 /** A POST must carry the session's CSRF value. */
 export const requireCsrf: MiddlewareHandler<ConsoleEnv> = async (c, next) => {
@@ -171,19 +181,4 @@ export const requireOwner: MiddlewareHandler<ConsoleEnv> = async (c, next) => {
 function notReady(c: Context<ConsoleEnv>) {
   c.get("runtime").deps.log.error("console_not_configured");
   return c.html(simplePage("Consola", html`<p>${COPY.notReady}</p>`), 503);
-}
-
-export function simplePage(title: string, body: unknown) {
-  return html`<!doctype html>
-<html lang="es">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${title}</title>
-<style>body{margin:0;padding:24px 18px;font:17px/1.5 system-ui,sans-serif;background:#f4f4f2;color:#1b1b1b}
-h1{font-size:20px}button{min-height:48px;width:100%;font-size:17px;border:0;border-radius:8px;background:#2f6f45;color:#fff}
-li{padding:6px 0}</style>
-</head>
-<body><h1>${title}</h1>${body}</body>
-</html>`;
 }

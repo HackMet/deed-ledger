@@ -2,10 +2,11 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { processConversation } from "../src/application/processor";
 import { COULD_NOT_OPEN_MEDIA, couldNotDownload, RECEIVED_PLACEHOLDER } from "../src/domain/copy";
+import { MediaDownloadError, WhatsAppMediaSource } from "../src/integrations/whatsapp/media";
 import { bytes, FakeMediaSource } from "./helpers/fakes";
 import { conversationOf, expireLease, type Harness, harness, rows } from "./helpers/harness";
-import { newPhone, seedStore } from "./helpers/seed";
-import { imageMessage, wamid, webhook } from "./helpers/whatsapp";
+import { newPhone, seedIntroducedCustomer, seedStore } from "./helpers/seed";
+import { audioMessage, imageMessage, wamid, webhook } from "./helpers/whatsapp";
 
 const nowS = (h: Harness) => Math.floor(h.clock.now() / 1000);
 
@@ -26,6 +27,8 @@ async function assetOf(businessId: string) {
 describe("media downloads", () => {
   it("can't be overwritten by a stale consumer after a takeover during the download (F3)", async () => {
     const { store, phone } = await storeWithOwner();
+    // A returning customer, already introduced (#30): this test counts replies.
+    await seedIntroducedCustomer(store, phone);
     const media = new FakeMediaSource();
     let competitor: Promise<string> | undefined;
     let h!: Harness;
@@ -80,13 +83,17 @@ describe("media downloads", () => {
     expect(media.fetched).toEqual(["m-gone", "m-gone", "m-gone"]);
     expect((await assetOf(store.businessId)).state).toBe("pending");
     expect(h.sentTo(phone)).toEqual([couldNotDownload("image")]);
-    expect(couldNotDownload("image")).toBe("No pude descargar la foto. ¿Me la mandás otra vez?");
+    expect(couldNotDownload("image")).toBe("No pude descargar la foto. ¿Me la mandás otra vez o me escribís lo que necesitás?");
   });
 
-  it("treats a download that throws the same way", async () => {
+  it.each([
+    ["a dropped connection", new Error("connection reset")],
+    // Bytes that don't match Meta's declared sha256 or file_size (#27): a cut-off voice note.
+    ["an incomplete download", new MediaDownloadError("incomplete")],
+  ])("treats a download that throws (%s) the same way", async (_label, failure) => {
     const media = new FakeMediaSource();
     media.respond = async (_id, call) => {
-      if (call === 1) throw new Error("connection reset");
+      if (call === 1) throw failure;
       return bytes("ok");
     };
     const h = harness({ mediaSource: media });
@@ -126,6 +133,45 @@ describe("media downloads", () => {
     ]);
     expect(media.fetched).toEqual([]);
     expect(h.sentTo(phone)).toEqual([COULD_NOT_OPEN_MEDIA]);
-    expect(COULD_NOT_OPEN_MEDIA).toBe("No pude abrir ese archivo. ¿Me lo mandás otra vez?");
+    expect(COULD_NOT_OPEN_MEDIA).toBe("No pude abrir ese archivo. ¿Me lo mandás otra vez o me escribís lo que necesitás?");
+  });
+});
+
+describe("Codex final pass, finding 6: a voice note Meta gives nothing to check against", () => {
+  it("is retried like a cut-off download, then gets the could-not-download reply; the log names the code", async () => {
+    // Synthetic lookups without sha256 or file_size, and bytes that could be a cut-off note.
+    const fetched: string[] = [];
+    const media = new WhatsAppMediaSource({
+      token: "test-whatsapp-token-not-real",
+      apiVersion: "v26.0",
+      fetch: async (url) => {
+        fetched.push(url);
+        return url.startsWith("https://graph.facebook.com/")
+          ? Response.json({ url: "https://lookaside.example.test/voice", mime_type: "audio/ogg", id: "m-voice" })
+          : new Response("synthetic voice bytes", { headers: { "content-type": "audio/ogg" } });
+      },
+    });
+    const h = harness({ mediaSource: media });
+    const { store, phone } = await storeWithOwner();
+    await h.post(webhook(store.phoneNumberId, { messages: [audioMessage({ from: phone, id: wamid(), timestampS: nowS(h), mediaId: "m-voice" })] }));
+    h.clock.advance(4_000);
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      await h.deliver(h.takeRingsFor(store.businessId).slice(0, 1));
+      h.clock.advance(60_000);
+    }
+    expect(await rows(`SELECT job_state, attempts, last_error FROM inbound_messages WHERE business_id = ?`, store.businessId)).toEqual([
+      { job_state: "failed", attempts: 3, last_error: "media_unavailable" },
+    ]);
+    expect((await assetOf(store.businessId)).state).toBe("pending");
+    expect(h.sentTo(phone)).toEqual([couldNotDownload("audio")]);
+    expect(couldNotDownload("audio")).toBe("No pude descargar la nota de voz. ¿Me la mandás otra vez o me escribís lo que necesitás?");
+    expect(h.log.fields("media_not_downloaded").map((line) => line.reason)).toEqual([
+      "MediaDownloadError: unverified",
+      "MediaDownloadError: unverified",
+      "MediaDownloadError: unverified",
+    ]);
+    // IDs and the code only: never the URL or the token.
+    expect(h.log.lines.join("\n")).not.toContain("lookaside");
+    expect(h.log.lines.join("\n")).not.toContain("test-whatsapp-token-not-real");
   });
 });

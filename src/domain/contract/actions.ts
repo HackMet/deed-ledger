@@ -25,6 +25,8 @@ export type CustomerAction =
   | ({ readonly type: "cancel_order" } & OrderRef)
   /** "¿Al mismo lugar de siempre?" answered yes. */
   | ({ readonly type: "accept_saved_place"; readonly placeId: string } & OrderRef)
+  /** Proposed (#29): "¿Al mismo lugar de siempre?" answered Otro lugar. The engine asks where. */
+  | ({ readonly type: "decline_saved_place" } & OrderRef)
   /** The answer to "No hay X. ¿Te mandamos Y o lo quitamos?". */
   | ({ readonly type: "accept_substitute"; readonly lineId: string } & OrderRef)
   | ({ readonly type: "remove_line"; readonly lineId: string } & OrderRef);

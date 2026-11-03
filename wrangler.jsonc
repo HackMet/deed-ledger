@@ -15,20 +15,57 @@
   "vars": {
     "WHATSAPP_GRAPH_API_VERSION": "v26.0",
     // "1" opens the console without login, on an in-memory pretend engine. Only the simulator sets it.
-    "DEV_CONSOLE": ""
+    "DEV_CONSOLE": "",
+    // With DEV_CONSOLE: the WhatsApp phone number ID of the simulator's store; the console acts as
+    // its owner, so it shows the orders typed in `npm run chat`. Ignored without DEV_CONSOLE.
+    "DEV_STORE_PHONE_NUMBER_ID": "",
+    // "1" turns on the pretend engine with its state in D1 (migration 0016), for a deployed demo until
+    // the real engine lands. The console still needs login. DEV_CONSOLE wins when both are set.
+    "PRETEND_ENGINE": "",
+    // "planner" lets the planner (a second Muse Spark call per burst) decide each conversation step
+    // (D-45); "classic" (the default) keeps the engine's own questions. The simulator's --planner sets it.
+    "CONVERSATION": "classic",
+    // Muse Spark's reasoning effort for the reader's call and the planner's: "minimal", "low", "medium",
+    // "high", "xhigh", "max", or "default" (the model picks). Blank: the measured defaults in
+    // src/infrastructure/config.ts (planner path: reader "low", planner "minimal"; the classic reader
+    // keeps the model's own). The simulator's --reader-effort and --planner-effort set them.
+    "READER_REASONING_EFFORT": "",
+    "PLANNER_REASONING_EFFORT": "",
+    // Planner path: a burst of text only is read and planned in one call ("1"), or with the reader and
+    // the planner as for photos and voice ("0"). Blank: the default in src/infrastructure/config.ts.
+    // FAST_TEXT_REASONING_EFFORT sets that one call's effort, like the two above.
+    "PLANNER_FAST_TEXT": "",
+    "FAST_TEXT_REASONING_EFFORT": "",
+    // How long Meta keeps a prompt-cache entry: "in_memory" or "24h". Blank sends none (Meta's
+    // default). A cached prefix can hold a customer's messages, so "24h" needs the privacy check first.
+    "PROMPT_CACHE_RETENTION": "",
+    // "1" turns on WhatsApp test commands (/new, /help) for the store's own members. Blank: off. The
+    // simulator sets it; on the live number only for testing (docs/deploy.md).
+    "TEST_COMMANDS": "",
+    // The Worker's public origin (https://…, no trailing slash), for the privacy link in the first
+    // message. Blank: the link is left out. Set it before customers write.
+    "PUBLIC_BASE_URL": ""
   },
 
   // Values come from `wrangler secret put` when deployed, and from .dev.vars locally.
   // Tests blank all of them (vitest.config.ts).
   "secrets": {
-    "required": ["WHATSAPP_APP_SECRET", "WHATSAPP_VERIFY_TOKEN", "WHATSAPP_TOKEN", "SENDER_HASH_SALT", "LINK_SIGNING_SECRET"]
+    "required": ["WHATSAPP_APP_SECRET", "WHATSAPP_VERIFY_TOKEN", "WHATSAPP_TOKEN", "SENDER_HASH_SALT", "LINK_SIGNING_SECRET", "MODEL_API_KEY"]
   },
+
+  // Voice notes: opus-decoder's libopus Wasm is extracted before bundling, because Workers can't
+  // compile Wasm at runtime; its unused Web Worker variant is stubbed out (src/integrations/audio).
+  // The planner's instruction layers are Markdown files Angel edits (src/application/planner/instructions/),
+  // bundled as text.
+  "rules": [{ "type": "Text", "globs": ["**/*.md"], "fallthrough": true }],
+  "build": { "command": "node scripts/extract-opus-wasm.mjs" },
+  "alias": { "@eshaz/web-worker": "./src/integrations/audio/no-web-worker.ts" },
 
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "store-assistant",
-      // database_id: set after `wrangler d1 create store-assistant` (Angel runs remote commands).
+      "database_id": "d5c4de06-0265-41a7-b8db-6ef722e54261",
       "migrations_dir": "migrations"
     }
   ],

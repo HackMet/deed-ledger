@@ -5,6 +5,7 @@
 import type { LineMark } from "./actions";
 import type { Centavos, DecimalString } from "./numbers";
 import type { ObservationIssue } from "./observation";
+import type { AskKind, QuantitySource } from "../planner/types";
 
 /** `en_camino` is proposed (K13), pending Angel's OK: a delivery order out with a courier of the store. */
 export type OrderState =
@@ -37,6 +38,17 @@ export interface OrderLineView {
   readonly mark: LineMark | null;
   /** Offered by staff, waiting on the customer's answer. */
   readonly substitute: { readonly productId: string; readonly productName: string; readonly unitPrice: Centavos | null } | null;
+  /**
+   * Proposed (Nov 2, planner, D-46): where the quantity came from. Absent means said. A suggested
+   * or store-usual quantity is shown openly ("te puse 1") and becomes the agreed one on Confirmar.
+   */
+  readonly quantitySource?: QuantitySource;
+  /**
+   * Proposed (Nov 2, planner): the quantity is in pounds (or the weight unit said): the product is
+   * sold by weight, or the customer said a weight. Read back as "2 libras de Pollo entero". Absent:
+   * a count ("2 × …").
+   */
+  readonly byWeight?: true;
 }
 
 export interface OrderView {
@@ -46,12 +58,30 @@ export interface OrderView {
   readonly lines: readonly OrderLineView[];
   readonly fulfillment:
     | { readonly mode: "pickup" }
-    | { readonly mode: "delivery"; readonly placeId: string | null; readonly placeText: string | null; readonly fee: Centavos | null }
+    | {
+        readonly mode: "delivery";
+        /** The saved place used, when the customer accepted one (accept_saved_place). */
+        readonly placeId: string | null;
+        /** As the customer wrote it. */
+        readonly placeText: string | null;
+        /** From store settings only (#40); null when the store set none. Not part of the total. */
+        readonly fee: Centavos | null;
+        /**
+         * Proposed (#29), not agreed yet: a shared WhatsApp location, coordinates from the webhook.
+         * Optional until agreed; absent means none.
+         */
+        readonly pin?: { readonly latitude: number; readonly longitude: number } | null;
+      }
     | null;
   /** Null when any line's price is unknown: no partial totals. */
   readonly total: Centavos | null;
   /** Place in the preparation list, 1 is next. Null unless confirmado or preparando. */
   readonly queuePosition: number | null;
+  /**
+   * Proposed (Nov 2), not agreed yet: the short number the customer and the store say out loud
+   * ("101"), unique within the store. Optional until agreed; absent means none.
+   */
+  readonly code?: string;
   /**
    * Proposed (K12), pending Angel's OK. The customer's change waiting for the owner or staff, with what
    * it would change; null when none. Optional so views built before K12 still type-check: absent
@@ -80,6 +110,31 @@ export interface PreparationCard {
   readonly changedLineIds: readonly string[];
 }
 
+/** Proposed (Nov 2): one product offered for an unclear line. Its price is a claim when shown. */
+export interface ProductOption {
+  readonly productId: string;
+  readonly name: string;
+  /** The store's confirmed price; null when none is confirmed. */
+  readonly unitPrice: Centavos | null;
+}
+
+/** At most this many products are offered for one unclear line. */
+export const MAX_OPTIONS = 5;
+
+/**
+ * Proposed (Nov 2, planner, D-47): one kind of question about several lines in one message: every
+ * missing quantity together, or every "which one" together. Never one question per product.
+ */
+export interface AskQuestions {
+  readonly kind: Exclude<AskKind, "none">;
+  /** The lines asked about, in order. Empty for pickup or delivery, the place, what to order. */
+  readonly lineIds: readonly string[];
+  /** For `options`: each line's products, numbered on from one line to the next. */
+  readonly options?: Readonly<Record<string, readonly ProductOption[]>>;
+  /** For `quantities`: lines sold by weight ("¿cuántas libras?"). */
+  readonly byWeight?: readonly string[];
+}
+
 /** The one question to ask next. `line` points into the order's lines when it's about one. */
 export type QuestionCode =
   | ObservationIssue["code"]
@@ -87,7 +142,11 @@ export type QuestionCode =
   | "pickup_or_delivery"
   | "delivery_place"
   | "same_place"
-  | "customer_name";
+  | "customer_name"
+  // Proposed, not agreed: no order yet, so the next step is what they want.
+  | "what_to_order"
+  // Proposed (Nov 2): several lines with no quantity, asked together in one question.
+  | "quantities";
 
 export interface AnswerFact {
   /** As the customer named it. */
@@ -98,8 +157,41 @@ export interface AnswerFact {
   readonly restricted: boolean;
 }
 
+/**
+ * Proposed (#47), not agreed: the store's opening hours, from store settings (#40). One entry per
+ * group of days with the same hours. Days are ISO weekdays, 1 is Monday and 7 is Sunday; times are
+ * 24-hour "HH:MM" in the store's local time. A day in no entry is closed. Unset is null, never a
+ * default schedule.
+ */
+export interface StoreHoursEntry {
+  readonly days: readonly number[];
+  readonly opens: string;
+  readonly closes: string;
+}
+
+export type StoreHours = readonly StoreHoursEntry[];
+
 export type EngineOutcome =
-  | { readonly type: "ask"; readonly question: QuestionCode; readonly line: number | null; readonly order: OrderView | null }
+  | {
+      readonly type: "ask";
+      readonly question: QuestionCode;
+      readonly line: number | null;
+      readonly order: OrderView | null;
+      /**
+       * Proposed (Nov 2), not agreed yet: the products that fit an unclear line, at most
+       * MAX_OPTIONS, from the store's catalog, so the customer picks one by number or name.
+       */
+      readonly options?: readonly ProductOption[];
+      /** Proposed (Nov 2, planner, D-47): one kind of question about several lines. */
+      readonly questions?: AskQuestions;
+      /** Proposed (Nov 2, planner, D-46): lines whose quantity was assumed in this burst. */
+      readonly assumed?: readonly string[];
+      /**
+       * Proposed (Nov 3): lines this burst added or changed, which the reply echoes back
+       * ("Anotado ✅"). Empty: nothing new, no echo. Absent: the engine doesn't say, every line.
+       */
+      readonly noted?: readonly string[];
+    }
   | { readonly type: "readback"; readonly order: OrderView }
   | { readonly type: "order_confirmed"; readonly order: OrderView }
   /**
@@ -110,6 +202,8 @@ export type EngineOutcome =
   | { readonly type: "order_cancelled"; readonly order: OrderView }
   | { readonly type: "order_status"; readonly order: OrderView | null }
   | { readonly type: "answer"; readonly topic: "price" | "availability"; readonly facts: readonly AnswerFact[] }
+  /** Proposed (#47): "¿a qué hora abren?". Null when the store hasn't set its hours. */
+  | { readonly type: "store_hours"; readonly hours: StoreHours | null }
   | { readonly type: "balance"; readonly balance: Centavos | null }
   /** A receipt was saved as a claim. Only the owner's tap makes it a payment. */
   | { readonly type: "payment_claimed"; readonly paymentClaimId: string }
@@ -160,4 +254,6 @@ export type Claim =
   | { readonly type: "unit_price"; readonly productId: string; readonly price: Centavos }
   | { readonly type: "availability"; readonly productId: string; readonly availability: "hay" | "se_acabo" }
   | { readonly type: "payment_confirmed"; readonly paymentClaimId: string; readonly amount: Centavos }
-  | { readonly type: "balance"; readonly customerId: string; readonly balance: Centavos };
+  | { readonly type: "balance"; readonly customerId: string; readonly balance: Centavos }
+  /** Proposed (#47): the store's hours are exactly these now (same entries, same order). */
+  | { readonly type: "store_hours"; readonly hours: StoreHours };

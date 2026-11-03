@@ -382,7 +382,7 @@ describe("K5: the Orders screen reads the ledger", () => {
 function recordingEngine() {
   const results: EngineResult[] = [];
   const wrapped: Engine = {
-    onBurst: (...a) => engine.onBurst(...a),
+    onBurst: (context, reading, matches) => engine.onBurst(context, reading, matches),
     onCustomerAction: (...a) => engine.onCustomerAction(...a),
     verifyClaims: (...a) => engine.verifyClaims(...a),
     preparationList: (...a) => engine.preparationList(...a),

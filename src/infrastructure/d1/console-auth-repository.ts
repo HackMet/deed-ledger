@@ -5,12 +5,23 @@ class InviteUnusableError extends Error {
   override readonly name = "InviteUnusableError";
 }
 
+class NotStaffError extends Error {
+  override readonly name = "NotStaffError";
+}
+
+/**
+ * The name this store shows for a member: the one it gave them. Only an owner falls back to the
+ * person's own record, which only the operator's admin scripts write. Never another store's name.
+ */
+const MEMBER_NAME = `CASE WHEN m.role = 'owner' THEN COALESCE(m.display_name, u.display_name) ELSE m.display_name END`;
+
 interface SessionRow {
   id: string;
   business_id: string;
   user_id: string;
   role: ConsoleMember["role"];
   can_approve_fiado: number;
+  display_name: string | null;
 }
 
 /** An invite is usable while unused, unexpired, and its membership active. Binds token hash, now. */
@@ -50,8 +61,10 @@ export class D1ConsoleAuthRepository implements ConsoleAuthRepository {
   async findSession(tokenHash: string, nowMs: number): Promise<ConsoleMember | null> {
     const row = await this.db
       .prepare(
-        `SELECT s.id, s.business_id, s.user_id, m.role, m.can_approve_fiado FROM console_sessions s
+        `SELECT s.id, s.business_id, s.user_id, m.role, m.can_approve_fiado, ${MEMBER_NAME} AS display_name
+         FROM console_sessions s
          JOIN memberships m ON m.business_id = s.business_id AND m.user_id = s.user_id
+         JOIN users u ON u.id = s.user_id
          WHERE s.token_hash = ? AND s.revoked_at_ms IS NULL AND s.expires_at_ms > ? AND m.active = 1`,
       )
       .bind(tokenHash, nowMs)
@@ -63,26 +76,52 @@ export class D1ConsoleAuthRepository implements ConsoleAuthRepository {
       sessionId: row.id,
       role: row.role,
       canApproveFiado: row.can_approve_fiado === 1,
+      displayName: row.display_name,
+    };
+  }
+
+  async devOwner(phoneNumberId: string): Promise<ConsoleMember | null> {
+    const row = await this.db
+      .prepare(
+        `SELECT m.business_id, m.user_id, m.can_approve_fiado, ${MEMBER_NAME} AS display_name FROM channel_accounts ca
+         JOIN memberships m ON m.business_id = ca.business_id
+         JOIN users u ON u.id = m.user_id
+         WHERE ca.phone_number_id = ? AND m.role = 'owner' AND m.active = 1
+         ORDER BY m.created_at_ms, m.user_id LIMIT 1`,
+      )
+      .bind(phoneNumberId)
+      .first<{ business_id: string; user_id: string; can_approve_fiado: number; display_name: string | null }>();
+    if (row === null) return null;
+    return {
+      businessId: row.business_id,
+      userId: row.user_id,
+      sessionId: "dev",
+      role: "owner",
+      canApproveFiado: row.can_approve_fiado === 1,
+      displayName: row.display_name,
     };
   }
 
   async revokeSessions(tenant: Tenant, userId: string, nowMs: number): Promise<number> {
-    const result = await this.db
+    const result = await this.revokeStatement(tenant, userId, nowMs).run();
+    return result.meta.changes;
+  }
+
+  private revokeStatement(tenant: Tenant, userId: string, nowMs: number): D1PreparedStatement {
+    return this.db
       .prepare(
         `UPDATE console_sessions SET revoked_at_ms = ?
          WHERE business_id = ? AND user_id = ? AND revoked_at_ms IS NULL`,
       )
-      .bind(nowMs, tenant.businessId, userId)
-      .run();
-    return result.meta.changes;
+      .bind(nowMs, tenant.businessId, userId);
   }
 
   async listMembers(tenant: Tenant): Promise<MemberSummary[]> {
     const { results } = await this.db
       .prepare(
-        `SELECT m.user_id, u.display_name, m.role, m.active, m.can_approve_fiado FROM memberships m
+        `SELECT m.user_id, ${MEMBER_NAME} AS display_name, m.role, m.active, m.can_approve_fiado FROM memberships m
          JOIN users u ON u.id = m.user_id
-         WHERE m.business_id = ? ORDER BY m.role, u.display_name`,
+         WHERE m.business_id = ? ORDER BY m.role, display_name`,
       )
       .bind(tenant.businessId)
       .all<{ user_id: string; display_name: string | null; role: MemberSummary["role"]; active: number; can_approve_fiado: number }>();
@@ -93,5 +132,128 @@ export class D1ConsoleAuthRepository implements ConsoleAuthRepository {
       active: row.active === 1,
       canApproveFiado: row.can_approve_fiado === 1,
     }));
+  }
+
+  async addStaff(
+    tenant: Tenant,
+    person: { readonly phone: string; readonly displayName: string | null; readonly nowMs: number },
+  ): Promise<{ readonly userId: string; readonly role: "owner" | "staff" }> {
+    await this.db.batch([
+      // A person can belong to several stores, so the shared record is never touched from here: the
+      // name the owner typed is this store's own, on the membership.
+      this.db
+        .prepare(`INSERT INTO users (id, phone, created_at_ms) VALUES (?, ?, ?) ON CONFLICT (phone) DO NOTHING`)
+        .bind(crypto.randomUUID(), person.phone, person.nowMs),
+      // An existing staff member's blank name is filled; an owner's membership is left as it is.
+      this.db
+        .prepare(
+          `INSERT INTO memberships (business_id, user_id, location_id, role, created_at_ms, display_name)
+           SELECT ?, id, NULL, 'staff', ?, ? FROM users WHERE phone = ?
+           ON CONFLICT (business_id, user_id) DO UPDATE
+             SET display_name = COALESCE(memberships.display_name, excluded.display_name)
+             WHERE memberships.role = 'staff'`,
+        )
+        .bind(tenant.businessId, person.nowMs, person.displayName, person.phone),
+    ]);
+    const row = await this.db
+      .prepare(
+        `SELECT m.user_id, m.role FROM memberships m JOIN users u ON u.id = m.user_id
+         WHERE m.business_id = ? AND u.phone = ?`,
+      )
+      .bind(tenant.businessId, person.phone)
+      .first<{ user_id: string; role: "owner" | "staff" }>();
+    if (row === null) throw new Error("staff membership missing after insert");
+    return { userId: row.user_id, role: row.role };
+  }
+
+  async createStaffInvite(
+    tenant: Tenant,
+    userId: string,
+    invite: { readonly id: string; readonly tokenHash: string; readonly nowMs: number; readonly expiresAtMs: number },
+  ): Promise<{ readonly phone: string; readonly displayName: string | null } | null> {
+    // Both statements match only a staff membership of this store, so an owner or another store's
+    // member gets neither a reactivation nor an invite. A re-added person starts without fiado.
+    await this.db.batch([
+      this.db
+        .prepare(
+          `UPDATE memberships SET can_approve_fiado = CASE WHEN active = 0 THEN 0 ELSE can_approve_fiado END, active = 1
+           WHERE business_id = ? AND user_id = ? AND role = 'staff'`,
+        )
+        .bind(tenant.businessId, userId),
+      this.db
+        .prepare(
+          `INSERT INTO console_invites (id, business_id, user_id, token_hash, expires_at_ms, created_at_ms)
+           SELECT ?, business_id, user_id, ?, ?, ? FROM memberships
+           WHERE business_id = ? AND user_id = ? AND role = 'staff' AND active = 1`,
+        )
+        .bind(invite.id, invite.tokenHash, invite.expiresAtMs, invite.nowMs, tenant.businessId, userId),
+    ]);
+    const row = await this.db
+      .prepare(
+        `SELECT u.phone, ${MEMBER_NAME} AS display_name FROM console_invites i
+         JOIN memberships m ON m.business_id = i.business_id AND m.user_id = i.user_id
+         JOIN users u ON u.id = i.user_id
+         WHERE i.token_hash = ? AND i.business_id = ?`,
+      )
+      .bind(invite.tokenHash, tenant.businessId)
+      .first<{ phone: string; display_name: string | null }>();
+    return row === null ? null : { phone: row.phone, displayName: row.display_name };
+  }
+
+  async removeStaff(tenant: Tenant, userId: string, nowMs: number): Promise<{ readonly sessionsEnded: number } | null> {
+    const isStaff: Guard = {
+      holdsSql: `SELECT 1 FROM memberships WHERE business_id = ? AND user_id = ? AND role = 'staff'`,
+      params: [tenant.businessId, userId],
+      error: () => new NotStaffError(),
+    };
+    try {
+      // One batch: deactivated, unused invites expired and every session ended, or none of it. A
+      // session left open would come back to life if the person were invited again.
+      const [, , revoked] = await guardedBatch(this.db, [isStaff], [
+        this.db
+          .prepare(`UPDATE memberships SET active = 0 WHERE business_id = ? AND user_id = ? AND role = 'staff'`)
+          .bind(tenant.businessId, userId),
+        this.db
+          .prepare(
+            `UPDATE console_invites SET expires_at_ms = ?
+             WHERE business_id = ? AND user_id = ? AND used_at_ms IS NULL AND expires_at_ms > ?`,
+          )
+          .bind(nowMs, tenant.businessId, userId, nowMs),
+        this.revokeStatement(tenant, userId, nowMs),
+      ]);
+      return { sessionsEnded: revoked?.meta.changes ?? 0 };
+    } catch (error) {
+      if (error instanceof NotStaffError) return null;
+      throw error;
+    }
+  }
+
+  async setFiadoPermission(tenant: Tenant, userId: string, allowed: boolean): Promise<boolean> {
+    const result = await this.db
+      .prepare(
+        `UPDATE memberships SET can_approve_fiado = ?
+         WHERE business_id = ? AND user_id = ? AND role = 'staff' AND active = 1`,
+      )
+      .bind(allowed ? 1 : 0, tenant.businessId, userId)
+      .run();
+    return result.meta.changes > 0;
+  }
+
+  async voiceNoticeSeen(tenant: Tenant, userId: string): Promise<boolean> {
+    const row = await this.db
+      .prepare(`SELECT voice_notice_seen_at_ms FROM memberships WHERE business_id = ? AND user_id = ?`)
+      .bind(tenant.businessId, userId)
+      .first<{ voice_notice_seen_at_ms: number | null }>();
+    return row !== null && row.voice_notice_seen_at_ms !== null;
+  }
+
+  async markVoiceNoticeSeen(tenant: Tenant, userId: string, nowMs: number): Promise<void> {
+    await this.db
+      .prepare(
+        `UPDATE memberships SET voice_notice_seen_at_ms = ?
+         WHERE business_id = ? AND user_id = ? AND voice_notice_seen_at_ms IS NULL`,
+      )
+      .bind(nowMs, tenant.businessId, userId)
+      .run();
   }
 }

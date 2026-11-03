@@ -18,7 +18,7 @@ transcription (A1), and D1 commits atomically only inside a single batch (rule 6
 WhatsApp Cloud API
   │ webhook
   ▼
-Worker (Hono): check signature → sender → membership (unknown: fixed reply, no data) → dedup message ID
+Worker (Hono): check signature → store from the receiving number → sender becomes the store's customer → dedup message ID
                → save media to R2 under the store's prefix → queue a job → 200
   │
   ▼
@@ -87,7 +87,7 @@ Sources are Meta's and Cloudflare's docs. Re-check anything that blocks a decisi
 | Models | `muse-spark-1.3` is recommended for new work: text, image, video, audio and PDF in; text out; 1,048,576-token context. Its audio input "isn't fully supported" and may be degraded | [models](https://dev.meta.ai/docs/models) |
 | Models | `*-contributor` IDs are cheaper because Meta may train on the content. Not for our data (D-09) | [pricing](https://dev.meta.ai/docs/pricing-rate-limits) |
 | Images | JPEG, PNG, GIF, WebP (no HEIC); up to 50 MB inline, 50 images per request; by URL, base64 data URL or file ID; only in user messages; about 1,300–1,500 tokens for a 1280 px image | [image understanding](https://dev.meta.ai/docs/image-understanding) |
-| Structured output | Responses: `text.format`; Chat Completions: `response_format` with `json_schema`. Decoding is constrained to the schema. With `strict: true`: every key required, `additionalProperties: false`, no root `anyOf`, no recursion. Works with image input | [structured output](https://dev.meta.ai/docs/structured-output) |
+| Structured output | Responses: `text.format`; Chat Completions: `response_format` with `json_schema`. Decoding is constrained to the schema. With `strict: true`: every key required, `additionalProperties: false`, no root `anyOf`, no recursion. Works with image input. Verified live Oct 30: `muse-spark-1.3` accepts an `anyOf` of object variants nested in an array inside the root object, and `["type", "null"]` (`docs/handoffs/2026-10-31-reading.md`) | [structured output](https://dev.meta.ai/docs/structured-output) |
 | Speech to text | `POST https://api.meta.ai/v1/asr/transcribe`, multipart (`request` JSON + `audio`); model `muse-voice-transcribe-1.0`; **WAV only: mono, 16-bit PCM, 16 or 24 kHz**; up to 32 MB and 10 min; `languageBias` hint; 25 languages including Spanish; turn-level timestamps; no confidence scores; SSE streaming option; the realtime WebSocket also takes raw PCM only | [speech to text](https://dev.meta.ai/docs/speech-to-text) |
 | Prices | Spark 1.3: $1.25 per million input tokens, $4.25 output, $0.15 cached input. Voice: $0.18 per audio hour. SAM 3.1: $2.50 per 1,000 images. Wonder: $4 / $20 | [pricing](https://dev.meta.ai/docs/pricing-rate-limits) |
 | Rate limits | Per team: Spark 3,000 RPM and 4M TPM; Voice: 256 concurrent streams | [pricing](https://dev.meta.ai/docs/pricing-rate-limits) |
@@ -99,7 +99,10 @@ Sources are Meta's and Cloudflare's docs. Re-check anything that blocks a decisi
 
 To confirm in T1 with real payloads (not checked against docs today):
 
-- How media is downloaded: media ID → URL → authorized GET, and how long the URL stays valid.
+- How media is downloaded. Checked against [Meta's media docs](https://developers.facebook.com/documentation/business-messaging/whatsapp/business-phone-numbers/media)
+  on Oct 30 (built in `src/integrations/whatsapp/media.ts`), not yet against a real webhook: `GET /<version>/<MEDIA_ID>?phone_number_id=<id>`
+  with the token returns `url`, `mime_type`, `sha256`, `file_size`; an authorized GET on `url` returns the bytes. The
+  URL lasts 5 minutes; webhook media IDs last 7 days; a failed download answers 404.
 - The temporary access token on the app dashboard expires after about a day; a system-user token doesn't.
 - How many recipient numbers a WhatsApp test number can message.
 
@@ -127,6 +130,9 @@ secrets. The expected names (T1 confirms them):
 | `SENDER_HASH_SALT` | Key for the HMAC that replaces phone numbers and message IDs of numbers that aren't members (message IDs embed the sender's phone number) |
 | `LINK_SIGNING_SECRET` | Signs the console's CSRF values; required, or the console answers 503 |
 
+Plain vars in `wrangler.jsonc`: `PUBLIC_BASE_URL` is the Worker's public origin, used for the privacy link in a
+customer's first message (blank: the link is left out).
+
 ## Part 1 as built
 
 The WhatsApp foundation: messages come in, are worked through in order per conversation, and are answered through an
@@ -142,27 +148,33 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
   dropped and only its type is logged.
 - Every event is saved before the 200. A transient failure answers 500, so Meta retries; a constraint violation
   answers 200 with an ID-only log.
-- A member's message is one batch: the conversation (one per store number and member), a pending media asset, the
-  inbound message (which is also its job) and `last_inbound_at_ms`. Every insert checks admission itself: the
-  membership is still active, the provider message ID isn't stored yet in this store, and the conversation has fewer
-  than 300 messages in the last hour. A message that isn't admitted leaves no row. A member deactivated before the
-  batch gets the unknown-sender path.
+- Anyone writing to the store's number is that store's customer (0004); memberships only matter for the console. A
+  message is one batch: the customer (one per store and phone, so the same phone in two stores is two customers),
+  the conversation (one per store number and customer), a pending media asset, the inbound message (which is also
+  its job) and `last_inbound_at_ms`. Every message and media insert checks admission itself: the provider message ID
+  isn't stored yet in this store, and the conversation has fewer than 300 messages in the last hour. A message that
+  isn't admitted leaves no message or media row. The phone is kept on the customer only to send replies, and never
+  logged.
 - Ordering uses the provider timestamp clamped to [received − 7 days, received + 5 minutes]. The 24-hour window uses
   our own receive time of a new message; a redelivery doesn't move it.
 - After the 200, each conversation with a new message gets a doorbell: a Queue message with only the store and
-  conversation IDs. D1 holds the work, and the cron sweep re-rings what a lost doorbell left.
-- A number that isn't a member gets one fixed reply and nothing of the store is read. Only keyed hashes
-  (`SENDER_HASH_SALT`) of its phone number and message ID are kept, at most 20 per sender, store and day, deleted
-  after 7 days. The notice is sent from the request, which alone holds the phone number, with up to 3 tries. Only a
-  notice that is being sent, was sent, or has an unknown outcome holds the sender's 24-hour slot; a later message
-  retries one that failed.
+  conversation IDs. D1 holds the work, and the cron sweep re-rings what a lost doorbell left. The logs trace each
+  doorbell by IDs: `doorbell_rung` when the queue accepted it, `doorbell_received` with its delivery attempt and the
+  time since it was sent (a warning past 30 s: no ring asks for more than 10 s, so the queue held it), and
+  `stranded_rung` when the sweep re-rang a conversation.
+- The unknown-sender path (one fixed reply, keyed hashes only) is retired: intake no longer calls it. Its tables,
+  repository method and the notice dispatch stay until the team agrees to remove them; the sweep still expires and
+  prunes rows written before 0004.
 - Delivery statuses only move a sent row's status forward. One that arrives before the send result is stored is
   kept for up to an hour under a hash of the message ID, and applied when the result is stored.
 
 ### Processing: one conversation at a time
 
 - **Lease.** A doorbell's consumer leases the conversation for 60 s by the database's clock and extends it before
-  each job. The lease ID is a fencing token: every write is one D1 batch whose guards (the lease is held, the job is
+  each job. Before each slow step of a reading (a voice note's transcription, the model call) the order reading
+  extends it again to the step's hard timeout plus 60 s (`TRANSCRIBE_MAX_MS`, `READING_MAX_MS` in
+  `src/domain/processing.ts`, also the adapters' default timeouts); an extension that finds the lease gone throws
+  `LeaseLostError`, so nothing slow or paid starts. The lease ID is a fencing token: every write is one D1 batch whose guards (the lease is held, the job is
   in the state the transition expects) fail the whole batch (rule 6). A stale consumer's writes are refused and it
   stops. A consumer that finds the lease busy re-rings in 3 s.
 - **Settle.** One statement counts the open jobs and lists them, oldest first by (ordering time, receive time, ID),
@@ -178,11 +190,60 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
   an honest reply in Spanish, as does a job whose last attempt died with its consumer. A photo or voice note without
   a usable media ID ends at once with its own reply.
 - **Media.** The consumer downloads a message's media and stores it in R2 at `stores/<store>/media/<asset>/<sha256>`,
-  an immutable key. D1 records the key only through a fenced write. The download is still a stub, so every photo and
-  voice note ends with "No pude descargar…" after its retries.
+  an immutable key. D1 records the key only through a fenced write. The download asks Graph for a fresh URL on every
+  attempt, then fetches the bytes (15 s per request, 16 MiB at most). The bytes must match the lookup's `file_size`
+  and `sha256` (hex or base64: Meta's docs don't name the encoding; a value that is neither isn't checked), or the
+  download is `incomplete`. This is what stops a cut-off voice note (#27, below). A failure, `incomplete` included,
+  takes the job's retries and ends with "No pude descargar…". `MediaStore.read` reads a stored object back, inside
+  the store's prefix only.
+- **Voice notes.** `transcribeVoiceNote` (`src/application/voice-note.ts`) reads a job's stored voice note, decodes
+  OGG/Opus to 16 kHz mono WAV in the consumer (A1: libopus Wasm from `opus-decoder`, extracted at build time, since
+  Workers can't compile Wasm at runtime; refused: over 10 minutes, a file that ends inside an Ogg page or a packet,
+  a missing page, an invalid Opus packet, or more than 240,000 audio packets, the most 10 minutes of 2.5 ms packets
+  can hold, checked while reading), and calls Muse Voice
+  Transcribe (90 s timeout, Spanish bias, one attempt). It throws on any failure, so a handler that calls it gets the
+  job's retries and then "no pude escuchar tu nota de voz". The order reading calls it (below). The decoder's
+  errors extend `UnreadableMediaError`: the same bytes fail the same way, so they aren't retried. Real WhatsApp voice
+  notes don't set the Ogg end-of-stream flag on their last page (#27, Nov 3: both real notes were refused while the
+  flag was required), so the decoder can't tell a note cut on a page boundary from a whole one and accepts a stream
+  that ends with the bytes on a page boundary. A cut like that is caught by the download's size and hash check.
 - **Handler.** `JobHandler` (`src/application/ports.ts`) is where the engine plugs in: it gets the job and
-  `isNewestOfBurst`, and returns replies already rendered plus optional `commits`. Today `placeholderHandler`
-  acknowledges a burst with one reply from its newest message.
+  `isNewestOfBurst`, and returns replies already rendered plus optional `commits`. With an engine wired in, the order
+  handler (`src/application/order-handler.ts`) runs; without one, `placeholderHandler` acknowledges a burst with one
+  reply from its newest message.
+- **Readback answers.** A reply button's ID is the operation key `confirm:<order>:v<version>` (or `correct`,
+  `cancel`; at most 256 characters), untrusted, and resolved by the engine only among the customer's own orders. The
+  same word typed alone ("confirmar", any case, with or without accents) answers the readback last queued to the
+  conversation (`conversations.last_readback_*`), only if it arrived after that readback was queued, and shares the
+  button's key, so the second of the two is a duplicate. An answer is its own step: it goes to `Engine.onCustomerAction` at its own job, after every earlier save.
+- **Burst reads.** Other messages are read together at the burst's newest job, or at the last job before an answer.
+  Earlier jobs complete with no reply. The reading's job loads the conversation's unread messages (`burst_reads`,
+  0005: done jobs, or itself; failed ones never; the last hour; all of them, or a loud failure above 300) and saves which ones it used in the same
+  batch as the engine's commits, guarded so a message is never used twice. A crash or lost lease before the save
+  leaves them unread for the retry; a message arriving during handling waits for its own reading. A readback is
+  remembered (and the name marked asked) only when its reply is written, so a typed word never answers a readback the
+  customer didn't get.
+- **Reading a burst (#17).** The reading's job asks the engine for perception's context (the open order's labelled
+  lines and the question asked last, gap a) and the store's catalog (gap b), through `OrderReadingSource`
+  (`src/application/order-reading.ts`, local until the contract has both). Each job becomes one message of the
+  burst, in order; photos and voice notes go through `BurstMediaResolver`. The default, `storedMediaResolver`,
+  reads a photo's bytes back from R2 (store from the lease) and passes them as image content, and transcribes a
+  voice note (`transcribeVoiceNote`) and passes the transcript as that message's text, so its evidence points at the
+  voice note. Voice notes are transcribed one at a time. One Muse Spark
+  call reads the burst; code matches lines by barcode, exact name or known alias, and `Engine.onBurst` gets the
+  reading and those matches only (the model's label picks are logged and dropped until the contract has them). A
+  reading that fails (spend cap, provider refusal or outage, output off the schema) throws `ReadingFailedError`:
+  the job retries and, after its last attempt, sends the failure reply; nothing is saved. A photo or voice note that
+  can't be read throws `BurstMediaUnreadableError` (every failure of the burst in it) before any model call: the
+  job retries, and on its last attempt, or at once when every failure is permanent (a broken or over-10-minute
+  note, a photo format the model doesn't take), the job completes with "Perdón, no pude escuchar tu nota de voz…" or
+  "Perdón, no pude leer tu foto…" (once per kind) and marks only those messages read. The rest of the burst stays
+  unread and is read with the customer's next message, so a resent note isn't read beside the old one. Replies come from
+  `replyForOutcome` (templates, claims, buttons). The reader is wired in `composition.ts` when an engine with those
+  reads exists and `MODEL_API_KEY` is set; otherwise a burst gets the placeholder.
+- **Customers.** `CustomerRepository` builds the channel-side commits the handler adds to the job's batch: the name
+  (saved once, first answer wins), that the name was asked (once), and the readback shown. Business records are the
+  engine's.
 - **Commits.** A `Commit` is the engine's guards and statements. `completeJob` runs them in the batch that completes
   the job, after the lease and job guards, so a stale writer gets `StaleWriteError` first. The facts, the job's
   completion and its replies save together or not at all; commits save even when a closing reply is withheld. A
@@ -233,6 +294,130 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
 - **Sweep, every minute.** Re-rings conversations with due jobs older than 30 s and no live lease, expires rows,
   settles claims that ran out, stops groups, marks closed windows, ends notices pending for over 15 minutes, deletes
   old unknown-sender records and early statuses, then sends up to 50 rows.
+- **The two-minute message.** In the same sweep, before the sends: a conversation whose oldest open message is more
+  than 2 minutes old (and under an hour), leased or not, with no outbox row written since that message arrived that
+  was sent or is still on its way (a failed or expired row, or one WhatsApp reported failed, doesn't count;
+  `unknown_delivery` does), gets "Recibimos tu mensaje, te respondemos en un momento." and an urgent Pendientes
+  item. A message that already has its notice, sent or not, isn't picked up again. One `INSERT … SELECT`
+  re-checks "still open, nothing written since" as it writes, and the dedupe key `slow_notice:<message>` is UNIQUE,
+  so overlapping sweeps or a sweep racing the answer queue it at most once, and never after the answer. The row has
+  no job group (its fate never stops the answer) and no claims (the claim check passes it as written). It expires
+  after 10 minutes and follows the 24-hour window like any row. With a minutely cron it is queued between 2 and 3
+  minutes in; the real answer follows when ready.
+- **Console notices (#18).** A staff tap goes through `runConsoleAction` (`src/application/console-actions.ts`):
+  the engine's `{ outcome, notices, commits }` is saved by `OutboxRepository.saveConsoleAction` as one guarded
+  batch: the commits' guards, a guard per notice conversation (it is the store's), the commits' statements, then
+  one row per notice part. A guard that doesn't hold rolls back all of it (the route says "No se pudo guardar").
+  Each notice is rendered from the replies templates with its claims (first pass before the save, second at
+  send) and goes to the customer's conversation in the session's store (the one they wrote in last); a customer
+  with none, or of another store, gets no row. The rows have no job: their group is the operation key within the
+  conversation (`operation_key`, migration 0014), so a row that ends unsent stops the action's later rows in that
+  conversation and nothing else. The dedupe key is `console_notice:<store>:<operation key>:<notice>:<part>`, so a
+  double tap queues one message. A row whose 24-hour window is closed is written as `waiting_window` and raises a
+  `notice_waiting_window` Pendientes item; it goes out if the customer writes before it expires (3 hours). The
+  route dispatches the conversation after the response; the sweep retries.
+
+### Replies and the claim check
+
+- `src/domain/replies.ts` renders every engine outcome and customer notice from a fixed Spanish template
+  (`OUTCOME_TEMPLATES`, `NOTICE_TEMPLATES`: a new kind fails typecheck until it has one). Numbers, names, prices
+  and states come from the outcome; customer words quoted back are flattened and capped at 60 characters, a
+  delivery place at 160 (`PLACE_QUOTE_MAX_CHARS`), so an address with its landmarks reads back whole.
+- Each reply carries its claims as `ClaimCheck`s: a check holds when any of its alternatives does ("ya está en la
+  lista" holds while the version is confirmado, preparando or listo). Order-line prices are pinned by the version
+  claim; there is no per-line price claim in the contract yet.
+- First pass (`src/application/replies.ts`), before the save: claims are read back from the outcome; an order
+  total counts only when it equals the sum of its lines (gap j proposal: per line, half up; unknown makes the
+  total unknown; unavailable and restricted lines left out; the delivery fee shown apart).
+- Second pass (`dispatch.ts`), right before the send, through `Deps.claimVerifier` (the engine's `verifyClaims`).
+  A check that fails, or no engine wired, sends the safe fixed reply instead, sets `claims_blocked_at_ms` on the
+  row, fails the reply's later parts and raises a Pendientes item. An engine error retries the row later. Claims
+  and buttons live on the row (migration 0006); a stored value that can't be read never holds.
+- Pendientes from outside the engine (gap c) go through the `Pendientes` port; today it only logs.
+- Customer questions (#47): a `question` reading's products are matched by code like order lines; the engine
+  answers `price`/`availability` with `answer` facts and `store_hours` with the proposed `store_hours` outcome
+  (contract "Proposed (#47)"). Price, stock and hours claims are checked twice like any other. An answer that says
+  "te confirmo" raises a `customer_question` Pendientes item from the order handler, IDs and counts only.
+- Reply buttons: up to three, IDs are operation keys (`confirm:<order>:v<version>`, `correct:…`, `cancel:…`,
+  `substitute:<order>:v<version>:<line>`, `remove:…`). `WhatsAppCloudChannel.sendButtons` sends Meta's
+  interactive reply-button shape, or plain text when the buttons don't fit. The readback's typed fallback is its
+  soft last line ("_También podés escribir: confirmar, corregir o cancelar._"); without buttons it is the plain
+  "Respondé Confirmar, Corregir o Cancelar." Typed words map to the same keys (`typedDecision`).
+- **Conversation rules (Oct 31; engine side proposed in contract.md "Proposed (conversation rules)").** Decided by
+  code in `order-handler.ts` (`src/domain/small-talk.ts`, `customer-name.ts`):
+  - Never silent: a job that closes a burst and would send nothing sends the pending question, "¿Qué más te
+    mando?" with an order open, or "¡A la orden! 🙌" (log `silent_reply_filled`).
+  - "1"/"2"/"3" alone is the button at that place on the last message queued to the conversation before it
+    arrived (`ButtonsShown.lastButtons`, read from `outbound_messages.buttons_json`); no buttons there: read.
+  - A typed yes (fixed list) is Confirmar only when the last message carried that readback version's Confirmar
+    button, sharing its operation key; otherwise it's read.
+  - A greeting, thanks or "ok" alone skips the model: the engine gets an empty reading and restates the step.
+    A greeting adds "¡Buenas, {name}! 👋"; under a readback that waits, the reply is "Para dejarlo listo, tocá
+    Confirmar ✅" with the readback's buttons; a thanks with nothing pending is "¡A la orden! 🙌". A yes word
+    while the engine waits on a question is read (it may answer it).
+  - A name is saved only when `nameFrom` accepts it and is told to the engine in the context, which completes a
+    Confirmar held for it. The engine asks the name at Confirmar, not while the order is built.
+  - "No me manden más" and similar (`asksToStop`) get "¿Pauso los mensajes? 🙏" with a `control:stop` button
+    that the gate treats as ALTO. ALTO itself is unchanged.
+  - A text message that failed every attempt hears "Se lo pasé a la tienda para que te ayuden 🙏" and raises a
+    `customer_handoff` Pendientes item first (`processor.ts`); a photo or voice note is asked once to resend.
+  - No reply promises a time: the handoff says "Se lo dejo anotado a {owner}, te escribe por aquí."
+
+### Delivery to a saved place (#29)
+
+- **Pins come from the webhook.** `payload.ts` reads a `type: "location"` message's latitude and longitude
+  (`parsePin`: numbers, or numeric strings, in range; anything else is dropped). The message stays kind `other`
+  (the CHECK rule on `inbound_messages.kind` can't change without a rebuild) and carries the pin in
+  `latitude_e6`/`longitude_e6`, INTEGER millionths of a degree (migration 0017; no floats in D1). The map's name and
+  address for the pin aren't stored.
+- **Reading.** A location job becomes a `location` burst message; the model is told "ubicacion compartida" and never
+  sees coordinates. Validation attaches the burst's last pin to a `fulfillment` observation; when the model gave none,
+  `withSharedPin` adds one (mode unknown). A burst of pins only skips the model.
+- **Saved places are ours** (`customer_places`, `D1CustomerPlaceRepository`). The handler reads the customer's newest
+  used place and passes it to the engine in the context (proposed `savedPlace`). The engine asks `same_place` with it,
+  never applies it: the reply echoes the place ("La vez pasada te lo llevamos a: …" or "nos mandaste tu ubicación")
+  with Sí / Otro lugar buttons (`place:…`, `otherplace:…`) and "Respondé Sí u Otro lugar.". A tap is its own step,
+  like a readback answer; a typed answer is read by perception.
+- **Saved on Confirmar only.** On `order_confirmed` for a delivery, the place is saved in the job's batch (one row
+  per order ID; an accepted saved place is marked used). Pickup and cancelled orders keep no place. Customer deletion
+  deletes the places and clears the pins on their messages.
+- **Fee:** shown only when the order's `fee` is above zero ("Envío: L X, aparte del total."). The pretend engine sets
+  it on every delivery from the store's setup (#40), `null` when the owner hasn't set one. The preparation card shows the place, a map link built from the
+  pin's numbers, and the fee when set.
+
+### Customer controls: first message, ALTO, handoff, deletion (#30)
+
+- `src/application/customer-gate.ts` runs ahead of the order handler (`OrderHandlerDeps.gate`, one call in
+  `createOrderHandler`) and, with no engine wired, ahead of the placeholder handler (`gatedHandler` in
+  `composition.ts`), so the controls work either way. Control words come from the typed text only, matched against the whole message in any
+  case or accent (`src/domain/customer-controls.ts`); a model's `stop` or `handoff` reading decides nothing.
+- First message: one bubble. A greeting line ("¡Buenas! 👋 Soy el asistente de *{store}* 🛒"), then the first
+  real reply as rendered, then an italic last line with ALTO and `PUBLIC_BASE_URL/privacidad` (left out when
+  unset). The reply keeps its claims, buttons, kind and burst flag, so both claim checks and the outbox rules are
+  unchanged. When that reply is the bare what-to-order question (no order yet), it becomes the welcome
+  ("Te tomo el pedido y te aviso cuando esté listo. ¿Qué te mando?") with two buttons, `intro:hours` (Horario)
+  and `intro:handoff` (Hablar con {owner}). Their taps are routed by ID, never by a model: `intro:handoff` is the
+  handoff control word in the gate, `intro:hours` sends a store-hours question to the engine in the order
+  handler. A job with no reply carries no introduction if a later job of its burst will answer; the burst's newest
+  job with no reply sends the welcome alone. `customers.introduced_at_ms` is set in the same batch, and only if
+  the reply is written. A first message that is itself a control word (ALTO, deletion, handoff) gets the greeting
+  in its answer's bubble, sent as a control answer so dispatch lets it through. The notice is `GET /privacidad`
+  (`interfaces/http/privacy.ts`).
+- ALTO sets `customers.stopped_at_ms` and marks the message and every unread one before it read. Dispatch fails
+  any row for a stopped customer unless its kind is `customer_control` (the direct answers to control words);
+  while stopped, a message gets one reminder per stop and nothing else. Only SEGUIR resumes.
+- "Quiero hablar con …" raises a `customer_handoff` Pendientes item and sends one fixed line, stopped or not.
+- Deletion, only on an explicit request ("borren mis datos"; never a question, never inferred): stops the
+  customer and sets `deletion_requested_at_ms`. The cron purge (`customer-deletion.ts`) runs after the
+  confirmation is sent (or 2 hours later): R2 objects under the customer's media prefixes first, then one D1 batch
+  that clears phone, name, message text, provider IDs, media references and sent bodies, fails unsent rows, sets
+  `deleted_at_ms` and writes `customer_tombstones (business_id, HMAC of the phone)`. A failure leaves D1 as it
+  was and the next minute retries. For 10 minutes after the purge, every sweep erases the prefixes again
+  (idempotent): a job that was already downloading a photo can still store it after the first erase, while no new
+  job can start once the batch has failed the pending ones. The customer row stays, empty, for sale and fiado
+  history. Intake refuses a message from a tombstoned sender sent at or before the purge (Meta's provider timestamp,
+  covered by the signature): every insert of the intake batch requires that no such tombstone exists, so a purge
+  that commits between intake's reads and its batch still wins (rule 6). A later message starts a new customer.
 
 ### The engine boundary and the console (dev only)
 
@@ -241,20 +426,73 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
 - `Runtime.engine` is null until the real engine is wired in. With `DEV_CONSOLE=1` (only the local simulator sets
   it) it is an in-memory pretend engine (`src/infrastructure/memory/`) seeded with synthetic orders. It follows the
   contract's version, operation-key and role rules but saves to memory and forgets on restart.
-- `/console/preparacion` renders the preparation list server-side for a 360 px screen and refreshes every 15 s.
-  Each button posts one action to `/console/acciones` with the version on screen and its own operation key; the
-  result redirects back with a notice when the tap was refused. Without a real engine the list answers 503.
+- **Pretend engine online** (`PRETEND_ENGINE=1`, a `vars` entry, blank by default; `DEV_CONSOLE` wins when both are
+  set). For a deployed demo before the real engine lands: the same pretend engine, with each store's state kept as
+  one JSON snapshot in `pretend_engine_state` (migration 0016), so the queue consumer and the console share it
+  across isolates. No orders are seeded; products, prices, "No hay"
+  marks, hours and the fee come from the store's setup (#40, below), read per store on every call. The console still needs login. Each call
+  loads the snapshot for the store in the lease or session, runs `MemoryEngine` on it, and returns the new snapshot
+  as a `Commit` guarded on the version it read (rule 6): it lands in the job's completion batch or the console
+  action's batch, or not at all. A lost race fails that batch with `PretendStateMovedError`; the job is deferred and
+  retried, and a staff tap shows "no se guardó". Remove the table with the pretend engine.
+- `/console/preparacion` (wireframe C1) renders the preparation list server-side for a 360 px screen as compact
+  cards (name; one chip: Listo, Cambió, minutes waited past `LATE_AFTER_MINUTES` (30), Nuevo or Preparando; product
+  count, how the order leaves, store time), orders to pack first, and refreshes every 15 s. A card opens
+  `/console/preparacion/<order>` (C2): the order is looked up in the session store's own `preparationList`, and the
+  ID from the address is used for nothing else, so another store's order isn't found. It shows the version, the
+  customer's change, each line with its tick and "No hay", the total, and Listo (Entregado once ready). Each button
+  posts one action to `/console/acciones` with the version on screen and its own operation key. A tap lands back
+  on its order (with a notice when refused or not saved), on the list after Listo or Entregado, or on the list
+  with "ya no está" when the order is gone. The customer messages a tap causes are saved with it (see "Console
+  notices" under the outbox). Without a real engine the list answers 503.
 - **Login** (`src/interfaces/http/console/auth.ts`, migration 0003). An invite is a 32-byte random code, stored as
   its SHA-256 hash, valid 15 minutes, one use, for one member. `GET /console/entrar?codigo=…` only shows it (a link
   preview can't use it up); the "Entrar" POST uses it and opens a session in one guarded batch, so two taps can't
   both win. The session cookie (`consola`, Path `/console`, HttpOnly, Secure, SameSite=Lax, 30 days) holds another
   random token, also stored hashed. Every request re-reads the session and requires an active membership;
-  `revokeSessions` sets `revoked_at_ms` (no route calls it yet: "Quitar" is #23). Every POST carries a CSRF
+  "Quitar" (`removeStaff`) deactivates the membership, expires unused invites and sets `revoked_at_ms` on every
+  session in one guarded batch (fails loudly when the person isn't staff of the store), so re-inviting can never
+  revive an old cookie. The name an owner types for a person lives on that store's membership (migration 0015);
+  the console never writes or shows the shared `users.display_name`, except an owner's own, which only the admin
+  scripts set. The top bar shows the member's own name by the same rule (`findSession`). Every POST carries a CSRF
   value, an HMAC of the session ID with `LINK_SIGNING_SECRET`; without that secret the console answers 503. The
   store and the actor always come from the session. Cross-site and oversized (> 16 KiB) form posts are refused.
 - **First login:** `npm run admin:invite -- --phone-number-id … --phone … --role owner|staff [--remote]` adds the
   person as a member if needed and prints a link. The raw code is only printed, never written to disk.
-- **Dev mode** (`DEV_CONSOLE=1`, local simulator only) skips login and CSRF with a fixed demo member.
+- **Dev mode** (`DEV_CONSOLE=1`, local simulator only) skips login and CSRF: it acts as the owner of the store on
+  `DEV_STORE_PHONE_NUMBER_ID`, or else a fixed demo staff member ("Rosa") of an empty demo store.
+- **Store setup (#40), a temporary stand-in for the Monday pilot.** Owner-only screens under `/console/tienda`, reached from Más
+  (`tienda.ts`): products (add, edit, "No hay" / "Sí hay", remove), a paste box that previews before saving
+  (`parsePasteBox` in `domain/store-setup.ts`; exact centavos, an unreadable price is listed, never guessed), hours
+  per day and the delivery fee. Stored in `store_products` and `store_setup_settings` (migration 0019) through
+  `D1StoreSetupRepository`, every query scoped by the session's store. The D1 pretend engine maps a product to
+  `names: [name]`, `aliases: other names`, `availability: "se_acabo"` when marked "No hay" (unmarked is unknown,
+  never "hay"); an ordered "No hay" product keeps `se_acabo` on its line, so the readback says "no nos queda" and
+  leaves it out of the total. The spec's catalog (`products`, `product_names`, `prices`, `availability_evidence`)
+  and spoken setup session live in the teammate's engine and replace these tables once ready. The dev console keeps
+  `DEMO_CATALOG`.
+- **Screens** live in `src/interfaces/http/console/`, one file each, rendered through the shared layout in
+  `layout.ts`: a top bar (title, a short subtitle, and who is logged in, "Nombre · Dueño/Empleado"), the notice,
+  and the tab bar (Pedidos, Anotar, Pendientes for the owner, Más). The owner's pages put the open Pendientes count
+  on its tab (`PendientesBoard.countOpen`; a failed read shows the page without it); staff pages never read it. One
+  stylesheet (`BASE_STYLE`) holds the shared look: cards, chips, section titles, 48 px buttons, no external fonts
+  or scripts. A new screen is a file that registers its routes, one line in `index.ts`, and a tab in `NAV` if it
+  needs one.
+- **Empleados** (`empleados.ts`, owner only): invite by phone (a new person becomes staff; an owner's number is
+  refused), "Código nuevo", the fiado permission, and "Quitar", which deactivates the membership, expires unused
+  invites and revokes every session. Only staff memberships of the session's store can be changed there, so an
+  owner can't lock themselves out; owners are managed with `admin:invite`. Inviting a removed person again
+  reactivates them with fiado off.
+- **Voice-note notice** (`bienvenida.ts`, migration 0008): until a member taps "Entendido", logging in shows that voice
+  notes are kept as the store's records.
+- **Console reader** (`src/application/console-reader.ts`, #26): `readConsoleInput(deps, member, { purpose, inputs })`
+  reads up to three pieces (typed text, a transcript, photos) as one burst. `report` uses the console prompt and
+  kinds; `order` (Pedido a mano) uses the order prompt with no open order and keeps only `customer_order`,
+  `fulfillment`, `customer_name` and `other`. The store is the member's. Photos (at most 5 MB, JPEG/PNG/GIF/WebP by
+  their bytes) are stored at `stores/<business>/console/<sha256>` before the call; text is capped at 2,000
+  characters; audio answers "not yet" until #27. It returns the reading, matches and stored media for display and
+  saves no observation. **Anotar** (`anotar.ts`, owner and staff) is its screen; its body limit runs before the
+  CSRF check reads the body.
 
 ### Known limits
 
@@ -264,7 +502,10 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
 - A dispatcher that dies mid-send holds back its conversation's later replies until the first sweep after its claim
   ends (about 90 s), and stops the rest of that group.
 - The shared "Tienda" account isn't designed yet: every login is one member with a phone number.
-- The media download is a stub. A stale writer can leave an unpublished R2 object behind, and nothing cleans those up.
+- The media download hasn't met a real webhook yet. A stale writer can leave an unpublished R2 object behind, and
+  nothing cleans those up.
+- A consumer that dies during a transcription holds its conversation for up to 150 s (the extended lease) before
+  the sweep can re-ring it, instead of 60 s.
 - Messages over a conversation's hourly cap are dropped and logged, not queued. A conversation that keeps receiving
   messages less than 3 s apart keeps waiting to settle.
 - The send order relies on D1 running one batch at a time. Subqueries inside updates, `UPDATE … FROM`, `RETURNING`,

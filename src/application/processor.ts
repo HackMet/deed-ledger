@@ -1,4 +1,4 @@
-import { COULD_NOT_OPEN_MEDIA, couldNotDownload, couldNotProcess } from "../domain/copy";
+import { COULD_NOT_OPEN_MEDIA, couldNotDownload, couldNotProcess, HANDED_TO_STORE } from "../domain/copy";
 import { FAILURE_REPLY_TTL_MS, OUTBOX_BODY_MAX_CHARS } from "../domain/outbox";
 import {
   attemptsExhausted,
@@ -12,6 +12,7 @@ import {
   secondsUntil,
   settleDelaySeconds,
 } from "../domain/processing";
+import { buttonExtras } from "../domain/replies";
 import { splitText } from "../domain/text";
 import { describeError, LeaseLostError, PermanentWriteError, StaleSnapshotError, StaleWriteError } from "./errors";
 import type { ConversationRef, Deps, Job, JobOutcome, Lease, OutboxDraft, ReplyDraft } from "./ports";
@@ -115,6 +116,7 @@ async function runJob(deps: Deps, lease: Lease, job: Job, newestOfBurst: boolean
 
   if (attemptsExhausted(job.attempts)) {
     // Its last attempt died with its consumer.
+    await handOverIfPromised(deps, lease, job, couldNotProcess(job.kind));
     await deps.jobs.abandonJob(lease, job.id, "attempts_exhausted", deps.clock.now(), failureReply(deps, job, couldNotProcess(job.kind)));
     deps.log.warn("job_failed", { ...fields, reason: "attempts_exhausted" });
     return { status: "failed" };
@@ -163,6 +165,7 @@ async function runJob(deps: Deps, lease: Lease, job: Job, newestOfBurst: boolean
     // which reads them again; a constraint violation fails the same way every time.
     deps.log.warn("job_commit_refused", { ...fields, reason: describeError(error) });
     if (error instanceof PermanentWriteError) {
+      await handOverIfPromised(deps, lease, job, couldNotProcess(job.kind));
       await deps.jobs.failJob(lease, job.id, "commit_rejected", deps.clock.now(), failureReply(deps, job, couldNotProcess(job.kind)));
       deps.log.warn("job_failed", { ...fields, attempts: attempt, reason: "commit_rejected" });
       return { status: "failed" };
@@ -188,6 +191,7 @@ async function failOrDefer(
 ): Promise<JobResult> {
   const now = deps.clock.now();
   if (attempt >= MAX_JOB_ATTEMPTS) {
+    await handOverIfPromised(deps, lease, job, failureCopy);
     await deps.jobs.failJob(lease, job.id, errorCode, now, failureReply(deps, job, failureCopy));
     deps.log.warn("job_failed", { ...ids(lease), inboundId: job.id, attempts: attempt, reason: errorCode });
     return { status: "failed" };
@@ -230,17 +234,44 @@ async function storeMedia(deps: Deps, lease: Lease, job: Job, assetId: string): 
 function toOutbox(deps: Deps, job: Job, replies: readonly ReplyDraft[]): OutboxDraft[] {
   const now = deps.clock.now();
   const maxChars = Math.min(deps.channel.maxTextChars, OUTBOX_BODY_MAX_CHARS);
-  return replies.flatMap((reply, n) =>
-    splitText(reply.body, maxChars).map((body, part) => ({
+  return replies.flatMap((reply, n) => {
+    // Room for the typed fallback, in case the buttons can't be shown and it goes as plain text.
+    const parts = splitText(reply.body, maxChars - fallbackRoom(reply));
+    // Every part carries the reply's claims; only the last carries its buttons.
+    return parts.map((body, part) => ({
       id: deps.ids.newId(),
-      kind: "reply",
+      kind: reply.kind ?? "reply",
       body,
       dedupeKey: `reply:${job.id}:${n}:${part}`,
       replyIndex: n,
       partIndex: part,
       expiresAtMs: now + reply.ttlMs,
-    })),
-  );
+      ...(reply.claims === undefined ? {} : { claims: reply.claims }),
+      ...(reply.buttons === undefined || part !== parts.length - 1 ? {} : { buttons: reply.buttons, ...buttonExtras(reply) }),
+    }));
+  });
+}
+
+/** The characters a plain-text send adds under the body: a newline and the typed fallback. */
+function fallbackRoom(reply: ReplyDraft): number {
+  return reply.buttons === undefined || reply.textFallback === undefined ? 0 : reply.textFallback.length + 1;
+}
+
+/**
+ * "Se lo pasé a la tienda" is only true if someone sees it: the failure that says it raises a
+ * Pendientes item first (a retry may raise it twice, never zero times; the item is keyed by the
+ * message). IDs only.
+ */
+async function handOverIfPromised(deps: Deps, lease: Lease, job: Job, body: string): Promise<void> {
+  if (body !== HANDED_TO_STORE) return;
+  const customer = await deps.customers.ofConversation(lease);
+  if (customer === null) return;
+  await deps.pendientes.raise(lease, {
+    kind: "customer_handoff",
+    conversationId: lease.conversationId,
+    customerId: customer.id,
+    inboundId: job.id,
+  });
 }
 
 function failureReply(deps: Deps, job: Job, body: string): OutboxDraft[] {

@@ -1,11 +1,13 @@
 import { Hono } from "hono";
 import { dispatchUnknownNotice } from "../../application/dispatch";
 import { describeError } from "../../application/errors";
+import { PRIVACY_PATH } from "../../domain/customer-controls";
 import { acceptEvents, type IntakeOutcome } from "../../application/intake";
 import type { Deps } from "../../application/ports";
 import type { Runtime } from "../../composition";
 import { consoleRoutes } from "./console";
 import type { HttpEnv } from "./env";
+import { privacyRoutes } from "./privacy";
 import { parseWebhookPayload } from "../../integrations/whatsapp/payload";
 import { verifyTokenMatches, verifyWebhookSignature } from "../../integrations/whatsapp/signature";
 
@@ -78,7 +80,17 @@ export function createHttpApp(makeRuntime: (env: Env) => Runtime) {
     return c.text("ok", 200);
   });
 
+  // The simulator's media uploads (`npm run chat` /foto, /audio). Not found outside the simulator.
+  app.post("/dev/sim-media", async (c) => {
+    const sim = c.get("runtime").simMedia;
+    if (sim === null) return c.text("Not found", 404);
+    const type = (c.req.header("content-type") ?? "").toLowerCase();
+    const id = await sim.upload(type, await c.req.arrayBuffer());
+    return id === null ? c.text("Unsupported media", 415) : c.json({ id });
+  });
+
   app.route("/console", consoleRoutes());
+  app.route(PRIVACY_PATH, privacyRoutes());
 
   app.notFound((c) => c.text("Not found", 404));
 
@@ -97,7 +109,10 @@ export function createHttpApp(makeRuntime: (env: Env) => Runtime) {
 async function afterIntake(deps: Deps, outcome: IntakeOutcome): Promise<void> {
   for (const conversation of outcome.conversations) {
     try {
+      const startedAt = deps.clock.now();
       await deps.doorbell.ring(conversation);
+      // The queue has it: with doorbell_received, this shows how long the queue held it.
+      deps.log.info("doorbell_rung", { ...conversation, latencyMs: deps.clock.now() - startedAt });
     } catch (error) {
       deps.log.error("doorbell_ring_failed", { ...conversation, reason: describeError(error) });
     }

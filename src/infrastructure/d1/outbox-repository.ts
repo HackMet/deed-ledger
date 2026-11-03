@@ -1,9 +1,13 @@
-import { ClaimLostError } from "../../application/errors";
+import { ClaimLostError, NoticeConversationMissingError, PermanentWriteError } from "../../application/errors";
 import type {
+  ButtonsShown,
+  Commit,
+  ConsoleNoticeDraft,
   ConversationRef,
   OutboxMaintenance,
   OutboxMessage,
   OutboxRepository,
+  QueuedConsoleNotice,
   Tenant,
 } from "../../application/ports";
 import {
@@ -13,6 +17,7 @@ import {
   UNKNOWN_SENDER_NOTICE_INTERVAL_MS,
   UNKNOWN_SENDER_RETENTION_MS,
 } from "../../domain/outbox";
+import { type ButtonExtras, buttonExtras, type ClaimCheck, type ReplyButton } from "../../domain/replies";
 import { DB_NOW_MS, type Guard, guardedBatch } from "./fence";
 
 /** The next send order: one more than any row's. D1 runs one batch at a time, and seq is UNIQUE. */
@@ -23,9 +28,16 @@ const unsettledEarlierInConversation = (row: string) => `EXISTS (SELECT 1 FROM o
   WHERE p.business_id = ${row}.business_id AND p.conversation_id = ${row}.conversation_id AND p.seq < ${row}.seq
     AND p.status IN ('pending', 'waiting_window', 'sending'))`;
 
-/** An earlier row of the same group (one job's replies) that ended unsent: the rest never go out. */
+/**
+ * Two rows in one group: one job's replies, or one console action's notices to one conversation
+ * (their operation key). Rows with neither (the slow notice) are in no group: NULL never equals.
+ */
+const sameGroup = (a: string, b: string) =>
+  `(${a}.job_id = ${b}.job_id OR (${a}.operation_key = ${b}.operation_key AND ${a}.conversation_id = ${b}.conversation_id))`;
+
+/** An earlier row of the same group that ended unsent: the rest never go out. */
 const unsentEarlierInGroup = (row: string) => `EXISTS (SELECT 1 FROM outbound_messages p
-  WHERE p.business_id = ${row}.business_id AND p.job_id = ${row}.job_id AND p.seq < ${row}.seq
+  WHERE p.business_id = ${row}.business_id AND ${sameGroup("p", row)} AND p.seq < ${row}.seq
     AND p.status IN ('failed', 'expired', 'unknown_delivery'))`;
 
 /** The row is still being sent under this claim: what markSent and every settle require. */
@@ -47,6 +59,8 @@ interface OutboxRow {
   body_text: string;
   attempts: number;
   expires_at_ms: number;
+  claims_json: string | null;
+  buttons_json: string | null;
 }
 
 const COLUMN_NAMES = [
@@ -59,6 +73,8 @@ const COLUMN_NAMES = [
   "body_text",
   "attempts",
   "expires_at_ms",
+  "claims_json",
+  "buttons_json",
 ];
 const COLUMNS = COLUMN_NAMES.join(", ");
 
@@ -72,7 +88,93 @@ const toMessage = (row: OutboxRow): OutboxMessage => ({
   body: row.body_text,
   attempts: row.attempts,
   expiresAtMs: row.expires_at_ms,
+  ...(row.claims_json === null ? {} : { claims: readClaims(row.claims_json) }),
+  ...(row.buttons_json === null ? {} : readButtonSet(row.buttons_json)),
 });
+
+/** A check that never holds: what stored claims we can't read amount to. */
+const UNREADABLE_CLAIMS: readonly ClaimCheck[] = [{ anyOf: [] }];
+
+function readClaims(json: string): readonly ClaimCheck[] {
+  try {
+    const value: unknown = JSON.parse(json);
+    const valid =
+      Array.isArray(value) &&
+      value.every(
+        (check: unknown) =>
+          typeof check === "object" &&
+          check !== null &&
+          Array.isArray((check as { anyOf?: unknown }).anyOf) &&
+          (check as { anyOf: unknown[] }).anyOf.every(
+            (claim) => typeof claim === "object" && claim !== null && typeof (claim as { type?: unknown }).type === "string",
+          ),
+      );
+    return valid ? (value as ClaimCheck[]) : UNREADABLE_CLAIMS;
+  } catch {
+    return UNREADABLE_CLAIMS;
+  }
+}
+
+/**
+ * buttons_json: the buttons as a JSON array; with a footer or a text fallback, an object
+ * `{ "buttons": [...], "footer": "...", "textFallback": "..." }` (Nov 3). Null without buttons.
+ */
+export function buttonsJson(row: { readonly buttons?: readonly ReplyButton[] } & ButtonExtras): string | null {
+  if (row.buttons === undefined || row.buttons.length === 0) return null;
+  const extras = buttonExtras(row);
+  return Object.keys(extras).length === 0 ? JSON.stringify(row.buttons) : JSON.stringify({ buttons: row.buttons, ...extras });
+}
+
+type ButtonSet = { readonly buttons: readonly ReplyButton[] } & ButtonExtras;
+
+/**
+ * buttons_json read back, in either shape. Buttons we can't read are dropped, with what goes with
+ * them; the body then goes as plain text with its text fallback, when one was stored.
+ */
+export function readButtonSet(json: string): ButtonSet {
+  try {
+    const value: unknown = JSON.parse(json);
+    if (Array.isArray(value)) return { buttons: validButtons(value) };
+    if (typeof value !== "object" || value === null) return { buttons: [] };
+    const set = value as { buttons?: unknown; footer?: unknown; textFallback?: unknown };
+    const buttons = Array.isArray(set.buttons) ? validButtons(set.buttons) : [];
+    const textFallback = typeof set.textFallback === "string" ? { textFallback: set.textFallback } : {};
+    if (buttons.length === 0) return { buttons, ...textFallback };
+    return { buttons, ...(typeof set.footer === "string" ? { footer: set.footer } : {}), ...textFallback };
+  } catch {
+    return { buttons: [] };
+  }
+}
+
+function validButtons(value: readonly unknown[]): readonly ReplyButton[] {
+  const valid = value.every(
+    (b: unknown) =>
+      typeof b === "object" && b !== null && typeof (b as { id?: unknown }).id === "string" && typeof (b as { title?: unknown }).title === "string",
+  );
+  return valid ? (value as ReplyButton[]) : [];
+}
+
+/**
+ * The buttons on the last message queued to a conversation before a time (#7 typed numbers, typed
+ * yes): the newest row that wasn't left unsent, if it carried buttons. The slow notice doesn't
+ * count: it's queued after the customer wrote. Scoped by store and conversation.
+ */
+export class D1ButtonsShown implements ButtonsShown {
+  constructor(private readonly db: D1Database) {}
+
+  async lastButtons(conversation: ConversationRef, beforeMs: number): Promise<readonly ReplyButton[]> {
+    const row = await this.db
+      .prepare(
+        `SELECT buttons_json FROM outbound_messages
+         WHERE business_id = ? AND conversation_id = ? AND created_at_ms < ?
+           AND kind <> 'slow_notice' AND status NOT IN ('failed', 'expired')
+         ORDER BY seq DESC LIMIT 1`,
+      )
+      .bind(conversation.businessId, conversation.conversationId, beforeMs)
+      .first<{ buttons_json: string | null }>();
+    return row?.buttons_json == null ? [] : readButtonSet(row.buttons_json).buttons;
+  }
+}
 
 export class D1OutboxRepository implements OutboxRepository {
   constructor(private readonly db: D1Database) {}
@@ -159,16 +261,15 @@ export class D1OutboxRepository implements OutboxRepository {
     return row?.at ?? null;
   }
 
-  async memberPhone(tenant: Tenant, conversationId: string): Promise<string | null> {
+  async customerPhone(tenant: Tenant, conversationId: string): Promise<string | null> {
     const row = await this.db
       .prepare(
-        `SELECT u.phone FROM conversations c
-         JOIN memberships m ON m.business_id = c.business_id AND m.user_id = c.user_id
-         JOIN users u ON u.id = c.user_id
-         WHERE c.business_id = ? AND c.id = ? AND m.active = 1`,
+        `SELECT cu.phone FROM conversations c
+         JOIN customers cu ON cu.business_id = c.business_id AND cu.id = c.customer_id
+         WHERE c.business_id = ? AND c.id = ?`,
       )
       .bind(tenant.businessId, conversationId)
-      .first<{ phone: string }>();
+      .first<{ phone: string | null }>();
     return row?.phone ?? null;
   }
 
@@ -257,6 +358,28 @@ export class D1OutboxRepository implements OutboxRepository {
     );
   }
 
+  async markClaimsBlocked(tenant: Tenant, outboxId: string, claimId: string, nowMs: number): Promise<boolean> {
+    const blocked = this.db
+      .prepare(
+        `UPDATE outbound_messages SET claims_blocked_at_ms = ?, updated_at_ms = ?
+         WHERE business_id = ? AND id = ? AND status = 'sending' AND claim_id = ?`,
+      )
+      .bind(nowMs, nowMs, tenant.businessId, outboxId, claimId);
+    // The reply's later parts carry the same claims: none of them goes out. Other replies of the
+    // job have claims of their own and are checked on their own.
+    const restOfReply = this.db
+      .prepare(
+        `UPDATE outbound_messages SET status = 'failed', last_error = 'claims_blocked_in_reply', updated_at_ms = ?
+         WHERE business_id = ? AND status IN ('pending', 'waiting_window')
+           AND EXISTS (SELECT 1 FROM outbound_messages b
+                       WHERE b.business_id = outbound_messages.business_id AND b.id = ?
+                         AND ${sameGroup("b", "outbound_messages")} AND b.reply_index = outbound_messages.reply_index
+                         AND b.seq < outbound_messages.seq)`,
+      )
+      .bind(nowMs, tenant.businessId, outboxId);
+    return this.whileClaimed(claimHeld(tenant, outboxId, claimId), [blocked, restOfReply]);
+  }
+
   async maintain(nowMs: number): Promise<OutboxMaintenance> {
     const results = await this.db.batch([
       // Past their expiry: never sent.
@@ -321,6 +444,97 @@ export class D1OutboxRepository implements OutboxRepository {
     };
   }
 
+  async conversationOfCustomer(tenant: Tenant, customerId: string): Promise<string | null> {
+    const row = await this.db
+      .prepare(
+        `SELECT id FROM conversations WHERE business_id = ? AND customer_id = ?
+         ORDER BY COALESCE(last_inbound_at_ms, 0) DESC, created_at_ms DESC, id LIMIT 1`,
+      )
+      .bind(tenant.businessId, customerId)
+      .first<{ id: string }>();
+    return row?.id ?? null;
+  }
+
+  async saveConsoleAction(
+    tenant: Tenant,
+    operationKey: string,
+    commits: readonly Commit[],
+    notices: readonly ConsoleNoticeDraft[],
+    nowMs: number,
+  ): Promise<QueuedConsoleNotice[]> {
+    // As completeJob: a post guard nobody runs would save a fact nobody checked.
+    if (commits.some((commit) => (commit.post?.length ?? 0) > 0)) {
+      throw new PermanentWriteError("post guards are not supported yet");
+    }
+    const conversations = [...new Set(notices.map((notice) => notice.conversationId))];
+    // The engine's guards first, so a refused decision reports the engine's own error.
+    const guards: Guard[] = [
+      ...commits.flatMap((commit) => commit.guards),
+      ...conversations.map((conversationId) => conversationOfStore(tenant, conversationId)),
+    ];
+    const commitStatements = commits.flatMap((commit) => commit.statements);
+    const results = await guardedBatch(this.db, guards, [
+      ...commitStatements,
+      ...notices.map((notice) => this.noticeInsert(tenant, operationKey, notice, nowMs)),
+    ]);
+    return results.slice(commitStatements.length).flatMap((result, n) => {
+      const row = (result.results as { id: string; conversation_id: string; status: string }[])[0];
+      const notice = notices[n]!;
+      if (row === undefined) return [];
+      return [
+        {
+          outboxId: row.id,
+          conversationId: row.conversation_id,
+          replyIndex: notice.replyIndex,
+          partIndex: notice.partIndex,
+          status: row.status === "waiting_window" ? "waiting_window" : "pending",
+        } satisfies QueuedConsoleNotice,
+      ];
+    });
+  }
+
+  /**
+   * A notice row: no job, grouped by the operation key, in send order after everything already
+   * written to the conversation. Written as waiting_window when the 24-hour window is closed, so
+   * it goes out when the customer writes again (as maintain would mark it anyway).
+   */
+  private noticeInsert(
+    tenant: Tenant,
+    operationKey: string,
+    notice: ConsoleNoticeDraft,
+    nowMs: number,
+  ): D1PreparedStatement {
+    return this.db
+      .prepare(
+        `INSERT INTO outbound_messages
+           (id, business_id, channel_account_id, conversation_id, seq, job_id, operation_key, reply_index, part_index,
+            kind, body_text, dedupe_key, status, expires_at_ms, created_at_ms, updated_at_ms, claims_json, buttons_json)
+         SELECT ?, c.business_id, c.channel_account_id, c.id, ${NEXT_OUTBOX_SEQ}, NULL, ?, ?, ?, ?, ?, ?,
+                CASE WHEN COALESCE(c.last_inbound_at_ms, 0) > ? THEN 'pending' ELSE 'waiting_window' END,
+                ?, ?, ?, ?, ?
+         FROM conversations c WHERE c.business_id = ? AND c.id = ?
+         ON CONFLICT (dedupe_key) DO NOTHING
+         RETURNING id, conversation_id, status`,
+      )
+      .bind(
+        notice.id,
+        operationKey,
+        notice.replyIndex,
+        notice.partIndex,
+        notice.kind,
+        notice.body,
+        notice.dedupeKey,
+        nowMs - CUSTOMER_SERVICE_WINDOW_MS,
+        notice.expiresAtMs,
+        nowMs,
+        nowMs,
+        notice.claims === undefined || notice.claims.length === 0 ? null : JSON.stringify(notice.claims),
+        buttonsJson(notice),
+        tenant.businessId,
+        notice.conversationId,
+      );
+  }
+
   /**
    * Ends a claim with the given column updates. Only the claim holder can: false, and nothing
    * written, when the claim was lost. A row that ended unsent stops the rest of its group.
@@ -368,14 +582,24 @@ export class D1OutboxRepository implements OutboxRepository {
     const scope =
       of === undefined
         ? ""
-        : "AND business_id = ? AND job_id = (SELECT job_id FROM outbound_messages WHERE business_id = ? AND id = ?)";
+        : `AND business_id = ? AND EXISTS (SELECT 1 FROM outbound_messages g
+                                           WHERE g.business_id = ? AND g.id = ? AND ${sameGroup("g", "outbound_messages")})`;
     const scopeParams = of === undefined ? [] : [of.tenant.businessId, of.tenant.businessId, of.outboxId];
     return this.db
       .prepare(
         `UPDATE outbound_messages SET status = 'failed', last_error = 'predecessor_not_sent', updated_at_ms = ?
-         WHERE job_id IS NOT NULL AND status IN ('pending', 'waiting_window') ${scope}
+         WHERE (job_id IS NOT NULL OR operation_key IS NOT NULL) AND status IN ('pending', 'waiting_window') ${scope}
            AND ${unsentEarlierInGroup("outbound_messages")}`,
       )
       .bind(nowMs, ...scopeParams);
   }
+}
+
+/** The notice's conversation is the store's: otherwise its insert would silently write nothing. */
+function conversationOfStore(tenant: Tenant, conversationId: string): Guard {
+  return {
+    holdsSql: `SELECT 1 FROM conversations WHERE business_id = ? AND id = ?`,
+    params: [tenant.businessId, conversationId],
+    error: () => new NoticeConversationMissingError(),
+  };
 }

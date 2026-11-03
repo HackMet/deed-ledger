@@ -13,11 +13,15 @@
     "cf-typegen": "wrangler types",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "simulate": "node scripts/simulate.mjs",
+    "chat": "node scripts/chat.mjs",
     "admin:create-store": "node scripts/admin-create-store.mjs",
-    "admin:invite": "node scripts/admin-invite.mjs"
+    "admin:invite": "node scripts/admin-invite.mjs",
+    "qa": "node scripts/qa.mjs",
+    "eval": "node scripts/eval.mjs"
   },
   "dependencies": {
-    "hono": "^4.13.14"
+    "hono": "^4.13.14",
+    "opus-decoder": "0.7.12"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "^1.4.9",

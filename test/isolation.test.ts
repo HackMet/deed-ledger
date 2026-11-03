@@ -1,8 +1,8 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
-import { RECEIVED_PLACEHOLDER, UNKNOWN_SENDER_NOTICE } from "../src/domain/copy";
+import { RECEIVED_PLACEHOLDER } from "../src/domain/copy";
 import { harness, rows } from "./helpers/harness";
-import { newPhone, seedStore } from "./helpers/seed";
+import { newPhone, seedIntroducedCustomer, seedStore } from "./helpers/seed";
 import { imageMessage, textMessage, wamid, webhook } from "./helpers/whatsapp";
 
 const T0 = 1_793_196_000;
@@ -13,6 +13,8 @@ describe("two stores", () => {
     const shared = newPhone();
     const a = await seedStore({ name: "Tienda A", members: [{ phone: shared, role: "owner" }] });
     const b = await seedStore({ name: "Tienda B", members: [{ phone: shared, role: "staff" }] });
+    // A returning customer, already introduced (#30): these checks count replies.
+    for (const store of [a, b]) await seedIntroducedCustomer(store, shared);
 
     await h.post(webhook(a.phoneNumberId, { messages: [imageMessage({ from: shared, id: wamid(), timestampS: T0, mediaId: "m-a", caption: "para A" })] }));
     await h.post(webhook(b.phoneNumberId, { messages: [imageMessage({ from: shared, id: wamid(), timestampS: T0, mediaId: "m-b", caption: "para B" })] }));
@@ -76,7 +78,7 @@ describe("two stores", () => {
     });
     expect(await h.deps.jobs.hasArrivalsAfter(guessed, 0)).toBe(false);
     expect(await h.deps.jobs.claimLease(guessed, "lease-x", 60_000)).toBe("missing");
-    expect(await h.deps.outbox.memberPhone({ businessId: a.businessId }, conversationB!.id)).toBeNull();
+    expect(await h.deps.outbox.customerPhone({ businessId: a.businessId }, conversationB!.id)).toBeNull();
     expect(await h.deps.outbox.listDispatchable(h.clock.now(), 10, guessed)).toEqual([]);
   });
 
@@ -109,28 +111,61 @@ describe("two stores", () => {
         .run(),
     ).rejects.toThrow(/CHECK/);
 
-    // A conversation between store A's number and someone who isn't a member of store A.
+    // A conversation between store A's number and store B's customer.
+    const [customerB] = await rows<{ id: string }>(`SELECT id FROM customers WHERE business_id = ?1`, b.businessId);
     await expect(
       env.DB.prepare(
-        `INSERT INTO conversations (id, business_id, channel_account_id, user_id, created_at_ms)
+        `INSERT INTO conversations (id, business_id, channel_account_id, customer_id, created_at_ms)
          VALUES (?1, ?2, ?3, ?4, 0)`,
       )
-        .bind(crypto.randomUUID(), a.businessId, a.channelAccountId, b.members[0]!.userId)
+        .bind(crypto.randomUUID(), a.businessId, a.channelAccountId, customerB!.id)
         .run(),
     ).rejects.toThrow(/FOREIGN KEY/);
   });
 
-  it("treat a member of store B writing to store A's number as unknown to A", async () => {
+  it("keep their customers apart: one phone is a separate customer of each store, and reads never cross", async () => {
     const h = harness();
-    const bOwner = newPhone();
+    const shared = newPhone();
     const a = await seedStore({ members: [{ phone: newPhone(), role: "owner" }] });
-    const b = await seedStore({ members: [{ phone: bOwner, role: "owner" }] });
-    await h.post(webhook(a.phoneNumberId, { messages: [textMessage({ from: bOwner, id: wamid(), timestampS: T0, body: "Hola" })] }));
+    // A member of store B writes to store A: to A, they are simply a customer.
+    const b = await seedStore({ members: [{ phone: shared, role: "owner" }] });
+    // A returning customer, already introduced (#30): these checks count replies.
+    for (const store of [a, b]) await seedIntroducedCustomer(store, shared);
+    for (const store of [a, b]) {
+      await h.post(webhook(store.phoneNumberId, { messages: [textMessage({ from: shared, id: wamid(), timestampS: T0, body: "Hola" })] }));
+    }
+    const of = async (businessId: string) => {
+      const [row] = await rows<{ conversation_id: string; customer_id: string }>(
+        `SELECT c.id AS conversation_id, c.customer_id FROM conversations c
+         JOIN customers cu ON cu.business_id = c.business_id AND cu.id = c.customer_id
+         WHERE c.business_id = ?1 AND cu.phone = ?2`,
+        businessId,
+        shared,
+      );
+      return row!;
+    };
+    const inA = await of(a.businessId);
+    const inB = await of(b.businessId);
+    expect(inA.customer_id).not.toBe(inB.customer_id);
+    expect(inA.conversation_id).not.toBe(inB.conversation_id);
 
-    expect(h.sentTo(bOwner)).toEqual([UNKNOWN_SENDER_NOTICE]);
-    expect(h.channel.sent[0]?.fromPhoneNumberId).toBe(a.phoneNumberId);
-    expect(await rows(`SELECT id FROM inbound_messages WHERE business_id IN (?1, ?2)`, a.businessId, b.businessId)).toEqual([]);
-    expect(await rows(`SELECT id FROM conversations WHERE business_id IN (?1, ?2)`, a.businessId, b.businessId)).toEqual([]);
-    expect(h.doorbell.rings).toEqual([]);
+    // Store A's scope never reads store B's conversation or customer, and the other way round.
+    expect(await h.deps.customers.ofConversation({ businessId: a.businessId, conversationId: inB.conversation_id })).toBeNull();
+    expect(await h.deps.customers.ofConversation({ businessId: b.businessId, conversationId: inA.conversation_id })).toBeNull();
+    expect(await h.deps.outbox.customerPhone({ businessId: a.businessId }, inB.conversation_id)).toBeNull();
+    expect(await h.deps.outbox.customerPhone({ businessId: a.businessId }, inA.conversation_id)).toBe(shared);
+    expect((await h.deps.customers.ofConversation({ businessId: a.businessId, conversationId: inA.conversation_id }))?.id).toBe(
+      inA.customer_id,
+    );
+
+    // Each store's replies go to its own conversation, from its own number.
+    h.clock.advance(4_000);
+    await h.deliver();
+    expect(h.channel.sent.map((sent) => [sent.fromPhoneNumberId, sent.toPhone]).sort()).toEqual(
+      [
+        [a.phoneNumberId, shared],
+        [b.phoneNumberId, shared],
+      ].sort(),
+    );
   });
 });

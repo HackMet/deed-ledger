@@ -55,9 +55,20 @@ export class D1ReceiptDrafts implements ReceiptDrafts {
     };
   }
 
+  /**
+   * The store member writing in this conversation: conversations belong to customers (0004), so the
+   * member is found by the customer's WhatsApp number among this store's active memberships. Null
+   * when the writer isn't one of the store's members.
+   */
   async actorOf(lease: Lease): Promise<string | null> {
     const row = await this.db
-      .prepare(`SELECT user_id FROM conversations WHERE business_id = ? AND id = ?`)
+      .prepare(
+        `SELECT m.user_id FROM conversations c
+         JOIN customers cu ON cu.business_id = c.business_id AND cu.id = c.customer_id
+         JOIN users u ON u.phone = cu.phone
+         JOIN memberships m ON m.business_id = c.business_id AND m.user_id = u.id AND m.active = 1
+         WHERE c.business_id = ? AND c.id = ?`,
+      )
       .bind(lease.businessId, lease.conversationId)
       .first<{ user_id: string }>();
     return row?.user_id ?? null;
