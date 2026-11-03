@@ -30,6 +30,10 @@ const OPTIONS: readonly Option[] = [
   { label: "Pedido a mano", hint: "Pedidos que te llegan a otro WhatsApp.", href: null, ownerOnly: false },
   { label: "Empleados", hint: "Invitar, permisos y quitar.", href: "/console/empleados", ownerOnly: true },
   { label: "Preparar la tienda", hint: "Productos, precios, horario y envío.", href: "/console/tienda", ownerOnly: true },
+  // K6 and K14: staff propose prices for the owner to confirm; the business info and invoices are the owner's.
+  { label: "Precios", hint: "Proponer y confirmar precios.", href: "/console/productos", ownerOnly: false },
+  { label: "Datos del negocio", hint: "Nombre, horario, dirección y zonas.", href: "/console/negocio", ownerOnly: true },
+  { label: "Facturas", hint: "Subir y aprobar facturas de proveedores.", href: "/console/facturas", ownerOnly: true },
   { label: "Cierre del día", hint: "Cuadrar la caja al cerrar.", href: null, ownerOnly: false },
   { label: "Aviso de privacidad", hint: "Lo que ven los clientes.", href: PRIVACY_PATH, ownerOnly: false },
 ];

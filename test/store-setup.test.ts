@@ -342,13 +342,21 @@ describe("the Tienda screens", () => {
   it("is owner only: staff get no link and can't open or change anything", async () => {
     const h = harness({ env: pretendEnv() });
     const owner = await ownerSession(h);
-    expect(await owner.get("/console/mas")).toContain('href="/console/tienda"');
+    const ownerMas = await owner.get("/console/mas");
+    for (const href of ["/console/tienda", "/console/productos", "/console/negocio", "/console/facturas"]) {
+      expect(ownerMas).toContain(`href="${href}"`);
+    }
     await owner.post("/console/tienda/agregar", { nombre: "Arroz", precio: "18" });
     const [product] = await productsOf(owner.store.businessId);
 
     const staffCookie = await login(h, owner.store.businessId, owner.store.members[1]!.userId);
     const csrf = await csrfFor(h, staffCookie);
-    expect(await (await send(h, "/console/mas", { cookie: staffCookie })).text()).not.toContain('href="/console/tienda"');
+    const staffMas = await (await send(h, "/console/mas", { cookie: staffCookie })).text();
+    expect(staffMas).not.toContain('href="/console/tienda"');
+    // K6 and K14: staff may propose prices, but the business info and invoices are the owner's.
+    expect(staffMas).toContain('href="/console/productos"');
+    expect(staffMas).not.toContain('href="/console/negocio"');
+    expect(staffMas).not.toContain('href="/console/facturas"');
     for (const path of ["/console/tienda", "/console/tienda/horario", "/console/tienda/pegar", `/console/tienda/editar?producto=${product!.id}`]) {
       expect((await send(h, path, { cookie: staffCookie })).status, path).toBe(403);
     }
