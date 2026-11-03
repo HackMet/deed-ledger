@@ -422,7 +422,7 @@ export function renderNotice(notice: CustomerNotice["notice"]): RenderedReply {
     // Proposed (K12, K13), pending Angel's OK on the copy. The contract has no claim for a reviewed
     // change, so those two claim nothing; the dispatch claims en_camino.
     case "change_approved":
-      return reply("notice_change_approved", "La tienda aceptó tu cambio. Tu pedido ya quedó actualizado ✅");
+      return reply("notice_change_approved", "Tu cambio fue aprobado. Tu pedido ya quedó actualizado ✅");
     case "change_declined":
       return reply("notice_change_declined", `No pudimos hacer el cambio: ${notice.reason}. Tu pedido sigue como estaba.`);
     case "order_dispatched":

@@ -12,7 +12,10 @@
  */
 import { type Context, type Hono } from "hono";
 import { html } from "hono/html";
+import { type ConsoleActionResult, runConsoleAction } from "../../../application/console-actions";
+import { dispatchOutbox } from "../../../application/dispatch";
 import { staffKey } from "../../../application/engine/order-engine";
+import { describeError } from "../../../application/errors";
 import {
   type Courier,
   D1OrderTrail,
@@ -56,6 +59,7 @@ const REVIEW_NOTICES = {
   estado: "Ese cambio ya no está pendiente. La página ya está al día.",
   falta: "Ese cambio no está en la lista.",
   permiso: "Eso no se puede desde tu cuenta.",
+  guardar: "No se pudo guardar. La página ya está al día; probá otra vez.",
 } as const;
 type ReviewNotice = keyof typeof REVIEW_NOTICES;
 
@@ -67,6 +71,7 @@ const STEP_NOTICES = {
   paso: "Ese pedido ya cambió. La página ya está al día.",
   sinpedido: "Ese pedido no está en la lista.",
   permiso: "Eso no se puede desde tu cuenta.",
+  guardar: "No se pudo guardar. La página ya está al día; probá otra vez.",
 } as const;
 type StepNotice = keyof typeof STEP_NOTICES;
 
@@ -112,7 +117,7 @@ export function pedidosScreen(app: Hono<ConsoleEnv>) {
       return c.text("Bad request", 400);
     }
 
-    const { engine, deps } = c.get("runtime");
+    const { engine } = c.get("runtime");
     if (engine === null) return c.html(page("Pedidos", html`<p class="empty">La lista de pedidos no está lista todavía.</p>`, true), 503);
     const member = memberContext(c);
     const action =
@@ -124,10 +129,8 @@ export function pedidosScreen(app: Hono<ConsoleEnv>) {
       actor: { type: "member", memberId: member.memberId, role: member.role },
       action,
     };
-    // PENDING: the commits run where every console action's do (saveConsoleAction, #63).
-    const { outcome } = await engine.onConsoleAction(member, envelope);
-    deps.log.info("console_action", { businessId: member.businessId, outcome: outcome.type });
-    return back(stepNoticeFor(outcome, paso));
+    const outcome = await saveAndSend(c, envelope);
+    return back(outcome === null ? "guardar" : stepNoticeFor(outcome, paso));
   });
 
   app.post("/pedidos/:orderId/revision", async (c) => {
@@ -141,7 +144,7 @@ export function pedidosScreen(app: Hono<ConsoleEnv>) {
     const reason = reviewReason(form["motivo"]);
     if (reason === null) return back("motivo");
 
-    const { engine, deps } = c.get("runtime");
+    const { engine } = c.get("runtime");
     if (engine === null) return c.html(page("Pedidos", html`<p class="empty">La lista de pedidos no está lista todavía.</p>`, true), 503);
     const member = memberContext(c);
     const envelope: ActionEnvelope<ConsoleAction> = {
@@ -149,11 +152,34 @@ export function pedidosScreen(app: Hono<ConsoleEnv>) {
       actor: { type: "member", memberId: member.memberId, role: member.role },
       action: { type: "review_change", changeRequestId: requestId, decision, reason },
     };
-    // PENDING: the commits run where every console action's do (saveConsoleAction, #63).
-    const { outcome } = await engine.onConsoleAction(member, envelope);
-    deps.log.info("console_action", { businessId: member.businessId, outcome: outcome.type });
-    return back(reviewNoticeFor(outcome, decision));
+    const outcome = await saveAndSend(c, envelope);
+    return back(outcome === null ? "guardar" : reviewNoticeFor(outcome, decision));
   });
+}
+
+/**
+ * Saves the tap the way every console action is saved (#63) and sends the customer's notice after
+ * the response; the cron sweep retries what doesn't go. Null when the save was refused: nothing saved.
+ */
+async function saveAndSend(c: Context<ConsoleEnv>, envelope: ActionEnvelope<ConsoleAction>): Promise<EngineOutcome | null> {
+  const { engine, deps } = c.get("runtime");
+  const member = memberContext(c);
+  let saved: ConsoleActionResult;
+  try {
+    saved = await runConsoleAction(deps, engine!, member, envelope);
+  } catch (error) {
+    deps.log.warn("console_action_not_saved", { businessId: member.businessId, reason: describeError(error) });
+    return null;
+  }
+  deps.log.info("console_action", { businessId: member.businessId, outcome: saved.outcome.type, count: saved.dispatch.length });
+  for (const conversation of saved.dispatch) {
+    c.executionCtx.waitUntil(
+      dispatchOutbox(deps, { limit: 10, conversation }).catch((error: unknown) => {
+        deps.log.error("outbox_dispatch_failed", { ...conversation, reason: describeError(error) });
+      }),
+    );
+  }
+  return saved.outcome;
 }
 
 function reviewNoticeFor(outcome: EngineOutcome, decision: "approve" | "decline"): ReviewNotice {

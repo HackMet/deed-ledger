@@ -1,4 +1,4 @@
-import { ClaimLostError, NoticeConversationMissingError, PermanentWriteError } from "../../application/errors";
+import { ClaimLostError, NoticeConversationMissingError } from "../../application/errors";
 import type {
   ButtonsShown,
   Commit,
@@ -462,10 +462,6 @@ export class D1OutboxRepository implements OutboxRepository {
     notices: readonly ConsoleNoticeDraft[],
     nowMs: number,
   ): Promise<QueuedConsoleNotice[]> {
-    // As completeJob: a post guard nobody runs would save a fact nobody checked.
-    if (commits.some((commit) => (commit.post?.length ?? 0) > 0)) {
-      throw new PermanentWriteError("post guards are not supported yet");
-    }
     const conversations = [...new Set(notices.map((notice) => notice.conversationId))];
     // The engine's guards first, so a refused decision reports the engine's own error.
     const guards: Guard[] = [
@@ -473,10 +469,13 @@ export class D1OutboxRepository implements OutboxRepository {
       ...conversations.map((conversationId) => conversationOfStore(tenant, conversationId)),
     ];
     const commitStatements = commits.flatMap((commit) => commit.statements);
-    const results = await guardedBatch(this.db, guards, [
-      ...commitStatements,
-      ...notices.map((notice) => this.noticeInsert(tenant, operationKey, notice, nowMs)),
-    ]);
+    // The engine's post guards (G4) run after the writes, as in completeJob: one that fails refuses all.
+    const results = await guardedBatch(
+      this.db,
+      guards,
+      [...commitStatements, ...notices.map((notice) => this.noticeInsert(tenant, operationKey, notice, nowMs))],
+      commits.flatMap((commit) => commit.post ?? []),
+    );
     return results.slice(commitStatements.length).flatMap((result, n) => {
       const row = (result.results as { id: string; conversation_id: string; status: string }[])[0];
       const notice = notices[n]!;

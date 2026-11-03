@@ -378,7 +378,7 @@ describe("K5: the Orders screen reads the ledger", () => {
   });
 });
 
-/** The real engine, keeping each console result so the test saves it where saveConsoleAction (#63) will. */
+/** The real engine, keeping each console result so a test can check what the engine decided; the route saves it (#63). */
 function recordingEngine() {
   const results: EngineResult[] = [];
   const wrapped: Engine = {
@@ -451,7 +451,6 @@ describe("K12: Pedidos shows a change waiting for review and sends the answer to
     expect(response.headers.get("location")).toBe(`/console/pedidos/${orderId}?aviso=aprobado`);
     expect(results).toHaveLength(1);
     expect(results[0]!.outcome).toMatchObject({ type: "action_saved", order: { version: 2, lastReview: { decision: "approve", reason: "Va, sí hay" } } });
-    await save(results[0]!);
 
     const page = await (await get(h, `/console/pedidos/${orderId}?aviso=aprobado`, cookie)).text();
     expect(page).toContain("Cambio aprobado. Le avisamos al cliente.");
@@ -478,7 +477,6 @@ describe("K12: Pedidos shows a change waiting for review and sends the answer to
 
     const declined = await post(h, path, cookie, { csrf, cambio: requestId, decision: "decline", motivo: "No hay jabón" });
     expect(declined.headers.get("location")).toBe(`/console/pedidos/${orderId}?aviso=rechazado`);
-    await save(results[0]!);
     const page = await (await get(h, `/console/pedidos/${orderId}`, cookie)).text();
     expect(page).toContain("Rechazado: No hay jabón");
     expect(page).toContain("Versión 1");
@@ -541,7 +539,6 @@ describe("K13: Pedidos dispatches a ready delivery order with a courier and show
       outcome: { type: "action_saved", order: { state: "en_camino" } },
       notices: [{ notice: { type: "order_dispatched", courierName: "Marvin" } }],
     });
-    await save(results[0]!);
 
     const list = await (await get(h, "/console/pedidos", cookie)).text();
     expect(row(list, orderId)).toBe("blue");
@@ -560,7 +557,6 @@ describe("K13: Pedidos dispatches a ready delivery order with a courier and show
 
     const done = await post(h, path, cookie, { csrf, paso: "entregar", version: "1" });
     expect(done.headers.get("location")).toBe(`/console/pedidos/${orderId}?aviso=entregado`);
-    await save(results[2]!);
     expect(row(await (await get(h, "/console/pedidos", cookie)).text(), orderId)).toBe("check");
     const trail = await (await get(h, `/console/pedidos/${orderId}`, cookie)).text();
     expect(trail).toContain("En camino con Marvin");
