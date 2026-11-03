@@ -8,6 +8,8 @@ import {
   type StoredChangeRequest,
   type StoredOrder,
 } from "../../application/engine/order-engine";
+import type { CatalogProduct } from "../../application/perception/matching";
+import { MAX_CATALOG_LABELS } from "../../application/perception/matching";
 import type { Commit, Tenant } from "../../application/ports";
 import type { EngineOutcome, OrderLineView, OrderState, OrderView } from "../../domain/contract/outcomes";
 import { toThousandths } from "../../domain/contract/numbers";
@@ -127,6 +129,16 @@ export class D1OrderStore implements OrderStore {
       .bind(tenant.businessId, customerId, orderId)
       .first<OrderRow>();
     return row === null ? null : this.load(tenant, row);
+  }
+
+  async products(tenant: Tenant): Promise<readonly CatalogProduct[]> {
+    // The `products` table only: store_products (Angel's Tienda screens) is a different table. No aliases or
+    // barcodes are kept for `products` rows, so the matching by code has only the names.
+    const { results } = await this.db
+      .prepare(`SELECT id, canonical_name FROM products WHERE business_id = ? ORDER BY canonical_name COLLATE NOCASE, id LIMIT ?`)
+      .bind(tenant.businessId, MAX_CATALOG_LABELS)
+      .all<{ id: string; canonical_name: string }>();
+    return results.map((row) => ({ productId: row.id, names: [row.canonical_name], aliases: [], barcode: null }));
   }
 
   async productNames(tenant: Tenant, productIds: readonly string[]): Promise<ReadonlyMap<string, string>> {

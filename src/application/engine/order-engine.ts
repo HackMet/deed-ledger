@@ -14,7 +14,7 @@
 import { type ActionEnvelope, type ConsoleAction, type CustomerAction, OWNER_ACTIONS, type OrderRef } from "../../domain/contract/actions";
 import { CHANGE_WINDOW, changeRequestKey, lineDiff, reviewKey, reviewReason } from "../../domain/change-request";
 import { toThousandths } from "../../domain/contract/numbers";
-import { type BurstReading, type ItemLine, isCustomerKind, type OrderChange } from "../../domain/contract/observation";
+import { type BurstReading, type ItemLine, isCustomerKind, type OrderChange, type PerceptionContext } from "../../domain/contract/observation";
 import type {
   Claim,
   CustomerNotice,
@@ -31,6 +31,7 @@ import { indexOfLabel, labelOf, nextVersion } from "../../domain/orders";
 import { isPrice, priceKey } from "../../domain/price";
 import type { EvidenceRef, FactCommit } from "../../domain/facts";
 import type { CustomerContext, Engine, EngineResult, LineMatch, MemberContext } from "../engine";
+import type { CatalogProduct } from "../perception/matching";
 import type { Commit, IdSource, Tenant } from "../ports";
 
 export interface StoredOrder {
@@ -139,6 +140,8 @@ export interface OrderStore {
   customerOrder(tenant: Tenant, customerId: string, orderId: string): Promise<StoredOrder | null>;
   /** Catalog names of the products that exist in this store; others are left out. */
   productNames(tenant: Tenant, productIds: readonly string[]): Promise<ReadonlyMap<string, string>>;
+  /** This store's products (the `products` table, the ones order lines match), by name, at most the perception label limit. */
+  products(tenant: Tenant): Promise<readonly CatalogProduct[]>;
   /** The current version's number, state and total of an order in this store; null when absent. */
   orderHead(tenant: Tenant, orderId: string): Promise<OrderHead | null>;
   /** An active member of this store, with the name the store knows them by; null otherwise (K13). */
@@ -520,6 +523,28 @@ export class OrderEngine implements Engine {
       movements: [],
     };
     return { outcome, notices, commits: [commit, this.deps.ledger.statementsFor(member, fact, member.nowMs)] };
+  }
+
+  /** Perception's read of the store's catalog, for matching by code: exactly the products order lines match against. */
+  async catalog(tenant: Tenant): Promise<readonly CatalogProduct[]> {
+    return this.deps.store.products(tenant);
+  }
+
+  /**
+   * Perception's read of the customer's open order: its lines under the labels L1… the engine maps back.
+   * PENDING: `pendingQuestion` is always null. onBurst asks only "ambiguous_product" while it reads a
+   * burst; it has no rule that asks about an open order's missing quantity, so there is no question to
+   * report. `pendingOptions` and `lastAnswered` are absent: the engine stores neither.
+   */
+  async perceptionContext(context: CustomerContext): Promise<PerceptionContext> {
+    const open = await this.deps.store.openOrder(context, context.customerId);
+    return {
+      openOrder:
+        open === null
+          ? null
+          : { lines: open.view.lines.map((line, n) => ({ ref: `L${n + 1}`, text: `${line.productName ?? line.text}: ${line.quantity ?? "?"}` })) },
+      pendingQuestion: null,
+    };
   }
 
   async verifyClaims(tenant: Tenant, claims: readonly Claim[]): Promise<readonly boolean[]> {
