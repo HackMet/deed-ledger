@@ -6,8 +6,13 @@
 import type { Engine } from "./application/engine";
 import { fixturePerceptionHandler } from "./application/engine/fixture-perception-handler";
 import { OrderEngine } from "./application/engine/order-engine";
-import type { Deps } from "./application/ports";
+import { BusinessService } from "./application/business";
+import { CatalogService } from "./application/catalog";
+import type { BusinessContext, Deps } from "./application/ports";
 import { type Config, readConfig } from "./infrastructure/config";
+import { D1BusinessContext } from "./infrastructure/d1/business-context";
+import { D1CatalogStore } from "./infrastructure/d1/catalog-store";
+import { D1CommitRunner } from "./infrastructure/d1/commit-runner";
 import { D1ConsoleAuthRepository } from "./infrastructure/d1/console-auth-repository";
 import { D1IntakeRepository } from "./infrastructure/d1/intake-repository";
 import { D1FactLedger } from "./infrastructure/d1/fact-ledger";
@@ -28,6 +33,10 @@ import { SEND_TIMEOUT_MS } from "./domain/outbox";
 export interface Runtime {
   readonly config: Config;
   readonly deps: Deps;
+  /** Products and prices (K6). */
+  readonly catalog: CatalogService;
+  /** What the store says about itself (K6, K15): saved by the owner, read by `business.context.current`. */
+  readonly business: { readonly service: BusinessService; readonly context: BusinessContext };
   /** Null until the real engine is wired in, except for the dev console's pretend engine. */
   readonly engine: Engine | null;
 }
@@ -48,9 +57,15 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
   const ids = overrides.ids ?? randomIds;
   const clock = overrides.clock ?? systemClock;
   const orders = new D1OrderStore(db);
+  const engine = overrides.engine ?? (config.devConsole ? devEngine : null);
+  const ledger = new D1FactLedger(db);
+  const runner = new D1CommitRunner(db);
+  const businessInfo = new D1BusinessContext(db);
   return {
     config,
-    engine: overrides.engine ?? (config.devConsole ? devEngine : null),
+    engine,
+    catalog: new CatalogService({ catalog: new D1CatalogStore(db), ledger, runner, ids, engine }),
+    business: { service: new BusinessService({ store: businessInfo, ledger, runner, ids }), context: businessInfo },
     deps: {
       clock,
       ids,

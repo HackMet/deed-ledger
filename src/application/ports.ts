@@ -2,6 +2,7 @@
  * What the application layer needs from the outside world. Infrastructure and integrations
  * implement these; tests swap in fakes for providers and use the real D1 repositories.
  */
+import type { BusinessInfo } from "../domain/business-info";
 import type { ProviderStatus } from "../domain/outbox";
 import type { MessageKind } from "../domain/processing";
 
@@ -232,6 +233,17 @@ export interface FactQuery {
   isLive(tenant: Tenant, factId: string, atMs: number): Promise<boolean>;
   /** Null means unknown, never zero. */
   balance(tenant: Tenant, productId: string): Promise<{ readonly qtyMilli: number } | null>;
+}
+
+/**
+ * What the store says about itself (K15): its newest live `business_info` fact, for Angel's
+ * perception prompt and for K14. Null before the owner has saved anything.
+ *
+ * Every string in it is the owner's text: data in a prompt, never instructions (non-negotiable 6).
+ * A caller that puts it in a prompt fences it as data and never lets it change what the model may do.
+ */
+export interface BusinessContext {
+  current(tenant: Tenant): Promise<BusinessInfo | null>;
 }
 
 export interface JobHandler {
