@@ -5,6 +5,7 @@
  */
 import { gatedHandler } from "./application/customer-gate";
 import type { Engine } from "./application/engine";
+import { OrderEngine } from "./application/engine/order-engine";
 import { BusinessService } from "./application/business";
 import { CatalogService } from "./application/catalog";
 import type { ModelCallSettings } from "./application/model-settings";
@@ -43,6 +44,7 @@ import { D1CustomerRepository } from "./infrastructure/d1/customer-repository";
 import { D1FactLedger, D1FactPrecheck } from "./infrastructure/d1/fact-ledger";
 import { D1IntakeRepository } from "./infrastructure/d1/intake-repository";
 import { D1JobRepository } from "./infrastructure/d1/job-repository";
+import { D1OrderStore } from "./infrastructure/d1/order-store";
 import { D1ButtonsShown, D1OutboxRepository } from "./infrastructure/d1/outbox-repository";
 import { D1Pendientes } from "./infrastructure/d1/pendientes-repository";
 import { D1RetrievalRepository } from "./infrastructure/d1/retrieval-repository";
@@ -119,15 +121,21 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
   // The simulator downloads the synthetic photos and voice notes it was sent (`npm run chat`): only with
   // the dev console on and no WhatsApp token, so a deployed Worker never serves uploads.
   const simMedia = config.devConsole && config.whatsappToken === "" ? new SimMediaSource(env.MEDIA) : null;
-  // DEV_CONSOLE: in memory, demo catalog, no login, local simulator only. PRETEND_ENGINE: state in
-  // D1, shared by every isolate, each store's own products and hours (#40), console behind login.
-  // Both (the simulator's --store): the D1 engine, so the Tienda screens feed the chat. Neither: no
-  // engine until the real one is wired in.
+  const ids = overrides.ids ?? randomIds;
+  // DEED_ENGINE: the real order engine on D1 (OrderEngine), which Angel's reader reads through. DEV_CONSOLE:
+  // in memory, demo catalog, no login, local simulator only. PRETEND_ENGINE: state in D1, shared by every
+  // isolate, each store's own products and hours (#40), console behind login. Both (the simulator's
+  // --store): the D1 engine, so the Tienda screens feed the chat. Neither: no engine until the real one is wired in.
   const engine =
     overrides.engine ??
-    (config.pretendEngine ? new D1PretendEngine(db, { setup: storeSetup }) : config.devConsole ? devEngine : null);
+    (config.deedEngine
+      ? new OrderEngine({ store: new D1OrderStore(db), ids, ledger: new D1FactLedger(db) })
+      : config.pretendEngine
+        ? new D1PretendEngine(db, { setup: storeSetup })
+        : config.devConsole
+          ? devEngine
+          : null);
   const clock = overrides.clock ?? systemClock;
-  const ids = overrides.ids ?? randomIds;
   const log = overrides.log ?? consoleLogger;
   const jobs = new D1JobRepository(db);
   const customers = new D1CustomerRepository(db);
