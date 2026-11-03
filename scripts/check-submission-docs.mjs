@@ -17,6 +17,7 @@ for (const [b, parent, excl, shown] of [
   ["claude/stack-on-main", "origin/main", "claude/dispatch", null],
   ["claude/demo-on-main", "claude/stack-on-main", "claude/demo-env", null],
   ["claude/owner-on-main", "claude/demo-on-main", "claude/facturas", null],
+  ["claude/deed-on-main", "claude/engine-reads", "claude/deed-graph", null],
 ]) {
   const n = git("rev-list", "--count", b, `^${parent}`, `^${excl}`);
   const m = readme.match(new RegExp("\\| `" + b + "` \\| (\\d+) \\|"));

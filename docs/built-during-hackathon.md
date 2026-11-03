@@ -19,6 +19,11 @@ Regenerate right before submitting: `node scripts/built-during.mjs` (git + gh on
 | #62 | Order engine and fact memory: the save batch, read-before-guard, and the engine wired behind a fixture adapter | kercmari | 2026-10-31 08:17Z | MERGED | 2026-11-02 17:45Z |
 | #63 | Add the customer order flow, replies, reading, media and console screens | Angel-Rodas | 2026-10-31 12:13Z | MERGED | 2026-11-03 16:53Z |
 | #64 | Renumber our migrations to 0020-0022 to clear Angel's 0004-0017 | kercmari | 2026-11-02 18:28Z | MERGED | 2026-11-02 18:36Z |
+| #65 | Fix sold-out wording, join with ni, and keep items without an amount out of Anotado | Angel-Rodas | 2026-11-03 23:04Z | MERGED | 2026-11-03 23:15Z |
+| #66 | Add Probar como cliente to the console | Angel-Rodas | 2026-11-03 23:04Z | MERGED | 2026-11-03 23:16Z |
+| #67 | Show read and typing on WhatsApp while the bot works | Angel-Rodas | 2026-11-03 23:04Z | MERGED | 2026-11-03 23:16Z |
+| #68 | Make the daily Muse Spark budget a setting | Angel-Rodas | 2026-11-03 23:04Z | MERGED | 2026-11-03 23:15Z |
+| #69 | Rewrite the README for judges | Angel-Rodas | 2026-11-03 23:04Z | MERGED | 2026-11-03 23:15Z |
 
 ## Not yet on origin/main (local branches)
 
@@ -40,6 +45,9 @@ Commits are counted against the parent branch; the stack order is the merge orde
 | claude/demo-on-main | claude/stack-on-main | 4 | 47a2d5c |
 | claude/owner-on-main | claude/demo-on-main | 2 | 3e7d97f |
 | claude/adversary | claude/demo-on-main | 2 | dd3a342 |
+| claude/engine-reads | claude/owner-on-main | 5 | fcb34b0 |
+| claude/deed-graph | claude/owner-on-main | 10 | 3d61a80 |
+| claude/deed-on-main | claude/engine-reads | 1 | 8ec9f87 |
 
 ## Every commit on origin/main
 
