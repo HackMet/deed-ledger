@@ -129,7 +129,8 @@ function question(code: QuestionCode): string {
   }
 }
 
-function render(outcome: EngineOutcome): string {
+/** The reply to an outcome. Also used by the demo Worker's recorded perception, so both answer alike. */
+export function render(outcome: EngineOutcome): string {
   switch (outcome.type) {
     case "readback":
       return readback(outcome.order, "Esto entendí de tu pedido:");
