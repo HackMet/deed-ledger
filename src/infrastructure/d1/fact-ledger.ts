@@ -48,7 +48,9 @@ const DEPENDENCIES_LIVE = `WITH RECURSIVE ancestors(id) AS (
  *   'inbound_message', no confirmation row (the customer's own message is the approval);
  * - order_status, a staff tap: exactly one 'member';
  * - change_request, a customer's change after confirming: at least one 'inbound_message';
- * - change_review, the owner's or staff's answer to it: exactly one 'member'.
+ * - change_review, the owner's or staff's answer to it: exactly one 'member';
+ * - business_info, and a price changed on the console (K6): exactly one 'member'. A price resting on a
+ *   draft's confirmation keeps the default rule below.
  * The rule follows the stored kind, not the commit's, so P1 checks what was written.
  *
  * Inside the batch the fact always exists (S2 ran). The fence re-checks guards after a rolled-back
@@ -64,8 +66,9 @@ const EVIDENCE_COMPLETE = `WITH
     WHEN NOT EXISTS (SELECT 1 FROM e) THEN NULL
     WHEN (SELECT kind FROM f) IN ('order_version', 'order_confirm', 'order_cancel', 'change_request') THEN
       CASE WHEN EXISTS (SELECT 1 FROM e WHERE kind = 'inbound_message') THEN 1 END
-    WHEN (SELECT kind FROM f) IN ('order_status', 'change_review') THEN
+    WHEN (SELECT kind FROM f) IN ('order_status', 'change_review', 'business_info') THEN
       CASE WHEN (SELECT count(*) FROM e WHERE kind = 'member') = 1 THEN 1 END
+    WHEN (SELECT kind FROM f) = 'price' AND (SELECT count(*) FROM e WHERE kind = 'member') = 1 THEN 1
     WHEN (SELECT count(*) FROM e WHERE kind = 'confirmation') = 1
       AND EXISTS (SELECT 1 FROM e WHERE kind = 'inbound_message') THEN 1
   END`;

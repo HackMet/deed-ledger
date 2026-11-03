@@ -2,6 +2,7 @@ import { OrderMovedError } from "../../application/errors";
 import {
   fromThousandths,
   type OrderHead,
+  type PriceState,
   type OrderStore,
   type OrderWrite,
   type StoredChangeRequest,
@@ -282,6 +283,34 @@ export class D1OrderStore implements OrderStore {
       .bind(tenant.businessId, orderId, confirmedAtMs, confirmedAtMs, orderId)
       .first<{ ahead: number }>();
     return (row?.ahead ?? 0) + 1;
+  }
+
+  async priceState(tenant: Tenant, productId: string, operationKey: string): Promise<PriceState> {
+    const used = await this.db
+      .prepare(`SELECT 1 AS used FROM facts WHERE business_id = ? AND operation_key = ?`)
+      .bind(tenant.businessId, operationKey)
+      .first<{ used: number }>();
+    // Newest first. A price fact is closed only by a newer confirmed price (superseded), and a proposal
+    // is never closed, so "live" is simply "no closure".
+    const { results } = await this.db
+      .prepare(
+        `SELECT f.id, json_extract(f.body_json, '$.status') AS status, json_extract(f.body_json, '$.price') AS price
+         FROM facts f
+         WHERE f.business_id = ? AND f.kind = 'price' AND json_extract(f.body_json, '$.productId') = ?
+           AND NOT EXISTS (SELECT 1 FROM fact_closures c WHERE c.business_id = f.business_id AND c.fact_id = f.id)
+         ORDER BY f.rowid DESC`,
+      )
+      .bind(tenant.businessId, productId)
+      .all<{ id: string; status: string; price: number }>();
+    const confirmedAt = results.findIndex((row) => row.status === "confirmed");
+    const confirmed = confirmedAt === -1 ? null : results[confirmedAt]!;
+    // Rows before the confirmed one are newer; a proposal older than it was already answered.
+    const proposal = results.slice(0, confirmedAt === -1 ? undefined : confirmedAt).find((row) => row.status === "proposed") ?? null;
+    return {
+      confirmed: confirmed === null ? null : { factId: confirmed.id, price: confirmed.price },
+      proposal: proposal === null ? null : { factId: proposal.id, price: proposal.price },
+      keyUsed: used !== null,
+    };
   }
 
   commitFor(tenant: Tenant, write: OrderWrite): Commit {
