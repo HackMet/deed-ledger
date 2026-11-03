@@ -25,6 +25,8 @@ export async function acceptEvents(deps: Deps, events: readonly ChannelEvent[]):
   // The unknown-sender notice retired with customers (#14). Always empty until the notice path is removed.
   const notices: PendingNotice[] = [];
   const channels = new Map<string, ChannelAccount | null>();
+  // The number customers see, per channel account, when a webhook says a new one: saved after the loop.
+  const shownNumbers = new Map<string, { channel: ChannelAccount; shown: string }>();
 
   for (const event of events) {
     let channel = channels.get(event.phoneNumberId);
@@ -47,7 +49,8 @@ export async function acceptEvents(deps: Deps, events: readonly ChannelEvent[]):
       // Anyone writing to the store's number is its customer: there is no unknown-sender path.
       const ring = await recordCustomerMessage(deps, tenant, channel, event);
       if (ring !== null) conversations.set(ring.conversationId, ring);
-      channels.set(event.phoneNumberId, await rememberDisplayNumber(deps, channel, event));
+      const shown = event.displayPhoneNumber ?? null;
+      if (shown !== null && shown !== (channel.displayPhoneNumber ?? null)) shownNumbers.set(channel.id, { channel, shown });
     } catch (error) {
       if (!(error instanceof PermanentWriteError)) throw error;
       deps.log.error("intake_rejected_permanently", {
@@ -58,23 +61,22 @@ export async function acceptEvents(deps: Deps, events: readonly ChannelEvent[]):
     }
   }
 
+  // Only once every message is saved: the number is display only and never holds one up.
+  for (const { channel, shown } of shownNumbers.values()) await rememberDisplayNumber(deps, channel, shown);
+
   return { conversations: [...conversations.values()], notices };
 }
 
 /**
  * Keeps the number customers see (from the signed webhook) on the channel account, so the console
  * can offer "Probar como cliente" without anyone typing it in. Written only when it changes; best
- * effort: a failure is logged and never holds up the message, which is already saved.
+ * effort: a failure is logged with IDs and never affects the messages, which are already saved.
  */
-async function rememberDisplayNumber(deps: Deps, channel: ChannelAccount, event: InboundMessageEvent): Promise<ChannelAccount> {
-  const shown = event.displayPhoneNumber ?? null;
-  if (shown === null || shown === (channel.displayPhoneNumber ?? null)) return channel;
+async function rememberDisplayNumber(deps: Deps, channel: ChannelAccount, shown: string): Promise<void> {
   try {
     await deps.tenancy.rememberDisplayNumber(channel, shown);
-    return { ...channel, displayPhoneNumber: shown };
   } catch (error) {
     deps.log.warn("display_number_not_saved", { businessId: channel.businessId, channelAccountId: channel.id, reason: describeError(error) });
-    return channel;
   }
 }
 

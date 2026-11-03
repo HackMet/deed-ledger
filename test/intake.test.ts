@@ -286,12 +286,21 @@ describe("the number customers see", () => {
     expect(await shownFor(store.businessId)).toBe("50499998888");
   });
 
-  it("never holds up the message when it can't be saved", async () => {
+  it("never holds up the messages when it can't be saved, and is tried once, after all of them", async () => {
     const h = harness({ db: failWritesMatching(env.DB, /UPDATE channel_accounts SET display_phone_number/u) });
     const { store, phone } = await storeWithOwner();
-    const response = await h.post(hola(store.phoneNumberId, phone, "15550317081", T0));
+    const body = webhook(store.phoneNumberId, {
+      messages: [
+        textMessage({ from: phone, id: wamid(), timestampS: T0, body: "Hola" }),
+        textMessage({ from: phone, id: wamid(), timestampS: T0 + 1, body: "y un pan" }),
+      ],
+    });
+    body.entry[0]!.changes[0]!.value.metadata.display_phone_number = "15550317081";
+    const response = await h.post(body);
     expect(response.status).toBe(200);
-    expect(await rows(`SELECT id FROM inbound_messages WHERE business_id = ?1`, store.businessId)).toHaveLength(1);
+    expect(await rows(`SELECT id FROM inbound_messages WHERE business_id = ?1`, store.businessId)).toHaveLength(2);
+    expect(h.log.events().filter((event) => event === "display_number_not_saved")).toHaveLength(1);
+    expect(h.log.events().lastIndexOf("inbound_recorded")).toBeLessThan(h.log.events().indexOf("display_number_not_saved"));
     expect(await shownFor(store.businessId)).toBeNull();
     expect(h.log.events()).toContain("display_number_not_saved");
     expect(h.log.lines.join("\n")).not.toContain("15550317081");
