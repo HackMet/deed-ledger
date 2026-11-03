@@ -31,7 +31,8 @@ import { indexOfLabel, labelOf, nextVersion } from "../../domain/orders";
 import { isPrice, priceKey } from "../../domain/price";
 import type { EvidenceRef, FactCommit } from "../../domain/facts";
 import type { CustomerContext, Engine, EngineResult, LineMatch, MemberContext } from "../engine";
-import type { Commit, IdSource, Tenant } from "../ports";
+import { DEED_CLAIM_KINDS, type DeedCheckSource, type DeedChecks } from "./deed-checks";
+import type { Clock, Commit, IdSource, Logger, Tenant } from "../ports";
 
 export interface StoredOrder {
   /** The current version, as the customer would read it back. */
@@ -256,10 +257,48 @@ function canonicalQuantity(quantity: string | null): string | null {
 
 const result = (outcome: EngineOutcome, commits: readonly Commit[] = []): EngineResult => ({ outcome, notices: [], commits });
 
+/** The Deed's row for a refusal's reason (K20): the table's `source`, and the reason the screen names. */
+const DEED_SOURCE: Readonly<Record<"duplicate" | "stale_version" | "invalid_state" | "not_allowed" | "not_found", DeedCheckSource>> = {
+  duplicate: "duplicate_key",
+  stale_version: "stale_version",
+  invalid_state: "gate",
+  not_allowed: "not_allowed",
+  not_found: "not_found",
+};
+
+/** The claim's type when the contract names it, `other` otherwise; never the claim's text. */
+const claimKindOf = (claim: Claim): string =>
+  (typeof claim === "object" && claim !== null ? DEED_CLAIM_KINDS.find((kind) => kind === claim.type) : undefined) ?? "other";
+
+/** The order a claim names, when it names one of a sane length. */
+const orderIdOfClaim = (claim: Claim): string | null =>
+  typeof claim === "object" && claim !== null && "orderId" in claim && typeof claim.orderId === "string" && claim.orderId.length <= 64
+    ? claim.orderId
+    : null;
+
 export class OrderEngine implements Engine {
-  constructor(private readonly deps: { readonly store: OrderStore; readonly ids: IdSource; readonly ledger: OrderFactLedger }) {}
+  /**
+   * `checks` is the Deed's record (K20): optional, written after each decision and never in its batch.
+   * `clock` stamps the claim checks, which carry no time of their own; `log` gets a failed record's IDs.
+   */
+  constructor(
+    private readonly deps: {
+      readonly store: OrderStore;
+      readonly ids: IdSource;
+      readonly ledger: OrderFactLedger;
+      readonly checks?: DeedChecks;
+      readonly clock?: Clock;
+      readonly log?: Logger;
+    },
+  ) {}
 
   async onBurst(context: CustomerContext, reading: BurstReading, matches: readonly LineMatch[]): Promise<EngineResult> {
+    const decided = await this.decideBurst(context, reading, matches);
+    await this.recordRefusal(context, decided.outcome, { operationKey: burstKey(context.jobId), orderId: null, atMs: context.nowMs });
+    return decided;
+  }
+
+  private async decideBurst(context: CustomerContext, reading: BurstReading, matches: readonly LineMatch[]): Promise<EngineResult> {
     const { store } = this.deps;
     const operationKey = burstKey(context.jobId);
     const first = await store.firstOutcome(context, operationKey);
@@ -352,6 +391,16 @@ export class OrderEngine implements Engine {
   }
 
   async onCustomerAction(context: CustomerContext, envelope: ActionEnvelope<CustomerAction>): Promise<EngineResult> {
+    const decided = await this.decideCustomerAction(context, envelope);
+    await this.recordRefusal(context, decided.outcome, {
+      operationKey: envelope.operationKey,
+      orderId: "orderId" in envelope.action ? envelope.action.orderId : null,
+      atMs: context.nowMs,
+    });
+    return decided;
+  }
+
+  private async decideCustomerAction(context: CustomerContext, envelope: ActionEnvelope<CustomerAction>): Promise<EngineResult> {
     const { store } = this.deps;
     // The actor comes from the conversation; an envelope for anyone else is refused.
     if (envelope.actor.type !== "customer" || envelope.actor.customerId !== context.customerId) {
@@ -414,6 +463,16 @@ export class OrderEngine implements Engine {
   }
 
   async onConsoleAction(member: MemberContext, envelope: ActionEnvelope<ConsoleAction>): Promise<EngineResult> {
+    const decided = await this.decideConsoleAction(member, envelope);
+    await this.recordRefusal(member, decided.outcome, {
+      operationKey: envelope.operationKey,
+      orderId: "orderId" in envelope.action ? envelope.action.orderId : null,
+      atMs: member.nowMs,
+    });
+    return decided;
+  }
+
+  private async decideConsoleAction(member: MemberContext, envelope: ActionEnvelope<ConsoleAction>): Promise<EngineResult> {
     const { store } = this.deps;
     const refused = (reason: "not_allowed" | "not_found" | "stale_version" | "invalid_state", order: OrderView | null) =>
       result({ type: "rejected", reason, order });
@@ -523,7 +582,82 @@ export class OrderEngine implements Engine {
   }
 
   async verifyClaims(tenant: Tenant, claims: readonly Claim[]): Promise<readonly boolean[]> {
-    return Promise.all(claims.map((claim) => this.verifyClaim(tenant, claim)));
+    const answers = await Promise.all(claims.map((claim) => this.verifyClaim(tenant, claim)));
+    await this.recordClaims(tenant, claims, answers);
+    return answers;
+  }
+
+  /**
+   * The Deed's record of a refusal or a duplicate (K20), best effort: after the decision, never in its
+   * batch, and a failed write is logged by IDs and changes nothing. The cancel that decided a refusal
+   * on a cancelled order is read only here, and only for that case.
+   */
+  private async recordRefusal(
+    tenant: Tenant,
+    outcome: EngineOutcome,
+    meta: { readonly operationKey: string; readonly orderId: string | null; readonly atMs: number },
+  ): Promise<void> {
+    const { checks, ids, log } = this.deps;
+    if (checks === undefined || (outcome.type !== "rejected" && outcome.type !== "duplicate")) return;
+    const reason = outcome.type === "rejected" ? outcome.reason : "duplicate";
+    // A refusal names the order it read, and none when the id didn't resolve (not_found: the order shown
+    // there is the customer's own open one, not the id they sent). A duplicate's order was resolved first.
+    const orderId =
+      outcome.type === "duplicate" ? meta.orderId : outcome.reason === "not_found" ? null : (outcome.order?.orderId ?? null);
+    try {
+      const decidingFactId =
+        outcome.type === "rejected" && outcome.reason === "invalid_state" && outcome.order?.state === "cancelado" && orderId !== null
+          ? await this.cancelFactOf(tenant, orderId)
+          : null;
+      await checks.record(tenant, [
+        {
+          id: ids.newId(),
+          atMs: meta.atMs,
+          source: DEED_SOURCE[reason],
+          subjectFactId: null,
+          orderId,
+          claimKind: null,
+          result: "fail",
+          reasonCode: reason,
+          decidingFactId,
+          operationKey: meta.operationKey,
+        },
+      ]);
+    } catch {
+      log?.warn("deed_check_not_recorded", { businessId: tenant.businessId, reason, count: 1 });
+    }
+  }
+
+  /** The live cancel of an order, the fact that closed its confirm; null when the order has none. */
+  private async cancelFactOf(tenant: Tenant, orderId: string): Promise<string | null> {
+    const facts = await this.deps.store.orderFacts(tenant, orderId);
+    return facts.find((fact) => fact.kind === "order_cancel" && fact.live)?.id ?? null;
+  }
+
+  /** One row per claim, pass or fail, recorded after the answers are known (K20); best effort like the refusals. */
+  private async recordClaims(tenant: Tenant, claims: readonly Claim[], answers: readonly boolean[]): Promise<void> {
+    const { checks, ids, clock, log } = this.deps;
+    if (checks === undefined || claims.length === 0) return;
+    try {
+      const atMs = clock?.now() ?? Date.now();
+      await checks.record(
+        tenant,
+        claims.map((claim, index) => ({
+          id: ids.newId(),
+          atMs,
+          source: "verify_claims",
+          subjectFactId: null,
+          orderId: orderIdOfClaim(claim),
+          claimKind: claimKindOf(claim),
+          result: answers[index] === true ? "pass" : "fail",
+          reasonCode: answers[index] === true ? null : "not_backed",
+          decidingFactId: null,
+          operationKey: null,
+        })),
+      );
+    } catch {
+      log?.warn("deed_check_not_recorded", { businessId: tenant.businessId, reason: "verify_claims", count: claims.length });
+    }
   }
 
   async preparationList(tenant: Tenant): Promise<readonly PreparationCard[]> {

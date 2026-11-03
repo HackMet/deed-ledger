@@ -40,6 +40,8 @@ import { D1ConsoleReceipts } from "./infrastructure/d1/console-receipts";
 import { D1CustomerControlRepository } from "./infrastructure/d1/customer-control-repository";
 import { D1CustomerPlaceRepository } from "./infrastructure/d1/customer-place-repository";
 import { D1CustomerRepository } from "./infrastructure/d1/customer-repository";
+import type { DeedChecks } from "./application/engine/deed-checks";
+import { D1DeedChecks } from "./infrastructure/d1/deed-checks";
 import { D1FactLedger, D1FactPrecheck } from "./infrastructure/d1/fact-ledger";
 import { D1IntakeRepository } from "./infrastructure/d1/intake-repository";
 import { D1JobRepository } from "./infrastructure/d1/job-repository";
@@ -68,6 +70,8 @@ import { WhatsAppMediaSource } from "./integrations/whatsapp/media";
 import { receiptRecordings } from "../test/fixtures/receipts";
 
 export interface Runtime {
+  /** The Deed's record of checks (K20): the engine that writes it is wired where it runs (demo/worker.ts). */
+  readonly deedChecks: DeedChecks;
   readonly config: Config;
   /** The simulator's media uploads (dev console with no WhatsApp token only); null everywhere else. */
   readonly simMedia: SimMediaSource | null;
@@ -179,6 +183,8 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
           },
         });
   const ledger = new D1FactLedger(db);
+  // The Deed's record of checks (K20): the order engine writes it where the engine is the real one (demo/worker.ts).
+  const deedChecks = new D1DeedChecks(db);
   const runner = new D1CommitRunner(db);
   const businessInfo = new D1BusinessContext(db);
   // Recorded readings of synthetic invoices until the Muse Spark adapter lands (PR #63, decision Q2):
@@ -188,6 +194,7 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
     config,
     simMedia,
     engine,
+    deedChecks,
     catalog: new CatalogService({ catalog: new D1CatalogStore(db), ledger, runner, ids, engine }),
     business: { service: new BusinessService({ store: businessInfo, ledger, runner, ids }), context: businessInfo },
     receipts: new ReceiptService({
