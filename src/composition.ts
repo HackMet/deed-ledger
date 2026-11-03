@@ -10,6 +10,7 @@ import type { Deps } from "./application/ports";
 import { type Config, readConfig } from "./infrastructure/config";
 import { D1ConsoleAuthRepository } from "./infrastructure/d1/console-auth-repository";
 import { D1IntakeRepository } from "./infrastructure/d1/intake-repository";
+import { D1FactLedger } from "./infrastructure/d1/fact-ledger";
 import { D1OrderStore } from "./infrastructure/d1/order-store";
 import { D1JobRepository } from "./infrastructure/d1/job-repository";
 import { D1OutboxRepository } from "./infrastructure/d1/outbox-repository";
@@ -73,7 +74,7 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
       mediaSource: overrides.mediaSource ?? unavailableMediaSource,
       mediaStore: overrides.mediaStore ?? new R2MediaStore(env.MEDIA),
       // Fixture perception stands in until the teammate's perception lands (D-37); see its header.
-      jobHandler: overrides.jobHandler ?? fixturePerceptionHandler({ engine: new OrderEngine({ store: orders, ids }), orders, clock }),
+      jobHandler: overrides.jobHandler ?? fixturePerceptionHandler({ engine: new OrderEngine({ store: orders, ids, ledger: new D1FactLedger(db) }), orders, clock }),
     },
   };
 }

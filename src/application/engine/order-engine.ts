@@ -6,6 +6,10 @@
  * Every decision reads first (D-42): a used operation key answers `duplicate` with the stored first
  * outcome, a key that doesn't resolve inside the customer's own orders answers `not_found`, a tap on
  * an older version answers `stale_version`. The commit's guards only settle a race.
+ *
+ * The ledger is the source and `orders` its read cache (R2): every transition saved here is also
+ * exactly one fact, under the same operation key, in the same batch. The order commit goes first so
+ * its guards report first; the fact commit's G4 refuses a transition resting on a dead fact.
  */
 import type { ActionEnvelope, ConsoleAction, CustomerAction, OrderRef } from "../../domain/contract/actions";
 import { toThousandths } from "../../domain/contract/numbers";
@@ -21,6 +25,7 @@ import type {
 } from "../../domain/contract/outcomes";
 import { totalOf } from "../../domain/order-total";
 import { indexOfLabel, labelOf, nextVersion } from "../../domain/orders";
+import type { EvidenceRef, FactCommit } from "../../domain/facts";
 import type { CustomerContext, Engine, EngineResult, LineMatch, MemberContext } from "../engine";
 import type { Commit, IdSource, Tenant } from "../ports";
 
@@ -31,6 +36,16 @@ export interface StoredOrder {
   readonly firstConfirmedAtMs: number | null;
   /** For an order changed after confirming: the state confirming again returns to (D-38). */
   readonly resumeState: "confirmado" | "preparando" | null;
+  /** The current version's fact; null for an order saved before order facts existed. */
+  readonly versionFactId: string | null;
+  /** The current version's confirm fact; null until the customer confirms this version. */
+  readonly confirmFactId: string | null;
+}
+
+/** The fact ids the cache keeps after a write, so the next transition can draw its edges. */
+export interface OrderFactIds {
+  readonly versionFactId: string | null;
+  readonly confirmFactId: string | null;
 }
 
 /** What the claim check reads of an order: its current version only. */
@@ -67,7 +82,14 @@ export interface OrderWrite {
   readonly actorId?: string;
   /** More for the audit row's detail, next to the state change. */
   readonly auditDetail?: Readonly<Record<string, unknown>>;
+  /** What `orders.version_fact_id` and `orders.confirm_fact_id` hold after this write. */
+  readonly facts: OrderFactIds;
   readonly nowMs: number;
+}
+
+/** Turns an order fact into its `Commit` (D1FactLedger): guards G4/G5, statements, and P1. */
+export interface OrderFactLedger {
+  statementsFor(scope: Tenant, commit: FactCommit, nowMs: number): Commit;
 }
 
 export interface OrderStore {
@@ -160,7 +182,7 @@ function canonicalQuantity(quantity: string | null): string | null {
 const result = (outcome: EngineOutcome, commits: readonly Commit[] = []): EngineResult => ({ outcome, notices: [], commits });
 
 export class OrderEngine implements Engine {
-  constructor(private readonly deps: { readonly store: OrderStore; readonly ids: IdSource }) {}
+  constructor(private readonly deps: { readonly store: OrderStore; readonly ids: IdSource; readonly ledger: OrderFactLedger }) {}
 
   async onBurst(context: CustomerContext, reading: BurstReading, matches: readonly LineMatch[]): Promise<EngineResult> {
     const { store } = this.deps;
@@ -366,6 +388,7 @@ export class OrderEngine implements Engine {
         action.type === "mark_line"
           ? { lineId: action.lineId, mark: action.mark, substituteProductId: action.substituteProductId }
           : undefined,
+      facts: { versionFactId: stored.versionFactId, confirmFactId: stored.confirmFactId },
       nowMs: member.nowMs,
     });
     return { outcome, notices, commits: [commit] };
@@ -429,7 +452,15 @@ export class OrderEngine implements Engine {
     };
     const wasConfirmed = open !== null && open.firstConfirmedAtMs !== null;
     const outcome: EngineOutcome = wasConfirmed ? { type: "order_changed", order } : { type: "readback", order };
-    return this.save(context, {
+    // v(n+1) rests on v(n) and supersedes it: v(n)'s confirm and status taps die with it.
+    const previous = open?.versionFactId ?? null;
+    const fact = this.customerFact(context, operationKey, order, {
+      kind: "order_version",
+      body: { total: order.total },
+      dependsOn: previous === null ? [] : [previous],
+      closes: previous === null ? null : { factId: previous, reason: "superseded" },
+    });
+    return this.save(context, fact, {
       operationKey,
       outcome,
       base: open,
@@ -437,6 +468,7 @@ export class OrderEngine implements Engine {
       newVersion: true,
       confirming: false,
       auditKind: open === null ? "order_created" : "order_changed",
+      facts: { versionFactId: fact.factId, confirmFactId: null },
     });
   }
 
@@ -448,7 +480,15 @@ export class OrderEngine implements Engine {
     const confirmedAtMs = stored.firstConfirmedAtMs ?? context.nowMs;
     const queuePosition = await this.deps.store.queuePosition(context, view.orderId, confirmedAtMs);
     const order: OrderView = { ...view, state, queuePosition };
-    return this.save(context, {
+    // resumeState keeps the derived state equal to the cache: a status tap on an older version rested
+    // on that version's confirm, which died when the version was superseded (D-38, D-43).
+    const fact = this.customerFact(context, operationKey, order, {
+      kind: "order_confirm",
+      body: { resumeState: state },
+      dependsOn: stored.versionFactId === null ? [] : [stored.versionFactId],
+      closes: null,
+    });
+    return this.save(context, fact, {
       operationKey,
       outcome: { type: "order_confirmed", order },
       base: stored,
@@ -456,6 +496,7 @@ export class OrderEngine implements Engine {
       newVersion: false,
       confirming: true,
       auditKind: "order_confirmed",
+      facts: { versionFactId: stored.versionFactId, confirmFactId: fact.factId },
     });
   }
 
@@ -463,7 +504,15 @@ export class OrderEngine implements Engine {
     const { view } = stored;
     if (!CANCELLABLE.includes(view.state)) return result({ type: "rejected", reason: "invalid_state", order: view });
     const order: OrderView = { ...view, state: "cancelado", queuePosition: null };
-    return this.save(context, {
+    // A confirmed order's confirm is what a cancel takes back; otherwise the version itself.
+    const closed = view.state === "confirmado" && stored.confirmFactId !== null ? stored.confirmFactId : stored.versionFactId;
+    const fact = this.customerFact(context, operationKey, order, {
+      kind: "order_cancel",
+      body: {},
+      dependsOn: [],
+      closes: closed === null ? null : { factId: closed, reason: "cancelled" },
+    });
+    return this.save(context, fact, {
       operationKey,
       outcome: { type: "order_cancelled", order },
       base: stored,
@@ -471,12 +520,44 @@ export class OrderEngine implements Engine {
       newVersion: false,
       confirming: false,
       auditKind: "order_cancelled",
+      facts: { versionFactId: stored.versionFactId, confirmFactId: stored.confirmFactId },
     });
   }
 
+  /**
+   * A customer's order fact: the customer acted, and the message (or tap) they acted with is its
+   * evidence. Its body names the order and version, so the order's fact trail can find it.
+   */
+  private customerFact(
+    context: CustomerContext,
+    operationKey: string,
+    order: OrderView,
+    fact: Pick<FactCommit, "dependsOn" | "closes"> & {
+      readonly kind: "order_version" | "order_confirm" | "order_cancel";
+      readonly body: Readonly<Record<string, unknown>>;
+    },
+  ): FactCommit {
+    const evidence: EvidenceRef[] = [{ kind: "inbound_message", refId: context.jobId, contentSha256: null }];
+    return {
+      factId: this.deps.ids.newId(),
+      kind: fact.kind,
+      operationKey,
+      draft: null,
+      actorUserId: context.customerId,
+      validFromMs: context.nowMs,
+      body: { orderId: order.orderId, version: order.version, ...fact.body },
+      evidence,
+      dependsOn: fact.dependsOn,
+      closes: fact.closes,
+      movements: [],
+    };
+  }
+
+  /** The order commit first, so its guards report first, then the fact under the same key. */
   private save(
     context: CustomerContext,
-    write: Pick<OrderWrite, "operationKey" | "outcome" | "order" | "newVersion" | "confirming" | "auditKind"> & {
+    fact: FactCommit,
+    write: Pick<OrderWrite, "operationKey" | "outcome" | "order" | "newVersion" | "confirming" | "auditKind" | "facts"> & {
       readonly base: StoredOrder | null;
     },
   ): EngineResult {
@@ -488,7 +569,7 @@ export class OrderEngine implements Engine {
       auditId: this.deps.ids.newId(),
       nowMs: context.nowMs,
     });
-    return result(write.outcome, [commit]);
+    return result(write.outcome, [commit, this.deps.ledger.statementsFor(context, fact, context.nowMs)]);
   }
 }
 

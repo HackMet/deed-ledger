@@ -3,6 +3,7 @@ import type { CustomerContext, EngineResult, LineMatch } from "../../src/applica
 import { OrderEngine } from "../../src/application/engine/order-engine";
 import type { ActionEnvelope, CustomerAction } from "../../src/domain/contract/actions";
 import { D1OrderStore } from "../../src/infrastructure/d1/order-store";
+import { D1FactLedger } from "../../src/infrastructure/d1/fact-ledger";
 import { guardedBatch } from "../../src/infrastructure/d1/fence";
 import { confirmTap, firstOrder, firstOrderMatches, ids } from "../fixtures/contract";
 import { newPhone, seedStore } from "./seed";
@@ -10,7 +11,7 @@ import { newPhone, seedStore } from "./seed";
 /** The order engine on local D1, shared by the engine's test files. */
 export const T0 = Date.UTC(2026, 9, 31, 14);
 export const store = new D1OrderStore(env.DB);
-export const engine = new OrderEngine({ store, ids: { newId: () => crypto.randomUUID() } });
+export const engine = new OrderEngine({ store, ids: { newId: () => crypto.randomUUID() }, ledger: new D1FactLedger(env.DB) });
 
 /** Runs a result's commits as the job's completion batch does: one batch, every guard first. */
 export async function save(result: EngineResult): Promise<void> {

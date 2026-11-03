@@ -27,6 +27,8 @@ interface OrderRow {
   place_text: string | null;
   delivery_fee_centavos: number | null;
   total_centavos: number | null;
+  version_fact_id: string | null;
+  confirm_fact_id: string | null;
 }
 
 interface LineRow {
@@ -41,7 +43,7 @@ interface LineRow {
 }
 
 const ORDER_SELECT = `SELECT o.id, o.customer_id, o.state, o.current_version, o.first_confirmed_at_ms,
-    v.fulfillment_mode, v.place_id, v.place_text, v.delivery_fee_centavos, v.total_centavos
+    o.version_fact_id, o.confirm_fact_id, v.fulfillment_mode, v.place_id, v.place_text, v.delivery_fee_centavos, v.total_centavos
   FROM orders o
   JOIN order_versions v ON v.business_id = o.business_id AND v.order_id = o.id AND v.version = o.current_version`;
 
@@ -163,9 +165,20 @@ export class D1OrderStore implements OrderStore {
       statements.push(
         this.db
           .prepare(
-            `INSERT INTO orders (id, business_id, customer_id, state, current_version, created_at_ms) VALUES (?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO orders (id, business_id, customer_id, state, current_version, created_at_ms, version_fact_id,
+               confirm_fact_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           )
-          .bind(order.orderId, businessId, write.customerId, order.state, order.version, write.nowMs),
+          .bind(
+            order.orderId,
+            businessId,
+            write.customerId,
+            order.state,
+            order.version,
+            write.nowMs,
+            write.facts.versionFactId,
+            write.facts.confirmFactId,
+          ),
       );
     } else {
       // Ownership, version and state, exactly as read.
@@ -180,10 +193,21 @@ export class D1OrderStore implements OrderStore {
             `UPDATE orders SET state = ?1, current_version = ?2,
                first_confirmed_at_ms = CASE WHEN ?3 THEN COALESCE(first_confirmed_at_ms, ?4) ELSE first_confirmed_at_ms END,
                ready_at_ms = CASE WHEN ?1 = 'listo' THEN COALESCE(ready_at_ms, ?4) ELSE ready_at_ms END,
-               delivered_at_ms = CASE WHEN ?1 = 'entregado' THEN COALESCE(delivered_at_ms, ?4) ELSE delivered_at_ms END
+               delivered_at_ms = CASE WHEN ?1 = 'entregado' THEN COALESCE(delivered_at_ms, ?4) ELSE delivered_at_ms END,
+               version_fact_id = ?8, confirm_fact_id = ?9
              WHERE business_id = ?5 AND id = ?6 AND customer_id = ?7`,
           )
-          .bind(order.state, order.version, write.confirming ? 1 : 0, write.nowMs, businessId, order.orderId, write.customerId),
+          .bind(
+            order.state,
+            order.version,
+            write.confirming ? 1 : 0,
+            write.nowMs,
+            businessId,
+            order.orderId,
+            write.customerId,
+            write.facts.versionFactId,
+            write.facts.confirmFactId,
+          ),
       );
     }
 
@@ -300,7 +324,14 @@ export class D1OrderStore implements OrderStore {
       queuePosition:
         packing && row.first_confirmed_at_ms !== null ? await this.queuePosition(tenant, row.id, row.first_confirmed_at_ms) : null,
     };
-    return { view, customerId: row.customer_id, firstConfirmedAtMs: row.first_confirmed_at_ms, resumeState };
+    return {
+      view,
+      customerId: row.customer_id,
+      firstConfirmedAtMs: row.first_confirmed_at_ms,
+      resumeState,
+      versionFactId: row.version_fact_id,
+      confirmFactId: row.confirm_fact_id,
+    };
   }
 }
 

@@ -158,7 +158,8 @@ describe("order engine on local D1", () => {
       action: { type: "remove_line", orderId: bob.orderId, version: 1, lineId: "L1" },
     });
     expect(removed.outcome.type).toBe("readback");
-    expect(removed.commits).toHaveLength(1);
+    // The order commit and its order_version fact (K2b).
+    expect(removed.commits).toHaveLength(2);
   });
 
   it("(d) a change after confirming makes v2 in por_confirmar; a tap on v1 saves nothing; v2 keeps its place", async () => {
