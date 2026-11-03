@@ -53,6 +53,14 @@ Last updated: Fri Oct 30, 2026, evening Honduras time, by Claude Code (E7: docs 
   - issue #12's console taps, `preparationList` and `verifyClaims`
   - issue #60's supplier invoices (the receipt handler stays unwired)
   - console login and a deploy, so staff use the preparation list on their own phones (not deployed)
+- K2b (Nov 2, `claude/engine-facts`, local D1 only, not deployed): every order transition is also exactly one fact in
+  the same batch (`order_version`, `order_confirm`, `order_cancel`, `order_status`), under the operation's own key;
+  `orders` is the read cache and keeps `version_fact_id` / `confirm_fact_id` (`0023_order_facts.sql`). P1 is
+  kind-aware (customer facts need an `inbound_message`, staff taps exactly one `member`). `verifyClaims` answers from
+  fact liveness and `domain/order-state.ts`. Liveness rule: a fact superseded by one of its own ancestors does not
+  kill it (v2 depends on and supersedes v1 and stays live; v1's confirm dies). Staff-tap fact commits carry a post
+  guard (P1), so `saveConsoleAction` (PR #63) must run post guards before staff taps work there. Not built: the
+  `session` evidence (MemberContext has no session id) and the order code `#Codigo`.
 - Every guard now has a read before it that answers the owner, with the guard left as the backstop
   for a race (D-42): a used operation key reads as `duplicate`, a stale draft revision as
   `rejected`/`stale_version`, a cancelled dependency as a rejection carrying the dead ids. A guard
