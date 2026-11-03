@@ -3,9 +3,17 @@
 Shared state for every agent: what's true now, what's next, what's open, what bit us. Keep it short. Anything a
 command can tell you (git log, test results, CI) doesn't belong here. Decisions go in [decisions.md](decisions.md).
 
-Last updated: Tue Nov 3, 2026, morning Honduras time, by Claude Code.
+Last updated: Tue Nov 3, 2026, midday Honduras time, by Claude Code.
 
 ## Now
+
+- **Auto-deploy works (Nov 3):** every merge to main tests and deploys the demo (`.github/workflows/deploy.yml`);
+  the first run after #63 passed once the repo secrets were set. Repo moved to `HackMet/deed-ledger`.
+- **Customer copy fixes (branch `claude/customer-copy-fixes`, from a live photo test):** "out of stock" now reads
+  "ahorita no hay X" (was "no nos queda calabacitas", wrong for plurals); the ready notice joins "sin a, b ni c";
+  an item still without an amount is never listed under "Anotado ✅" (it read as settled, and "Tomate 1 lb" as a
+  chosen pound): it goes in "Me falta saber cuánto querés de…". Still open from that test: two sold-out notices
+  and "listo" arrive as three messages in six seconds; a photo takes about 34 seconds with nothing in between.
 
 - **Live (Nov 3):** deployed to Cloudflare Workers on Meta's WhatsApp test number, store "Tienda demo (sintética)"
   with a synthetic 40-product catalog, `PRETEND_ENGINE=1`, `CONVERSATION=planner`, `TEST_COMMANDS=1`

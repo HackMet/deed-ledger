@@ -1,6 +1,6 @@
 /**
  * Customer questions (#47): "¿Hay X?", "¿A cuánto?", "¿A qué hora abren?". Answers come from
- * records only: "sí hay", "se nos acabó" or "te lo anoto y te confirmo"; only confirmed prices;
+ * records only: "sí hay", "ahorita no hay" or "te lo anoto y te confirmo"; only confirmed prices;
  * hours from settings or "te confirmo". Readings are authored in the wire format (synthetic), and
  * the engine is the pretend one; no test calls the network.
  */
@@ -58,7 +58,7 @@ const fact = (asked: string, more: Partial<AnswerFact> = {}): AnswerFact => ({
 // ---------------------------------------------------------------------------------------------
 
 describe("availability answers", () => {
-  it("says 'sí hay' and 'se nos acabó' only from records, each claimed, and 'te lo anoto' otherwise", () => {
+  it("says 'sí hay' and 'ahorita no hay' only from records, each claimed, and 'te lo anoto' otherwise", () => {
     const outcome: EngineOutcome = {
       type: "answer",
       topic: "availability",
@@ -71,7 +71,7 @@ describe("availability answers", () => {
     };
     const reply = render(outcome);
     expect(reply.body).toBe(
-      ["El arroz: sí hay.", "Leche: se nos acabó.", "Pan: te confirmo si hay.", "Manteca roja: te confirmo si hay."].join("\n"),
+      ["El arroz: sí hay.", "Leche: ahorita no hay.", "Pan: te confirmo si hay.", "Manteca roja: te confirmo si hay."].join("\n"),
     );
     expect(flattenClaims(reply.claims)).toEqual([
       { type: "availability", productId: "p-arroz", availability: "hay" },
@@ -334,7 +334,7 @@ describe("customer questions end to end", () => {
     );
 
     expect(await t.say("¿Hay arroz, leche y manteca roja?")).toBe(
-      ["Arroz: sí hay.", "Leche: se nos acabó.", "Manteca roja: te confirmo si hay."].join("\n"),
+      ["Arroz: sí hay.", "Leche: ahorita no hay.", "Manteca roja: te confirmo si hay."].join("\n"),
     );
     expect(await t.say("¿A cuánto el arroz y el pan?")).toBe(["El arroz: L 18.", "Pan: el precio te lo confirmo."].join("\n"));
     expect(await t.say("¿A qué hora abren?")).toBe(COPY.hoursUnknown);

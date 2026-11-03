@@ -118,7 +118,7 @@ in `src/domain/contract/outcomes.ts`, marked "Proposed (#47)"; they are additive
    - `availability`: from evidence (#37): `hay` only with recent evidence, `se_acabo` after No hay, else `no_se`.
      `no_se` for an unmatched or restricted product.
    - `restricted`: the product is alcohol or tobacco.
-   - Customers hear: "Arroz: sí hay." / "Leche: se nos acabó." / "Pan: te lo anoto y te confirmo." and
+   - Customers hear: "Arroz: sí hay." / "Leche: ahorita no hay." / "Pan: te lo anoto y te confirmo." and
      "El arroz: L 18." / "Pan: el precio te lo confirmo." Restricted: "eso solo lo vendemos aquí en la tienda."
 3. **New outcome for store hours (gap f):**
 
@@ -270,7 +270,7 @@ the engine a `TurnPlan`. Code still renders every fact, and the claim check is u
    are claims, backed by the outcome (`backedClaims` reads `questions.options` too). `assumed` lists the lines
    whose quantity this burst assumed, for "Te puse 1 de…". **Proposed (Nov 3): `noted?: lineId[]`** (both
    paths) lists the lines this burst added or changed (quantity, product or unit), the only ones the reply echoes
-   as "Anotado ✅"; empty means nothing new and no echo; "¿ya anotaste…?" notes every line. Absent: every line,
+   (as "Anotado ✅" when the line has an amount; still without one, in "Me falta saber cuánto querés de…"); empty means nothing new and no echo; "¿ya anotaste…?" notes every line. Absent: every line,
    as before.
 5. **`missingFor(order, quantityAsks)`** (`src/domain/readiness.ts`, pure) is the shared readiness rule: no lines
    (what to order), lines without a quantity until asked twice (`MAX_QUANTITY_ASKS`), unknown fulfillment, delivery

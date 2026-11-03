@@ -467,7 +467,7 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
   per day and the delivery fee. Stored in `store_products` and `store_setup_settings` (migration 0019) through
   `D1StoreSetupRepository`, every query scoped by the session's store. The D1 pretend engine maps a product to
   `names: [name]`, `aliases: other names`, `availability: "se_acabo"` when marked "No hay" (unmarked is unknown,
-  never "hay"); an ordered "No hay" product keeps `se_acabo` on its line, so the readback says "no nos queda" and
+  never "hay"); an ordered "No hay" product keeps `se_acabo` on its line, so the readback says "ahorita no hay" and
   leaves it out of the total. The spec's catalog (`products`, `product_names`, `prices`, `availability_evidence`)
   and spoken setup session live in the teammate's engine and replace these tables once ready. The dev console keeps
   `DEMO_CATALOG`.
