@@ -68,6 +68,23 @@ or piped into `wrangler secret put`; never paste them into a file, a chat or a l
 3. `npx wrangler secret put <NAME>` for any secret a branch added to `secrets.required` in `wrangler.jsonc`.
 4. Deploy with the same `--var`s, then the smoke test.
 
+## Automatic deploys
+
+`.github/workflows/deploy.yml` deploys the demo on every merge to `main` (and by hand from the Actions tab): tests,
+then `d1 migrations apply --remote`, then `wrangler deploy` with the demo's `--var`s (pretend engine, planner path,
+test commands on). One deploy runs at a time.
+
+Setup, once:
+
+1. Cloudflare dashboard → My Profile → API Tokens → create a token from the "Edit Cloudflare Workers" template,
+   limited to this account, plus D1 edit. Copy it once; it isn't shown again.
+2. GitHub → the repo → Settings → Secrets and variables → Actions (needs repo admin): add `CLOUDFLARE_API_TOKEN`
+   (that token) and `CLOUDFLARE_ACCOUNT_ID` (the account ID from `npx wrangler whoami`).
+
+The Worker's own secrets (WhatsApp, `MODEL_API_KEY`, salts) stay in Cloudflare; the workflow never sees them. A
+secret a branch adds to `secrets.required` is still set by hand with `wrangler secret put` before that merge, or
+the deploy fails. Backups (step 1 above) stay manual: take one before merging a branch with new migrations.
+
 ## Switching to the real engine (#13)
 
 When the teammate's engine answers `verifyClaims`, `preparationList` and `onConsoleAction`: settle the migration
