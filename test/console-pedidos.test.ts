@@ -7,7 +7,7 @@ import type { ActionEnvelope, ConsoleAction } from "../src/domain/contract/actio
 import { INVITE_TTL_MS } from "../src/domain/console-auth";
 import { orderCode } from "../src/domain/order-code";
 import { hashToken, newToken } from "../src/infrastructure/tokens";
-import { ids, moreSugar, staleReady } from "./fixtures/contract";
+import { addAndPickup, ids, moreSugar, staleReady } from "./fixtures/contract";
 import { type Harness, harness } from "./helpers/harness";
 import { engine, newStore, placeFirstOrder, save, T0, tap } from "./helpers/orders";
 import { newPhone, seedStore } from "./helpers/seed";
@@ -165,8 +165,14 @@ describe("K5: the Orders screen reads the ledger", () => {
     const s = await storeWithSession();
     const orderId = await confirmed(s);
     await env.DB.prepare(`UPDATE orders SET state = 'cancelado' WHERE id = ?`).bind(orderId).run();
-    const page = await (await get(h, "/console/pedidos", await login(h, s))).text();
+    const cookie = await login(h, s);
+    const page = await (await get(h, "/console/pedidos", cookie)).text();
     expect(row(page, orderId)).toBe("none");
+    expect(page).toContain("Cliente · Nuevo");
+    expect(page).not.toContain("Cancelado");
+    const trail = await (await get(h, `/console/pedidos/${orderId}`, cookie)).text();
+    expect(trail).toContain("Nuevo · Versión 1");
+    expect(trail).not.toContain("Cancelado");
   });
 
   it("shows the trail with the closure and its reason, and both dependency lists", async () => {
@@ -268,5 +274,87 @@ describe("K5: the Orders screen reads the ledger", () => {
     const expected = [0, 5, 10, 15, 20].map((i) => alphabet[parseInt(bits.slice(i, i + 5), 2)]).join("");
     expect(await orderCode("fact-1")).toBe(`#${expected}`);
   });
-});
 
+
+  it("shows the live version as current: its lines in the list, its number and state in the trail", async () => {
+    const h = harness();
+    const s = await storeWithSession();
+    const orderId = await confirmed(s);
+    await save(await engine.onBurst(s.context({ nowMs: T0 + 3000 }), addAndPickup, []));
+    const cookie = await login(h, s);
+    const page = await (await get(h, "/console/pedidos", cookie)).text();
+    expect(page).toContain("un jabón más × 1");
+    expect(page).toContain("azucar-1lb × 2");
+    expect(page).toContain("Cliente · Por confirmar");
+    const trail = await (await get(h, `/console/pedidos/${orderId}`, cookie)).text();
+    expect(trail).toContain("Por confirmar · Versión 2 · Cambió");
+  });
+
+  it("does not count a delivered tap whose confirm was closed: no check, state from live facts", async () => {
+    const h = harness();
+    const s = await storeWithSession();
+    const orderId = await confirmed(s);
+    for (const [i, type] of (["start_preparing", "mark_ready", "mark_delivered"] as const).entries()) {
+      await save(await engine.onConsoleAction(member(s, T0 + 5000 + i), staffTap(type, orderId, 1)));
+    }
+    // The engine refuses a change after delivery, so close the confirm directly, as a supersede would.
+    const confirmFact = (await env.DB.prepare(`SELECT confirm_fact_id AS id FROM orders WHERE id = ?`).bind(orderId).first<{ id: string }>())!.id;
+    await env.DB.prepare(
+      `INSERT INTO fact_closures (business_id, fact_id, closed_by_fact_id, reason, closed_at_ms) VALUES (?, ?, 'not-its-ancestor', 'superseded', ?)`,
+    )
+      .bind(s.businessId, confirmFact, T0 + 9000)
+      .run();
+    const cookie = await login(h, s);
+    const page = await (await get(h, "/console/pedidos", cookie)).text();
+    expect(row(page, orderId)).toBe("none");
+    expect(page).not.toContain("✓");
+    expect(page).toContain("Cliente · Por confirmar");
+    const trail = await (await get(h, `/console/pedidos/${orderId}`, cookie)).text();
+    expect(trail).toContain("Por confirmar · Versión 1");
+    expect(trail).not.toContain("✓");
+    expect(trail).not.toContain("Entregado");
+  });
+
+  it("ignores another store's facts, evidence, closures and dependencies, even when their ids collide", async () => {
+    const h = harness();
+    const mine = await storeWithSession();
+    const theirs = await newStore();
+    const orderId = await confirmed(mine);
+    const [version, confirm] = (
+      await env.DB.prepare(`SELECT id FROM facts WHERE business_id = ? AND kind IN ('order_version', 'order_confirm') ORDER BY rowid`)
+        .bind(mine.businessId)
+        .all<{ id: string }>()
+    ).results.map((r) => r.id) as [string, string];
+    const foreignCancel = crypto.randomUUID();
+    const insertFact = (id: string, kind: string, body: object) =>
+      env.DB.prepare(
+        `INSERT INTO facts (id, business_id, kind, operation_key, actor_user_id, valid_from_ms, recorded_at_ms, body_json) VALUES (?, ?, ?, ?, 'x', ?, ?, ?)`,
+      ).bind(id, theirs.businessId, kind, `op-${id}`, T0 + 4000, T0 + 4000, JSON.stringify(body));
+    await env.DB.batch([
+      // A live cancel of "my" order id, in the other store.
+      insertFact(foreignCancel, "order_cancel", { orderId, version: 1 }),
+      // Evidence, a closure and an edge about my fact ids, in the other store.
+      env.DB.prepare(`INSERT INTO fact_evidence (business_id, fact_id, kind, ref_id) VALUES (?, ?, 'member', 'foreign-member')`).bind(theirs.businessId, confirm),
+      env.DB.prepare(
+        `INSERT INTO fact_closures (business_id, fact_id, closed_by_fact_id, reason, closed_at_ms) VALUES (?, ?, ?, 'cancelled', ?)`,
+      ).bind(theirs.businessId, confirm, foreignCancel, T0 + 4000),
+      env.DB.prepare(`INSERT INTO fact_dependencies (business_id, fact_id, depends_on_fact_id) VALUES (?, ?, ?)`).bind(theirs.businessId, version, confirm),
+      // An ancestor edge of the other store that would reach a fact closed in MY store.
+      env.DB.prepare(`INSERT INTO fact_dependencies (business_id, fact_id, depends_on_fact_id) VALUES (?, ?, 'ghost')`).bind(theirs.businessId, confirm),
+      env.DB.prepare(
+        `INSERT INTO fact_closures (business_id, fact_id, closed_by_fact_id, reason, closed_at_ms) VALUES (?, 'ghost', 'ghost-closer', 'cancelled', ?)`,
+      ).bind(mine.businessId, T0 + 4000),
+    ]);
+    const cookie = await login(h, mine);
+    const page = await (await get(h, "/console/pedidos", cookie)).text();
+    expect(row(page, orderId)).toBe("none");
+    expect(page).toContain("Cliente · Nuevo");
+    const trail = await (await get(h, `/console/pedidos/${orderId}`, cookie)).text();
+    expect(trail).toContain("Nuevo · Versión 1");
+    expect(trail).not.toContain("Cancelado");
+    expect(trail).not.toContain("Pedido cancelado");
+    expect(trail).not.toContain("cerrado por");
+    expect(trail).not.toContain("Personal");
+    expect(trail).not.toContain("Depende de: Pedido confirmado");
+  });
+});
