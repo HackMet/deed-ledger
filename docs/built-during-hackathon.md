@@ -23,7 +23,7 @@ Regenerate right before submitting: `node scripts/built-during.mjs` (git + gh on
 ## Not yet on origin/main (local branches)
 
 Commits are counted against the parent branch; the stack order is the merge order.
-`claude/stack-on-main` and `claude/demo-on-main` are the stack above merged onto main: their count leaves out the commits already counted in the rows they carry (`claude/dispatch` and its ancestors, and `claude/demo-env`), so only the commits new on that branch are listed, merges included.
+`claude/stack-on-main`, `claude/demo-on-main` and `claude/owner-on-main` are the stack above merged onto main: their count leaves out the commits already counted in the rows they carry (`claude/dispatch` and its ancestors, `claude/demo-env`, and `claude/facturas` with `claude/console-negocio`), so only the commits new on that branch are listed, merges included.
 
 | Branch | Parent | Commits | Head |
 |---|---|---|---|
@@ -33,12 +33,13 @@ Commits are counted against the parent branch; the stack order is the merge orde
 | claude/change-requests | claude/console-pedidos | 6 | 230bb30 |
 | claude/dispatch | claude/change-requests | 4 | 2846878 |
 | claude/demo-env | claude/dispatch | 6 | cbce8de |
-| claude/adversary | claude/demo-env | - | not present in this clone |
 | claude/console-negocio | claude/dispatch | 4 | 56fb3a4 |
 | claude/facturas | claude/console-negocio | 4 | 367813e |
 | claude/engine-docs | origin/main | 4 | d94b256 |
 | claude/stack-on-main | origin/main | 2 | 4fb745d |
-| claude/demo-on-main | claude/stack-on-main | 1 | 7a44d97 |
+| claude/demo-on-main | claude/stack-on-main | 4 | 47a2d5c |
+| claude/owner-on-main | claude/demo-on-main | 2 | 3e7d97f |
+| claude/adversary | claude/demo-on-main | 2 | dd3a342 |
 
 ## Every commit on origin/main
 

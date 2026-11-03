@@ -4,17 +4,17 @@
 
 - **Live link:** [TBD: live link]
 - **Video (3 min):** [TBD: video link]
-- **One command:** `./demo.sh` runs six synthetic customers (A to F) through the real engine, ledger and console on a local Worker. It exists on the branch `claude/demo-env`, not yet on `main`. **Perception is recorded**: the model's readings of the customers' messages are fixtures (6 fixture, 0 muse) until Angel records real Muse outputs. The engine, ledger and console are live code. `demo.sh` prints that label first and last.
+- **One command:** `./demo.sh` runs six synthetic customers (A to F) through the real engine, ledger and console on a local Worker. It exists on the local branches `claude/demo-on-main` and `claude/owner-on-main` (the engine stack merged onto `main` after #63), not yet on `main`. **Perception is recorded**: the model's readings of the customers' messages are fixtures (6 fixture, 0 muse) until Angel records real Muse outputs. The engine, ledger and console are live code. `demo.sh` prints that label first and last.
 
 Three numbers, each with where it was measured:
 
 | Number | Value | Measured |
 |---|---|---|
-| Tests | 1014 passed, 68 files, 0 failed; typecheck exit 0 | `npm test` and `npm run typecheck` on this branch (`claude/submission-docs`, on `origin/main` `7bec048`), 2026-11-03. The tests of the unmerged engine stack: [TBD: `npm test` count on the stack top, `claude/adversary` does not exist yet] |
+| Tests | 1014 passed, 68 files, 0 failed; typecheck exit 0 | `npm test` and `npm run typecheck` on this branch (`claude/submission-docs`, on `origin/main` `7bec048`), 2026-11-03. On the stack top `claude/owner-on-main` (`3e7d97f`): 1147 passed, 78 files, 0 failed; typecheck exit 0, 2026-11-03 |
 | Adversary attacks | [TBD: attacks N, false facts admitted M, from the K8 run] | The K8 run has not produced a report yet |
 | Witness check | Every commit our agents claimed exists: 0 of 31 claimed commits missing (25 of the 31 stated by the agents themselves). Of the 31: 1 is an ancestor of `origin/main`, 8 landed rewritten (same `git patch-id`), 3 were superseded by a later run, 19 are not on `main` yet (16 on a live branch, 3 only on a backup ref) | RK9 review (PASS), `origin/main` `c15155b`, 2026-11-02. It shows the commits exist, not that their tests passed |
 
-`./demo.sh` does not exit 0 yet. RK10's last run on `claude/demo-env` at `cbce8de` (`DEMO_PORT=8792 ./demo.sh --json`, twice): 29 steps, 21 passed, 8 failed, exit 1 both times. The failures are all staff-side steps (Preparación taps refused, console commits not saved, customer notices not written to the outbox). See `docs/demo-video-script.md` for what the video may and may not show.
+`./demo.sh` exits 0: 29 steps, 29 passed, on `claude/demo-on-main` (`47a2d5c`, twice) and on `claude/owner-on-main` (`e446233`, `DEMO_PORT=8795 ./demo.sh`), 2026-11-03. The staff-side steps that failed on `claude/demo-env` (Preparación taps, console saves, customer notices) pass there: each console tap saves through `runConsoleAction` (#63) and the customer's notice is read back from the outbox. See `docs/demo-video-script.md` for what the video may and may not show.
 
 ## Built during the hackathon: the record
 
@@ -36,7 +36,7 @@ Pull requests (`gh pr list --state all`, 2026-11-03):
 | #63 | Add the customer order flow, replies, reading, media and console screens | Angel-Rodas | 2026-10-31 12:13Z | merged 2026-11-03 16:53Z |
 | #64 | Renumber our migrations to 0020-0022 to clear Angel's 0004-0017 | kercmari | 2026-11-02 18:28Z | merged 2026-11-02 18:36Z |
 
-Not yet on `origin/main`, on stacked local branches (commits counted against the parent, in merge order; `claude/adversary` is planned and does not exist yet):
+Not yet on `origin/main`, on stacked local branches (commits counted against the parent, in merge order; `claude/adversary` is the K8 attack run, still in progress):
 
 | Branch | Commits | Parent |
 |---|---|---|
@@ -46,14 +46,15 @@ Not yet on `origin/main`, on stacked local branches (commits counted against the
 | `claude/change-requests` | 6 | `claude/console-pedidos` |
 | `claude/dispatch` | 4 | `claude/change-requests` |
 | `claude/demo-env` | 6 | `claude/dispatch` |
-| `claude/adversary` | - | `claude/demo-env` |
 | `claude/console-negocio` | 4 | `claude/dispatch` |
 | `claude/facturas` | 4 | `claude/console-negocio` |
 | `claude/engine-docs` | 4 | `origin/main` |
 | `claude/stack-on-main` | 2 | `origin/main` |
-| `claude/demo-on-main` | 1 | `claude/stack-on-main` |
+| `claude/demo-on-main` | 4 | `claude/stack-on-main` |
+| `claude/owner-on-main` | 2 | `claude/demo-on-main` |
+| `claude/adversary` | in progress | `claude/demo-on-main` |
 
-`claude/stack-on-main` is the stack above (through `claude/dispatch`) merged onto `main`, and `claude/demo-on-main` adds `claude/demo-env` on top of it. Their counts leave out the commits already counted in the rows above (`git log B ^parent ^claude/dispatch` and `git log B ^parent ^claude/demo-env`), so only the new ones remain, merges included.
+`claude/stack-on-main` is the stack above (through `claude/dispatch`) merged onto `main`, `claude/demo-on-main` adds `claude/demo-env` on top of it, and `claude/owner-on-main` adds `claude/facturas` (with `claude/console-negocio`). Their counts leave out the commits already counted in the rows above (`git log B ^parent ^claude/dispatch`, `git log B ^parent ^claude/demo-env` and `git log B ^parent ^claude/facturas`), so only the new ones remain, merges included.
 
 Angel's PR #63 is merged; it is on `main` and no longer a local branch.
 
@@ -153,8 +154,7 @@ Claude Code is the main development tool. Meta's Muse Code takes separately scop
 Cut from the hackathon scope, in the order we would build them:
 
 - **Campaigns as facts.** A `campaign` fact with a validity window; promo prices `dependsOn` it, so ending the campaign expires the promo prices through the gate, the way a cancellation already stops what depended on an order.
-- **Invoice reading (K14):** the Facturas screens and a recorded reader exist on `claude/facturas`, but the Muse Spark adapter that reads a real invoice photo is pending. [TBD: confirm K14 status before submitting]
-- **K16:** [TBD: what K16 is and whether it landed; it was not in the verified inputs]
+- **Invoice reading (K14):** the Facturas screens and a recorded reader of synthetic invoices are on `claude/owner-on-main`; every other photo is refused as unreadable. The Muse Spark adapter that reads a real invoice photo is pending, with its prompt draft in `docs/prompts/receipt-reading.md` on that branch, for Angel's review.
 
 ## Next steps
 
