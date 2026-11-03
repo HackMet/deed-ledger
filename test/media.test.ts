@@ -2,11 +2,11 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { processConversation } from "../src/application/processor";
 import { COULD_NOT_OPEN_MEDIA, couldNotDownload, RECEIVED_PLACEHOLDER } from "../src/domain/copy";
-import { MediaDownloadError } from "../src/integrations/whatsapp/media";
+import { MediaDownloadError, WhatsAppMediaSource } from "../src/integrations/whatsapp/media";
 import { bytes, FakeMediaSource } from "./helpers/fakes";
 import { conversationOf, expireLease, type Harness, harness, rows } from "./helpers/harness";
 import { newPhone, seedIntroducedCustomer, seedStore } from "./helpers/seed";
-import { imageMessage, wamid, webhook } from "./helpers/whatsapp";
+import { audioMessage, imageMessage, wamid, webhook } from "./helpers/whatsapp";
 
 const nowS = (h: Harness) => Math.floor(h.clock.now() / 1000);
 
@@ -134,5 +134,44 @@ describe("media downloads", () => {
     expect(media.fetched).toEqual([]);
     expect(h.sentTo(phone)).toEqual([COULD_NOT_OPEN_MEDIA]);
     expect(COULD_NOT_OPEN_MEDIA).toBe("No pude abrir ese archivo. ¿Me lo mandás otra vez o me escribís lo que necesitás?");
+  });
+});
+
+describe("Codex final pass, finding 6: a voice note Meta gives nothing to check against", () => {
+  it("is retried like a cut-off download, then gets the could-not-download reply; the log names the code", async () => {
+    // Synthetic lookups without sha256 or file_size, and bytes that could be a cut-off note.
+    const fetched: string[] = [];
+    const media = new WhatsAppMediaSource({
+      token: "test-whatsapp-token-not-real",
+      apiVersion: "v26.0",
+      fetch: async (url) => {
+        fetched.push(url);
+        return url.startsWith("https://graph.facebook.com/")
+          ? Response.json({ url: "https://lookaside.example.test/voice", mime_type: "audio/ogg", id: "m-voice" })
+          : new Response("synthetic voice bytes", { headers: { "content-type": "audio/ogg" } });
+      },
+    });
+    const h = harness({ mediaSource: media });
+    const { store, phone } = await storeWithOwner();
+    await h.post(webhook(store.phoneNumberId, { messages: [audioMessage({ from: phone, id: wamid(), timestampS: nowS(h), mediaId: "m-voice" })] }));
+    h.clock.advance(4_000);
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      await h.deliver(h.takeRingsFor(store.businessId).slice(0, 1));
+      h.clock.advance(60_000);
+    }
+    expect(await rows(`SELECT job_state, attempts, last_error FROM inbound_messages WHERE business_id = ?`, store.businessId)).toEqual([
+      { job_state: "failed", attempts: 3, last_error: "media_unavailable" },
+    ]);
+    expect((await assetOf(store.businessId)).state).toBe("pending");
+    expect(h.sentTo(phone)).toEqual([couldNotDownload("audio")]);
+    expect(couldNotDownload("audio")).toBe("No pude descargar la nota de voz. ¿Me la mandás otra vez o me escribís lo que necesitás?");
+    expect(h.log.fields("media_not_downloaded").map((line) => line.reason)).toEqual([
+      "MediaDownloadError: unverified",
+      "MediaDownloadError: unverified",
+      "MediaDownloadError: unverified",
+    ]);
+    // IDs and the code only: never the URL or the token.
+    expect(h.log.lines.join("\n")).not.toContain("lookaside");
+    expect(h.log.lines.join("\n")).not.toContain("test-whatsapp-token-not-real");
   });
 });

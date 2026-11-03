@@ -153,19 +153,21 @@ export class D1CustomerControlRepository implements CustomerControlRepository {
     return results.map((row) => ({ businessId: row.business_id, customerId: row.id }));
   }
 
-  async deletionMedia(tenant: Tenant, customerId: string): Promise<DeletionMedia> {
+  async deletionMedia(tenant: Tenant, customerId: string, uptoReceivedAtMs?: number): Promise<DeletionMedia> {
     const customer = await this.db
       .prepare(`SELECT phone FROM customers WHERE business_id = ? AND id = ?`)
       .bind(tenant.businessId, customerId)
       .first<{ phone: string | null }>();
+    // A reset erases only the media of the messages its D1 erasure covers (`erasure`'s cutoff).
+    const upto = uptoReceivedAtMs === undefined ? { sql: "", params: [] as unknown[] } : { sql: "AND i.received_at_ms <= ?", params: [uptoReceivedAtMs] };
     const { results } = await this.db
       .prepare(
         `SELECT DISTINCT m.object_key FROM media_assets m
          JOIN inbound_messages i ON i.business_id = m.business_id AND i.media_asset_id = m.id
          JOIN conversations c ON c.business_id = i.business_id AND c.id = i.conversation_id
-         WHERE c.business_id = ? AND c.customer_id = ?`,
+         WHERE c.business_id = ? AND c.customer_id = ? ${upto.sql}`,
       )
-      .bind(tenant.businessId, customerId)
+      .bind(tenant.businessId, customerId, ...upto.params)
       .all<{ object_key: string }>();
     return { phone: customer?.phone ?? null, mediaPrefixes: results.map((row) => row.object_key) };
   }
@@ -189,7 +191,7 @@ export class D1CustomerControlRepository implements CustomerControlRepository {
       );
     }
     statements.push(
-      ...this.erasure(tenant, customerId, due, nowMs, null),
+      ...this.erasure(tenant, customerId, due, nowMs, { uptoReceivedAtMs: null, keepProviderIds: false }),
       this.db
         .prepare(
           `UPDATE customers
@@ -219,12 +221,16 @@ export class D1CustomerControlRepository implements CustomerControlRepository {
   resetCommit(tenant: Tenant, customerId: string, uptoReceivedAtMs: number, nowMs: number): Commit {
     const b = tenant.businessId;
     // The same erasure as the purge, for this customer's messages up to the command; the phone
-    // stays, so the reply reaches them and their next message finds the same, emptied record.
+    // stays, so the reply reaches them and their next message finds the same, emptied record. The
+    // provider message IDs stay too (Codex final pass, finding 2, Nov 3): intake's duplicate check
+    // reads them, and a reset has no tombstone, so without them Meta re-delivering the /new (or an
+    // earlier order message) would be taken as new and reset or read again. They hold nothing the
+    // kept phone doesn't.
     const live = `EXISTS (SELECT 1 FROM customers WHERE business_id = ? AND id = ? AND deleted_at_ms IS NULL)`;
     return {
       guards: [],
       statements: [
-        ...this.erasure(tenant, customerId, live, nowMs, uptoReceivedAtMs),
+        ...this.erasure(tenant, customerId, live, nowMs, { uptoReceivedAtMs, keepProviderIds: true }),
         this.db
           .prepare(
             `UPDATE customers
@@ -239,11 +245,19 @@ export class D1CustomerControlRepository implements CustomerControlRepository {
 
   /**
    * What the purge erases, shared with a test reset: media references, message text and provider
-   * IDs (`uptoReceivedAtMs`: only messages received by then), what we sent them, saved places,
-   * Pendientes, readback pointers, and learned aliases their orders proposed. Each statement runs
-   * only while `guard` (SQL with the business and customer IDs as its two parameters) holds.
+   * IDs (`uptoReceivedAtMs`: only messages received by then; `keepProviderIds`: the inbound
+   * provider IDs stay, for intake's duplicate check), what we sent them, saved places, Pendientes,
+   * readback pointers, and learned aliases their orders proposed. Each statement runs only while
+   * `guard` (SQL with the business and customer IDs as its two parameters) holds. The purge erases
+   * the IDs: its tombstone refuses a message sent before it.
    */
-  private erasure(tenant: Tenant, customerId: string, guard: string, nowMs: number, uptoReceivedAtMs: number | null): D1PreparedStatement[] {
+  private erasure(
+    tenant: Tenant,
+    customerId: string,
+    guard: string,
+    nowMs: number,
+    { uptoReceivedAtMs, keepProviderIds }: { readonly uptoReceivedAtMs: number | null; readonly keepProviderIds: boolean },
+  ): D1PreparedStatement[] {
     const b = tenant.businessId;
     const theirConversations = `SELECT id FROM conversations WHERE business_id = ? AND customer_id = ?`;
     // Their orders: the engine's table, and the pretend engine's snapshot until the real one runs.
@@ -268,7 +282,7 @@ export class D1CustomerControlRepository implements CustomerControlRepository {
         .prepare(
           `UPDATE inbound_messages
            SET text_body = NULL, reply_id = NULL, context_message_id = NULL, latitude_e6 = NULL, longitude_e6 = NULL,
-               provider_message_id = 'deleted:' || id,
+               provider_message_id = ${keepProviderIds ? "provider_message_id" : "'deleted:' || id"},
                last_error = CASE WHEN job_state = 'pending' THEN 'customer_deleted' ELSE last_error END,
                job_finished_at_ms = CASE WHEN job_state = 'pending' THEN ? ELSE job_finished_at_ms END,
                retry_after_ms = CASE WHEN job_state = 'pending' THEN NULL ELSE retry_after_ms END,

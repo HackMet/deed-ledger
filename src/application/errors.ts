@@ -57,9 +57,23 @@ export class PermanentWriteError extends Error {
   override readonly name = "PermanentWriteError";
 }
 
-/** A short, content-free description of an error for logs: its name, and D1's own error text. */
+/**
+ * An error with a short code of its own (`too_large`, `download_http_404`, `unverified`): a fixed
+ * word chosen by our code, never input, so logs may carry it beside the name.
+ */
+export class CodedError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+/** A short, content-free description of an error for logs: its name, its code, and D1's own error text. */
 export function describeError(error: unknown): string {
   if (!(error instanceof Error)) return "non_error_thrown";
+  if (error instanceof CodedError) return `${error.name}: ${error.code}`;
   // D1 messages name constraints, never bound values. Other messages may echo input, so skip them.
   if (error.message.startsWith("D1_")) return `${error.name}: ${error.message.slice(0, 200)}`;
   return error.name;

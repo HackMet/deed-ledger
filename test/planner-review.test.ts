@@ -273,3 +273,33 @@ describe("finding 7: a stale 'Sí' never approves a renewed proposal for another
     expect(await repo.listApprovedAliases(store)).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------------------------
+// Codex final pass (Nov 3). Each test failed on the code it was written against.
+
+describe("Codex final pass, finding 1: words name a line only when they tell it apart from the other open lines", () => {
+  const ARROCES = [line("L1", "arroz blanco"), line("L2", "arroz integral")];
+  const removes = (raw: unknown, f: PlannerFrame) => (check(raw, f).plan.changes ?? []).filter((c) => c.remove === true).map((c) => c.lineRef);
+
+  it("'2 arroz blanco' backs only the blanco line, never the integral one that shares 'arroz'", () => {
+    const f = frame({ orderLines: ARROCES, saidTexts: ["2 arroz blanco"] });
+    expect(quantities(proposal([op("set_quantity", "L2", { quantity: "2" })]), f)).toEqual([]);
+    expect(check(proposal([op("set_quantity", "L2", { quantity: "2" })]), f).refused).toContainEqual({ code: "quantity_not_said", line: "L2" });
+    expect(quantities(proposal([op("set_quantity", "L1", { quantity: "2" })]), f)).toEqual([{ lineRef: "L1", quantity: "2" }]);
+  });
+
+  it("a word every open line shares ('2 arroz') backs none of them", () => {
+    const f = frame({ orderLines: ARROCES, saidTexts: ["2 arroz"] });
+    expect(quantities(proposal([op("set_quantity", "L1", { quantity: "2" }), op("set_quantity", "L2", { quantity: "2" })]), f)).toEqual([]);
+    // A new item sharing the word competes the same way.
+    const added = frame({ newItems: [line("N1", "arroz blanco"), line("N2", "arroz integral")], orderLines: [], saidTexts: ["2 arroz blanco"] });
+    expect(check(proposal([op("add", "N1", { quantity: "2" }), op("add", "N2", { quantity: "2" })]), added).refused).toContainEqual({ code: "quantity_not_said", line: "N2" });
+  });
+
+  it("a removal the reader couldn't place: 'el arroz' removes neither, 'el arroz integral' only that one", () => {
+    const shared = frame({ orderLines: ARROCES, unplacedRemovals: ["el arroz"] });
+    expect(removes(proposal([op("remove", "L1"), op("remove", "L2")]), shared)).toEqual([]);
+    const named = frame({ orderLines: ARROCES, unplacedRemovals: ["el arroz integral"] });
+    expect(removes(proposal([op("remove", "L1"), op("remove", "L2")]), named)).toEqual(["L2"]);
+  });
+});

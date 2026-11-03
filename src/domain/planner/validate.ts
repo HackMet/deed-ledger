@@ -83,7 +83,7 @@ export function validateProposal(raw: unknown, frame: PlannerFrame): ProposalChe
     if (op.op === "remove") {
       // Only a removal the reader heard: its own line, or one it couldn't place that names this line.
       if (isNew) refuse("remove_new_item", line.label);
-      else if (!frame.readerRemoved.has(line.label) && !frame.unplacedRemovals.some((said) => names(said, line))) refuse("remove_not_said", line.label);
+      else if (!frame.readerRemoved.has(line.label) && !frame.unplacedRemovals.some((said) => names(said, line, frame))) refuse("remove_not_said", line.label);
       else removed.add(line.label);
       continue;
     }
@@ -284,7 +284,7 @@ function sameQuantity(a: DecimalString, b: DecimalString | null): boolean {
  * A quantity the burst backs for this line (review finding 1, Nov 2), only:
  * (a) the reader's own quantity for that line (a new item's, or a set_quantity on its ref);
  * (b) a number in a part of the customer's words that names the line ("6 platanos" backs platanos,
- *     never arroz);
+ *     never arroz; "2 arroz blanco" backs arroz blanco, never arroz integral);
  * (c) the one number in the burst, when the question last asked was this one line's quantity.
  * Never a price ("a L 18"), an address or phone number ("casa 5"), or a number in the product's own
  * name ("paquete de 10"). A new item the reader gave a quantity keeps it.
@@ -296,7 +296,7 @@ function saidQuantity(value: DecimalString, line: FrameLine, frame: PlannerFrame
   if (reader !== undefined && sameQuantity(value, reader)) return true;
   const target = toThousandths(value);
   const parts = partsOf(frame.saidTexts);
-  if (parts.filter((part) => names(part, line)).some((part) => quantitiesIn(part, line).some((q) => toThousandths(q) === target))) return true;
+  if (parts.filter((part) => names(part, line, frame)).some((part) => quantitiesIn(part, line).some((q) => toThousandths(q) === target))) return true;
   if (frame.askedQuantityOf !== line.label) return false;
   const all = parts.flatMap((part) => quantitiesIn(part, line));
   return all.length === 1 && toThousandths(all[0]!) === target;
@@ -335,9 +335,43 @@ function quantitiesIn(part: string, line: FrameLine): string[] {
   return said === null ? [] : [said];
 }
 
-/** The part names the line: a product word of its own, or of its product, plurals folded. */
-function names(part: string, line: FrameLine): boolean {
-  return sharesWord(part, line.said) || (line.productName !== null && sharesWord(part, line.productName));
+/**
+ * The part names the line only when it fits that line better than every other line of this turn
+ * (Codex final pass, finding 1, Nov 3): it holds more of the line's words (its own, or its
+ * product's), or as many but more of what the customer called the line. A word several lines share
+ * names none of them: "2 arroz" names neither "arroz blanco" nor "arroz integral", "2 arroz blanco"
+ * names the first, and "4 tomates" names "tomates" over "salsa de tomate".
+ */
+function names(part: string, line: FrameLine, frame: PlannerFrame): boolean {
+  const mine = fit(part, line);
+  if (mine.held === 0) return false;
+  return [...frame.newItems, ...frame.orderLines].every((other) => {
+    if (other.label === line.label) return true;
+    const theirs = fit(part, other);
+    return mine.held > theirs.held || (mine.held === theirs.held && mine.covered > theirs.covered);
+  });
+}
+
+/** Measures (as `productWords` folds them) say how much, not which product: "2 libras de pollo" never names "Arroz 1 lb". */
+const MEASURES = /^(?:l|ml|lb|kg|g|oz|onzas?|gal|galon(?:es)?)$/u;
+
+/** The words that tell a product apart, each in all its forms: no numbers, no measures. */
+function namingForms(text: string): string[][] {
+  return [...new Set(productWords(text))].filter((word) => !/^\d/u.test(word) && !MEASURES.test(word)).map(forms);
+}
+
+/**
+ * How the part fits the line: how many of its words the line holds (its own words or its
+ * product's), and what share of the customer's words for the line the part says.
+ */
+function fit(part: string, line: FrameLine): { readonly held: number; readonly covered: number } {
+  const said = namingForms(part);
+  const saidForms = new Set(said.flat());
+  const own = namingForms(line.said);
+  const ownForms = new Set([...own, ...namingForms(line.productName ?? "")].flat());
+  const held = said.filter((word) => word.some((form) => ownForms.has(form))).length;
+  const covered = own.filter((word) => word.some((form) => saidForms.has(form))).length;
+  return { held, covered: own.length === 0 ? 0 : covered / own.length };
 }
 
 /** "el paquete de 10" said about "Tortillas paquete 10": the 10 is the product, not the quantity. */
@@ -351,12 +385,6 @@ function forms(word: string): string[] {
   if (word.length > 4 && word.endsWith("es")) out.push(word.slice(0, -2));
   if (word.length > 3 && word.endsWith("s")) out.push(word.slice(0, -1));
   return out;
-}
-
-/** The two texts share a product word ("6 platanos" and "plátanos"), plurals folded. */
-function sharesWord(text: string, name: string): boolean {
-  const own = new Set(productWords(name).filter((word) => !/^\d/u.test(word)).flatMap(forms));
-  return productWords(text).some((word) => forms(word).some((form) => own.has(form)));
 }
 
 const WEIGHT_UNITS = /^(?:lb|lbs|libras?|kg|kgs|kilos?|kilogramos?|onzas?|oz|gramos?|gr|g)$/u;

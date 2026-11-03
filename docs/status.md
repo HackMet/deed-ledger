@@ -24,9 +24,13 @@ Last updated: Tue Nov 3, 2026, morning Honduras time, by Claude Code.
   on both; the planner failures since fixed (option-list loop, voice like text, "una" after a question, runner
   crash, E22). Two Codex reviews, every finding fixed with a failing test first. E21's recording is an owner's sales
   report, not an order: its expectation needs a real customer voice order.
+- **Codex final pass, Nov 3:** six findings fixed, each with a failing test first: a quantity or removal names a
+  line only when the words tell it apart from the other lines; `/new` keeps inbound provider IDs (duplicates) and
+  erases only the media up to its cutoff; only an affirmative answer picks an option, read against the list as shown
+  (stale prices name nothing); a voice note without a usable `sha256` or `file_size` is retried as `unverified`.
 - **Test commands:** `/new` makes a store member's phone a new customer again, `/help` lists the commands; only with
   `TEST_COMMANDS=1` and only for the store's own members (docs/deploy.md "Testing on the live number").
-- **Next:** Codex final pass on the latest changes, push to PR #63 (Angel), Kerly tests with her number, a real
+- **Next:** push to PR #63 (Angel), Kerly tests with her number, a real
   WhatsApp number for judging, demo video and submission.
 
 - The product is an order assistant: customers order on WhatsApp, Johan and staff work from a phone console, and

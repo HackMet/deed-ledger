@@ -11,7 +11,7 @@ import type { ModelProvider, ModelRequest } from "../src/application/ports";
 import { MemoryEngine, type PretendProduct } from "../src/infrastructure/memory/memory-engine";
 import { harness, rows, testEnv } from "./helpers/harness";
 import { newPhone, seedStore } from "./helpers/seed";
-import { textMessage, wamid, webhook } from "./helpers/whatsapp";
+import { imageMessage, textMessage, wamid, webhook } from "./helpers/whatsapp";
 
 const RESET = "Listo, empezás como cliente nuevo. Escribime como si fuera la primera vez.";
 const WELCOME = "Te tomo el pedido y te aviso cuando esté listo. ¿Qué te mando?";
@@ -133,5 +133,82 @@ describe("without both locks, a command is an ordinary customer message", () => 
     expect(await s.customer()).toMatchObject({ id, name: "Ana" });
     expect(await s.engine.preparationList(s.tenant)).toHaveLength(1);
     expect(s.h.log.fields("test_command")).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Codex final pass (Nov 3). Each test failed on the code it was written against.
+
+describe("Codex final pass, finding 2: /new keeps what tells a re-delivered message apart", () => {
+  it("a re-delivered /new resets nothing, and a re-delivered earlier order message isn't read again", async () => {
+    const s = await shop({ flag: true, member: "this" });
+    await s.regular();
+    const at = () => Math.floor(s.h.clock.now() / 1000);
+    const send = async (id: string, body: string, timestampS: number) => {
+      s.h.clock.advance(1_000);
+      await s.h.post(webhook(s.store.phoneNumberId, { messages: [textMessage({ from: s.phone, id, timestampS, body })] }));
+      s.h.clock.advance(4_000);
+      await s.h.deliver(s.h.takeRingsFor(s.store.businessId));
+    };
+    const orderId = wamid();
+    const orderSentAt = at();
+    await send(orderId, "2 arroz", orderSentAt);
+    const commandId = wamid();
+    const commandSentAt = at();
+    await send(commandId, "/new", commandSentAt);
+    expect(s.h.sentTo(s.phone).at(-1)).toBe(RESET);
+    expect(await s.say("Hola")).toContain(WELCOME);
+    const reads = s.provider.requests.length;
+    const replies = s.h.sentTo(s.phone).length;
+    const inbound = await rows(`SELECT id FROM inbound_messages WHERE business_id = ?`, s.store.businessId);
+
+    // Meta delivers both again, late, with their own IDs.
+    await send(commandId, "/new", commandSentAt);
+    await send(orderId, "2 arroz", orderSentAt);
+
+    expect(s.h.log.fields("test_command").map((f) => f.outcome)).toEqual(["reset"]);
+    expect(await rows(`SELECT id FROM inbound_messages WHERE business_id = ?`, s.store.businessId)).toEqual(inbound);
+    expect(s.provider.requests.length).toBe(reads);
+    expect(s.h.sentTo(s.phone)).toHaveLength(replies);
+    // The reset still erased what the messages said.
+    expect(await rows(`SELECT 1 FROM inbound_messages WHERE business_id = ? AND text_body IN ('2 arroz', '/new')`, s.store.businessId)).toEqual([]);
+  });
+});
+
+describe("Codex final pass, finding 5: /new erases only the media of messages it erases", () => {
+  it("keeps the stored bytes of a photo received after the command", async () => {
+    const s = await shop({ flag: true, member: "this" });
+    await s.say("Hola");
+    const sentAt = Math.floor(s.h.clock.now() / 1000);
+    s.h.clock.advance(1_000);
+    await s.h.post(webhook(s.store.phoneNumberId, { messages: [textMessage({ from: s.phone, id: wamid(), timestampS: sentAt + 1, body: "/new" })] }));
+    // Taken a second before the command, received a second after it: it sorts first, so its photo is
+    // stored before the reset runs, but its message is newer than the reset's cutoff.
+    s.h.clock.advance(1_000);
+    await s.h.post(webhook(s.store.phoneNumberId, { messages: [imageMessage({ from: s.phone, id: wamid(), timestampS: sentAt, mediaId: "m-after-new" })] }));
+    s.h.clock.advance(4_000);
+    await s.h.deliver(s.h.takeRingsFor(s.store.businessId));
+
+    expect(s.h.log.fields("test_command").map((f) => f.outcome)).toEqual(["reset"]);
+    const [asset] = await rows<{ state: string; stored_key: string | null }>(
+      `SELECT m.state, m.stored_key FROM media_assets m JOIN inbound_messages i ON i.business_id = m.business_id AND i.media_asset_id = m.id
+       WHERE m.business_id = ?`,
+      s.store.businessId,
+    );
+    expect(asset).toMatchObject({ state: "stored" });
+    expect(await env.MEDIA.get(asset!.stored_key!)).not.toBeNull();
+  });
+
+  it("still erases the bytes of a photo received before the command", async () => {
+    const s = await shop({ flag: true, member: "this" });
+    await s.say("Hola");
+    s.h.clock.advance(1_000);
+    await s.h.post(webhook(s.store.phoneNumberId, { messages: [imageMessage({ from: s.phone, id: wamid(), timestampS: Math.floor(s.h.clock.now() / 1000), mediaId: "m-before-new" })] }));
+    s.h.clock.advance(4_000);
+    await s.h.deliver(s.h.takeRingsFor(s.store.businessId));
+    const [stored] = await rows<{ object_key: string }>(`SELECT object_key FROM media_assets WHERE business_id = ? AND state = 'stored'`, s.store.businessId);
+    expect((await env.MEDIA.list({ prefix: `${stored!.object_key}/` })).objects).toHaveLength(1);
+    expect(await s.say("/new")).toBe(RESET);
+    expect((await env.MEDIA.list({ prefix: `${stored!.object_key}/` })).objects).toEqual([]);
   });
 });
