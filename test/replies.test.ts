@@ -195,7 +195,7 @@ describe("templates", () => {
     };
     const reply = render({ type: "readback", order });
     expect(reply.body).toContain("• 1 Aceite Clover 1 L\n");
-    expect(reply.body).toContain("• 1.5 libras de Arroz 1 lb · L 45");
+    expect(reply.body).toContain("• 1.5 libras de Arroz · L 45");
     expect(reply.body).toContain("• Azúcar 1 lb: no nos queda.");
     expect(reply.body).toContain("• Six de Salva Vida: eso solo lo vendemos aquí en la tienda.");
     // Only the line the store still has to price, named: not the sold-out or the restricted one.
