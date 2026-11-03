@@ -19,6 +19,15 @@ import {
 export const DEFAULT_READER_EFFORT: ReasoningEffort | "default" = "low";
 export const DEFAULT_PLANNER_EFFORT: ReasoningEffort | "default" = "minimal";
 
+/**
+ * The one-call text path (D-52, measured Nov 2): on by default in planner mode, at "minimal". At
+ * "low" the combined call reasoned 1,300-2,100 tokens (14.5-24.3 s, slower than the two calls it
+ * replaces); at "minimal", 350-570 tokens and 5.7-9.0 s, with the same outcomes on the same messages.
+ */
+export const DEFAULT_FAST_TEXT_EFFORT: ReasoningEffort | "default" = "minimal";
+/** Whether the planner path reads and plans a text-only burst in one call when PLANNER_FAST_TEXT is blank. */
+export const DEFAULT_FAST_TEXT = true;
+
 export interface Config {
   readonly whatsappAppSecret: string;
   readonly whatsappVerifyToken: string;
@@ -52,6 +61,12 @@ export interface Config {
    */
   readonly readerModel: ModelCallSettings;
   readonly plannerModel: ModelCallSettings;
+  /**
+   * Planner path only: a burst of text only is read and planned in one call (PLANNER_FAST_TEXT "1";
+   * "0" off; blank DEFAULT_FAST_TEXT), with FAST_TEXT_REASONING_EFFORT like the efforts above.
+   */
+  readonly fastText: boolean;
+  readonly fastTextModel: ModelCallSettings;
   /** The Worker's public origin (https://…), for links customers get. Blank: links are left out. */
   readonly publicBaseUrl: string;
 }
@@ -72,8 +87,15 @@ export function readConfig(env: Env): Config {
     modelApiKey: env.MODEL_API_KEY ?? "",
     readerModel: modelSettings(env.READER_REASONING_EFFORT, conversation === "planner" ? DEFAULT_READER_EFFORT : "default", env.PROMPT_CACHE_RETENTION),
     plannerModel: modelSettings(env.PLANNER_REASONING_EFFORT, DEFAULT_PLANNER_EFFORT, env.PROMPT_CACHE_RETENTION),
+    fastText: conversation === "planner" && fastText(env.PLANNER_FAST_TEXT),
+    fastTextModel: modelSettings(env.FAST_TEXT_REASONING_EFFORT, DEFAULT_FAST_TEXT_EFFORT, env.PROMPT_CACHE_RETENTION),
     publicBaseUrl: String(env.PUBLIC_BASE_URL ?? "").replace(/\/+$/u, ""),
   };
+}
+
+function fastText(value: unknown): boolean {
+  const raw = String(value ?? "").trim();
+  return raw === "1" ? true : raw === "0" ? false : DEFAULT_FAST_TEXT;
 }
 
 function modelSettings(effort: unknown, fallback: ReasoningEffort | "default", retention: unknown): ModelCallSettings {

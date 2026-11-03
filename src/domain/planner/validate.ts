@@ -18,7 +18,7 @@ import { schemaMismatch } from "../perception/schema-check";
 import { STANDS_ALONE } from "../retrieval";
 import type { FrameLine, PlannerFrame } from "./frame";
 import type { AskKind, LineChange, TurnPlan, TurnProposal } from "./types";
-import { MAX_ASK_LINES, MAX_OPS, turnSchema } from "./wire";
+import { MAX_ASK_LINES, MAX_OPS, SAY_NEEDS, type SayPhrase, turnSchema } from "./wire";
 
 export type RefusalCode =
   | "unknown_line"
@@ -38,6 +38,7 @@ export type RefusalCode =
   | "suggestion_restricted"
   | "ask_lines_filtered"
   | "ask_without_lines"
+  | "say_without_media"
   | "line_left_out";
 
 export interface Refusal {
@@ -175,13 +176,21 @@ export function validateProposal(raw: unknown, frame: PlannerFrame): ProposalChe
     move: proposal.move,
     ask,
     assumed: [...assumed].map(([lineRef, a]) => ({ lineRef, ...a })),
-    say: proposal.say,
+    say: sayFor(proposal.say, frame, refuse),
     basis: frame.basis,
     ...(changes.size === 0 ? {} : { changes: [...changes.values()] }),
     ...(options.length === 0 ? {} : { options }),
   };
   const picks = [...product].filter(([label]) => label.startsWith("N")).map(([label, productId]) => ({ label, productId }));
   return { ok: true, turn: { plan, picks, refused } };
+}
+
+/** The chosen phrase, unless it says a photo or voice note was received and the burst has none. */
+function sayFor(say: string, frame: PlannerFrame, refuse: (code: RefusalCode, line: string | null) => void): string {
+  const needs = SAY_NEEDS[say as SayPhrase];
+  if (needs === undefined || frame.media[needs]) return say;
+  refuse("say_without_media", null);
+  return "";
 }
 
 // ---------------------------------------------------------------------------------------------

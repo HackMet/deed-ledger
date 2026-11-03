@@ -22,6 +22,8 @@ import {
   type UnreadableMedia,
 } from "./errors";
 import type { BurstRead, BurstReader, BurstReaderInput } from "./order-handler";
+import type { MeteredCallDeps } from "./metered-call";
+import { readAndPlanText } from "./planner/one-call";
 import { needsPlanner, planTurn, type TurnPlannerDeps } from "./planner/plan-turn";
 import type { CatalogProduct } from "./perception/matching";
 import type { BurstReader as ModelBurstReader } from "./perception/reader";
@@ -98,6 +100,11 @@ export interface OrderReadingDeps {
   readonly log: Logger;
   /** The planner, when the conversation is the planner's (D-45); null or absent: classic. */
   readonly planner?: TurnPlannerDeps | null;
+  /**
+   * With the planner: a text-only burst is read and planned in one call on these settings
+   * (PLANNER_FAST_TEXT); null or absent, the reader and the planner as for any burst.
+   */
+  readonly oneCall?: MeteredCallDeps | null;
 }
 
 /** The order handler's reader: one model call per burst, behind the store's spend cap. */
@@ -114,8 +121,17 @@ async function readBurst(deps: OrderReadingDeps, { lease, messages, context }: B
     return { reading: withSharedPin({ observations: [], calls: [] }, burst), matches: [], pendingQuestion: perception.pendingQuestion };
   }
   const [perception, catalog] = await Promise.all([deps.source.perceptionContext(context), deps.source.catalog(tenant)]);
-  await holdLeaseFor(deps, lease, READING_MAX_MS);
   const planner = deps.planner ?? null;
+  if (planner !== null && deps.oneCall != null && burst.every((message) => message.type === "text")) {
+    // One call reads and plans; a second only when the reader's other names find more.
+    await holdLeaseFor(deps, lease, 2 * READING_MAX_MS);
+    const fast = await readAndPlanText({ call: deps.oneCall, planner }, { context, messages: burst, perception, catalog });
+    if (fast !== null) {
+      const read: BurstRead = { reading: fast.reading, matches: [...fast.matches, ...(fast.planned?.matches ?? [])], pendingQuestion: perception.pendingQuestion };
+      return fast.planned === null ? read : { ...read, plan: fast.planned.plan };
+    }
+  }
+  await holdLeaseFor(deps, lease, READING_MAX_MS);
   const outcome = await deps.reader.read(tenant, {
     audience: "customer",
     messages: burst,
@@ -157,8 +173,8 @@ function lastPin(burst: readonly BurstMessage[]): { latitude: number; longitude:
 }
 
 /**
- * One job, one message, in order: positions in the burst are what evidence points at, so a voice
- * note's transcript is evidence from that voice note. Voice notes run one at a time, each under a
+ * One job, one message, in order (a photo's caption is one more message right after it): positions
+ * in the burst are what evidence points at, so a voice note's transcript is evidence from that voice note. Voice notes run one at a time, each under a
  * lease extended to cover it. Every photo and voice note is tried, so one failure reports them all.
  */
 async function resolveBurst(deps: OrderReadingDeps, lease: Lease, tenant: Tenant, messages: readonly Job[]): Promise<BurstMessage[]> {
@@ -176,6 +192,10 @@ async function resolveBurst(deps: OrderReadingDeps, lease: Lease, tenant: Tenant
     if (job.kind === "audio") await holdLeaseFor(deps, lease, TRANSCRIBE_MAX_MS);
     try {
       burst.push(await deps.media.resolve(tenant, { ...job, kind: job.kind }));
+      // A photo's caption is what the customer wrote with it ("lo paso a traer"): its own text
+      // message right after the photo, quoted as data like any other.
+      const caption = job.kind === "image" ? (job.textBody ?? "").trim() : "";
+      if (caption !== "") burst.push({ type: "text", text: caption });
     } catch (error) {
       if (error instanceof StaleWriteError) throw error;
       failures.push({ jobId: job.id, kind: job.kind, reason: describeError(error), permanent: error instanceof UnreadableMediaError });

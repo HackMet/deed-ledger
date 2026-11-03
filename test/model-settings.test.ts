@@ -220,7 +220,8 @@ describe("the order path, from the Worker's variables", () => {
       { observations: [{ kind: "customer_order", lines: [{ ...line(said, "arroz", "2", "libra", quote(0, said)), other_names: [] }], issues: [] }] },
       { ops: [], move: "ask", ask: { kind: "fulfillment", lines: [] }, say: "" },
     ]);
-    const vars = { CONVERSATION: "planner", READER_REASONING_EFFORT: "low", PLANNER_REASONING_EFFORT: "minimal", PROMPT_CACHE_RETENTION: "in_memory" };
+    // The two-call path (a text burst would otherwise be read and planned in one call, D-52).
+    const vars = { CONVERSATION: "planner", PLANNER_FAST_TEXT: "0", READER_REASONING_EFFORT: "low", PLANNER_REASONING_EFFORT: "minimal", PROMPT_CACHE_RETENTION: "in_memory" };
     const engine = new D1PretendEngine(env.DB, { catalog: [{ productId: "p-arroz", names: ["Arroz 1 lb"], aliases: [], barcode: null, price: 1800 }] });
     const h = harness({ engine, modelProvider: provider, env: testEnv(vars as unknown as Partial<Env>) });
 

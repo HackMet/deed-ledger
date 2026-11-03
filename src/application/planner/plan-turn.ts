@@ -10,7 +10,8 @@
  */
 import type { BurstReading } from "../../domain/contract/observation";
 import type { BurstMessage } from "../../domain/perception/burst";
-import type { RefusalCode } from "../../domain/planner/validate";
+import type { NewItem } from "../../domain/planner/frame";
+import type { RefusalCode, ValidatedTurn } from "../../domain/planner/validate";
 import { validateProposal } from "../../domain/planner/validate";
 import type { TurnPlan } from "../../domain/planner/types";
 import { TURN_SCHEMA_NAME, turnSchema } from "../../domain/planner/wire";
@@ -118,7 +119,18 @@ export async function planTurn(
     deps.log.warn("planner.fallback", { ...ids, reason: "invalid_output" });
     return null;
   }
-  const { plan, picks, refused } = checked.turn;
+  return plannedFrom(deps.log, ids, checked.turn, input.newItems);
+}
+
+/** The validated turn as the engine takes it, with its refusals logged (codes and counts only). */
+export function plannedFrom(
+  log: Logger,
+  ids: { readonly businessId: string; readonly conversationId: string },
+  turn: ValidatedTurn,
+  newItems: readonly NewItem[],
+): PlannedTurn {
+  const deps = { log };
+  const { plan, picks, refused } = turn;
   const counts = new Map<RefusalCode, number>();
   for (const refusal of refused) counts.set(refusal.code, (counts.get(refusal.code) ?? 0) + 1);
   for (const [code, count] of counts) {
@@ -126,7 +138,7 @@ export async function planTurn(
   }
   deps.log.info("planner.planned", { ...ids, outcome: plan.move, reason: plan.ask?.kind ?? "none", count: plan.assumed.length });
   const matches: LineMatch[] = picks.flatMap(({ label, productId }) => {
-    const item = input.newItems.find((n) => n.label === label);
+    const item = newItems.find((n) => n.label === label);
     return item === undefined ? [] : [{ observation: item.observation, line: item.line, productId, how: "planner_pick" as const }];
   });
   return { plan, matches };

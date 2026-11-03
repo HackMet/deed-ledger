@@ -76,6 +76,7 @@ function frame(more: Partial<PlannerFrame> & { readonly how?: Record<string, Can
     unplacedRemovals: [],
     askedQuantityOf: null,
     basis: null,
+    media: { image: false, voice: false },
     illegible: false,
     products: new Map(PRODUCTS.map((p) => [p.productId, p])),
     ...rest,

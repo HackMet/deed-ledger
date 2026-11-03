@@ -58,16 +58,7 @@ export async function buildPlannerInput(request: PlannerRequest, retrieve: Retri
     };
   });
   const order = context.order;
-  const orderLines: FrameLine[] = (order?.lines ?? []).map((line, n) => ({
-    label: `L${n + 1}`,
-    said: context.said[line.lineId] ?? line.text,
-    quantity: line.quantity,
-    unit: line.unit,
-    restricted: line.restricted,
-    productId: line.productId,
-    productName: line.productName,
-    unclear: false,
-  }));
+  const orderLines = orderFrameLines(context);
 
   // Restricted items are never offered; a line the order already matched needs nothing. The
   // reader's other names for an item ("catsup" → "ketchup") only widen the search.
@@ -114,13 +105,55 @@ export async function buildPlannerInput(request: PlannerRequest, retrieve: Retri
     askedQuantityOf:
       context.lastAsk?.kind === "quantities" && context.lastAsk.lineIds.length === 1 ? (labels.get(context.lastAsk.lineIds[0]!) ?? null) : null,
     basis: orderBasis(order),
+    media: { image: messages.some((m) => m.type === "image"), voice: messages.some((m) => m.type === "transcript") },
     illegible: reading.observations.some((o) => o.issues.some((issue) => issue.code === "illegible")),
     products,
   };
 
   const turn = {
+    ...contextTurn(context, products, request.customer),
+    new_items: newLines.map((line) => ({
+      label: line.label,
+      said: line.said,
+      quantity: line.quantity,
+      unit: line.unit,
+      restricted: line.restricted,
+      unclear: line.unclear,
+      matched: line.productName,
+    })),
+    candidates: candidatesOf(table),
+    last_question: lastQuestionOf(context, labels, table),
+    reader_saw: reading.observations.flatMap((observation) => sawOf(observation, labels)),
+    messages: messages.map((message, n) => messageView(message, n, newItems)),
+  };
+  return { frame, newItems, user: [{ type: "text", text: `${PREAMBLE}\n${JSON.stringify(turn)}` }] };
+}
+
+/** The open order's lines as the planner names them: L1, L2…, each with the customer's words. */
+export function orderFrameLines(context: PlannerContext): FrameLine[] {
+  return (context.order?.lines ?? []).map((line, n) => ({
+    label: `L${n + 1}`,
+    said: context.said[line.lineId] ?? line.text,
+    quantity: line.quantity,
+    unit: line.unit,
+    restricted: line.restricted,
+    productId: line.productId,
+    productName: line.productName,
+    unclear: false,
+  }));
+}
+
+/** The parts of the turn that don't depend on the reading: the store and customer layers, and the order. */
+export function contextTurn(
+  context: PlannerContext,
+  products: ReadonlyMap<string, RetrievableProduct>,
+  customer: PlannerRequest["customer"],
+): Record<string, unknown> {
+  const order = context.order;
+  const orderLines = orderFrameLines(context);
+  return {
     store: { address_form: "vos", hours_set: context.store.hoursSet, delivery: context.store.delivery },
-    customer: { name_known: request.customer.nameKnown, saved_place: request.customer.savedPlace },
+    customer: { name_known: customer.nameKnown, saved_place: customer.savedPlace },
     order:
       order === null
         ? null
@@ -140,21 +173,17 @@ export async function buildPlannerInput(request: PlannerRequest, retrieve: Retri
               out_of_stock: order.lines[n]!.availability === "se_acabo" || order.lines[n]!.mark === "no_hay",
             })),
           },
-    new_items: newLines.map((line) => ({
-      label: line.label,
-      said: line.said,
-      quantity: line.quantity,
-      unit: line.unit,
-      restricted: line.restricted,
-      unclear: line.unclear,
-      matched: line.productName,
-    })),
-    candidates: Object.fromEntries([...table.offered].map(([line, offered]) => [line, offered.flatMap((label) => candidateView(table, line, label))])),
-    last_question: lastQuestionOf(context, labels, table),
-    reader_saw: reading.observations.flatMap((observation) => sawOf(observation, labels)),
-    messages: messages.map((message, n) => messageView(message, n, newItems)),
   };
-  return { frame, newItems, user: [{ type: "text", text: `${PREAMBLE}\n${JSON.stringify(turn)}` }] };
+}
+
+/** Per line (or piece of text), the products offered, as the planner sees them. */
+export function candidatesOf(table: CandidateTable): Record<string, object[]> {
+  return Object.fromEntries([...table.offered].map(([line, offered]) => [line, offered.flatMap((label) => candidateView(table, line, label))]));
+}
+
+/** The question last shown, with the numbers seen, labelled by this turn's table. */
+export function lastQuestionView(context: PlannerContext, table: CandidateTable): object | null {
+  return lastQuestionOf(context, new Map((context.order?.lines ?? []).map((line, n) => [line.lineId, `L${n + 1}`])), table);
 }
 
 /**

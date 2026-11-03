@@ -323,6 +323,21 @@ the engine a `TurnPlan`. Code still renders every fact, and the claim check is u
    things twice or skip them. New conversations go classic at once. The list-photo fixes from Nov 2 (one line per
    written item in the reader prompt, the whole-photo fallback for a line whose box is unusable, and its
    quantity-free rule above) intentionally apply to the classic path too: they are bug fixes, not planner policy.
+13. **A photo's caption** ("lo paso a traer" written under the photo) reaches the reader as its own text message
+   right after the photo, quoted as data like any message, on both paths. It was dropped before.
+14. **Phrases about media only with media:** "Ya vi tu lista 👍" stands only when the burst has a photo, "Ya escuché
+   tu nota de voz 👍" only when it has a voice note (`SAY_NEEDS`); otherwise the reply goes without a phrase.
+15. **One call for a burst of text only** (`PLANNER_FAST_TEXT`, D-52; `src/application/planner/one-call.ts`). Code
+   first retrieves products for pieces of the customer's own text (split at commas and "y", numbers left out,
+   labelled `T1…`) and for order lines still without a product; then one strict call returns the reading's
+   `observations` and the turn proposal together (schema `ReadingAndTurn`). Its system prompt is the planner's
+   layers, a short bridge (`instructions/one-call.md`) and the planner-mode reader's rules, cache-keyed by all
+   three versions. Nothing is trusted more than on two calls: the reading goes through the reader's validator; the
+   proposal's product labels are mapped to the table retrieved for each item line exactly as on the two-call path
+   (a product the line's own words don't find is refused), then `validateProposal`. When the reader's other names
+   find a product the customer's words didn't ("catsup" → "ketchup"), the planner is asked again with them (the
+   second call the two-call path makes anyway). Any other failure goes the two-call way, logged
+   (`one_call.fallback`). Photos, voice notes and pins always take two calls.
 
 **What the real engine (`OrderEngine`, kercmari) would need** before the planner can run on it. Nothing here breaks
 its current types; it runs the classic path until then, since it has no `plannerContext`.

@@ -10,6 +10,7 @@
  */
 import base from "./instructions/base.md";
 import mercadito from "./instructions/mercadito.md";
+import oneCall from "./instructions/one-call.md";
 
 export interface InstructionLayer {
   readonly name: string;
@@ -24,6 +25,9 @@ export const BASE_LAYER: InstructionLayer = layer("base", base);
 export const BUSINESS_LAYERS = { mercadito: layer("mercadito", mercadito) } as const;
 
 export type BusinessType = keyof typeof BUSINESS_LAYERS;
+
+/** The bridge for the one-call text path (PLANNER_FAST_TEXT): read and decide in one answer. */
+export const ONE_CALL_LAYER: InstructionLayer = layer("one-call", oneCall);
 
 export interface PlannerInstructions {
   readonly system: string;

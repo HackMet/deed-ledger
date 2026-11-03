@@ -31,6 +31,12 @@ export const SAY_PHRASES = [
 
 export type SayPhrase = (typeof SAY_PHRASES)[number];
 
+/** Phrases that say what was received: only when the burst holds that kind of message. */
+export const SAY_NEEDS: Readonly<Partial<Record<SayPhrase, "image" | "voice">>> = {
+  "Ya vi tu lista 👍": "image",
+  "Ya escuché tu nota de voz 👍": "voice",
+};
+
 const nstr = (description: string): JsonSchema => ({ type: ["string", "null"], description });
 
 export const turnSchema: JsonSchema = {

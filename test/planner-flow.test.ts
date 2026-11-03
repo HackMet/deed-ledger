@@ -365,7 +365,7 @@ async function plannerTrip(readings: unknown[], plans: unknown[]) {
   }
   const engine = new D1PretendEngine(env.DB, { setup });
   const provider = new RecordedProvider(readings, plans);
-  const h = harness({ engine, modelProvider: provider, burstMedia: media, env: testEnv({ CONVERSATION: "planner" } as unknown as Partial<Env>) });
+  const h = harness({ engine, modelProvider: provider, burstMedia: media, env: testEnv({ CONVERSATION: "planner", PLANNER_FAST_TEXT: "0" } as unknown as Partial<Env>) });
   const at = () => ({ from: phone, id: wamid(), timestampS: Math.floor(h.clock.now() / 1000) });
   const burst = async (...messages: unknown[]) => {
     h.clock.advance(1_000);
