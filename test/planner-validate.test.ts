@@ -72,6 +72,7 @@ function frame(more: Partial<PlannerFrame> = {}, offered: Record<string, string[
         ...offered,
       }),
     ),
+    howByLine: new Map(),
   };
   return {
     newItems: [

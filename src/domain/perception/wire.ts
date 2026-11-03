@@ -34,6 +34,8 @@ export type WireLine = {
   readonly restricted: boolean;
   readonly pick: string | null;
   readonly evidence: WireEvidence;
+  /** Planner mode only (Nov 2): other common names for the item, to widen the search. */
+  readonly other_names?: readonly string[];
 };
 
 export type WirePricedLine = WireLine & { readonly unit_price_centavos: number | null };
@@ -54,6 +56,8 @@ export type WireEdit = {
   readonly restricted: boolean;
   readonly pick: string | null;
   readonly evidence: WireEvidence;
+  /** Planner mode only (Nov 2), on `add` edits: other common names for the item. */
+  readonly other_names?: readonly string[];
 };
 
 type WithIssues = { readonly issues: readonly WireIssue[] };
@@ -224,9 +228,28 @@ const CONSOLE_VARIANTS: readonly JsonSchema[] = [
 ];
 
 /** One call per burst: the observations are a list of a union nested inside the root object. */
-export function readingSchema(audience: Audience): JsonSchema {
-  const variants = audience === "customer" ? CUSTOMER_VARIANTS : CONSOLE_VARIANTS;
+export function readingSchema(audience: Audience, { otherNames = false }: { readonly otherNames?: boolean } = {}): JsonSchema {
+  const variants = audience === "customer" ? (otherNames ? CUSTOMER_VARIANTS_WITH_OTHER_NAMES : CUSTOMER_VARIANTS) : CONSOLE_VARIANTS;
   return object({ observations: { type: "array", items: { anyOf: variants } } });
 }
+
+/**
+ * Planner mode (Nov 2): the customer schema with `other_names` on order lines and `add` edits: up to
+ * MAX_OTHER_NAMES other common names for the item, only to widen the product search.
+ */
+export const MAX_OTHER_NAMES = 3;
+const otherNamesField = { other_names: { type: "array", items: str } };
+const CUSTOMER_VARIANTS_WITH_OTHER_NAMES: readonly JsonSchema[] = CUSTOMER_VARIANTS.map((variant) => {
+  const properties = variant.properties as Record<string, JsonSchema>;
+  if ("lines" in properties) {
+    const items = (properties.lines!.items as JsonSchema).properties as Record<string, JsonSchema>;
+    return object({ ...properties, lines: { type: "array", items: object({ ...items, ...otherNamesField }) } });
+  }
+  if ("edits" in properties) {
+    const items = (properties.edits!.items as JsonSchema).properties as Record<string, JsonSchema>;
+    return object({ ...properties, edits: { type: "array", items: object({ ...items, ...otherNamesField }) } });
+  }
+  return variant;
+});
 
 export const READING_SCHEMA_NAME = "BurstReading";

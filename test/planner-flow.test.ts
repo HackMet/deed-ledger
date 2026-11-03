@@ -8,13 +8,14 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import type { CustomerContext } from "../src/application/engine";
 import type { BurstMediaResolver } from "../src/application/order-reading";
-import { interimRetrieveCandidates } from "../src/application/planner/interim-retrieval";
 import { planTurn } from "../src/application/planner/plan-turn";
 import type { ModelProvider, ModelRequest } from "../src/application/ports";
 import type { BurstReading, ItemLine, Observation } from "../src/domain/contract/observation";
 import type { EngineOutcome, OrderLineView, OrderView } from "../src/domain/contract/outcomes";
 import type { TurnPlan } from "../src/domain/planner/types";
 import { echoBlock, firstCheck, renderOutcome } from "../src/domain/replies";
+import { D1RetrievalRepository } from "../src/infrastructure/d1/retrieval-repository";
+import { D1StoreSetupRepository } from "../src/infrastructure/d1/store-setup-repository";
 import { D1PretendEngine } from "../src/infrastructure/memory/d1-pretend-engine";
 import { MemoryEngine, type PretendProduct } from "../src/infrastructure/memory/memory-engine";
 import { box, line as wireLine, photo, quote } from "./fixtures/model/recorded";
@@ -89,6 +90,21 @@ describe("the pretend engine with a plan", () => {
       plan({ move: "readback" }),
     );
     expect(result.outcome).toMatchObject({ type: "readback", order: { state: "por_confirmar", lines: [{ productId: "p-tomate", unitPrice: 500 }], total: 2000 } });
+  });
+
+  it("reads back a quantity in pounds for a product sold by weight, or a weight the customer said", async () => {
+    const c = customer();
+    const readback = await c.burst(
+      [order(item("pollo", "2"), item("chuleta", "1.5", "libras"), item("arroz", "3", "libra")), pickup],
+      plan({ move: "readback", changes: [{ lineRef: "N1", productId: "p-pollo" }] }),
+    );
+    expect(body(readback)).toContain("• 2 libras de Pollo entero · L 90");
+    expect(body(readback)).toContain("• 1.5 libras de chuleta: te confirmo si hay y el precio.");
+    expect(body(readback)).toContain("• 3 libras de arroz: te confirmo si hay y el precio.");
+    // Classic: a count, as before.
+    const classic = customer();
+    await classic.burst([order(item("Pollo entero", "2")), pickup]);
+    expect(body(await classic.burst([]))).toContain("• 2 × Pollo entero · L 90");
   });
 
   it("keeps the last word on readiness: a readback with pickup or delivery unknown asks it", async () => {
@@ -246,6 +262,8 @@ describe("reply blocks (planner path)", () => {
 // The whole trip on local D1
 
 const LIST_PHOTO = "lista";
+/** Planner mode: the reader proposes other names for each item; none here. */
+const NONE = { other_names: [] };
 const said = (index: number) => box(0, [0.1, 0.1 + index * 0.08, 0.6, 0.16 + index * 0.08]);
 const READINGS = {
   list: {
@@ -253,12 +271,12 @@ const READINGS = {
       {
         kind: "customer_order",
         lines: [
-          wireLine("platanos", "platanos", null, null, said(0)),
-          wireLine("pollo", "pollo", null, null, said(1)),
-          wireLine("tomates", "tomates", null, null, said(2)),
-          wireLine("1 lb arroz", "arroz", "1", "libra", said(3)),
-          wireLine("piña", "piña", null, null, said(4)),
-          wireLine("salsa de tomate", "salsa de tomate", null, null, said(5)),
+          wireLine("platanos", "platanos", null, null, said(0), NONE),
+          wireLine("pollo", "pollo", null, null, said(1), NONE),
+          wireLine("tomates", "tomates", null, null, said(2), NONE),
+          wireLine("1 lb arroz", "arroz", "1", "libra", said(3), NONE),
+          wireLine("piña", "piña", null, null, said(4), NONE),
+          wireLine("salsa de tomate", "salsa de tomate", null, null, said(5), NONE),
         ],
         issues: [],
       },
@@ -276,11 +294,12 @@ const op = (kind: string, line: string, product: string | null = null, quantity:
   quantity,
   suggested_quantity: suggested,
 });
-// Retrieval offers, in order: N2 pollo → P1 Pollo entero; N3 tomates → P2 Salsa, P3 Tomate; N4 arroz → P4 Arroz;
-// N6 salsa de tomate → P2. Platanos and piña find nothing.
+// L1's retrieval offers, in order: N2 pollo → P1 Pollo entero (all words); N3 tomates → P2 Tomate (its name,
+// standing alone); N4 arroz → P3 Arroz 1 lb; N6 salsa de tomate → P4 Salsa (all words), P2 Tomate (some words).
+// Platanos and piña find nothing.
 const PLANS = {
   list: {
-    ops: [op("add", "N1"), op("add", "N2", "P1"), op("add", "N3", "P3"), op("add", "N4", "P4", "1"), op("add", "N5", null, null, "1"), op("add", "N6", "P2", null, "1")],
+    ops: [op("add", "N1"), op("add", "N2", "P1"), op("add", "N3", "P2"), op("add", "N4", "P3", "1"), op("add", "N5", null, null, "1"), op("add", "N6", "P4", null, "1")],
     move: "ask",
     ask: { kind: "quantities", lines: ["N1", "N2", "N3"] },
     say: "Ya vi tu lista 👍",
@@ -314,14 +333,33 @@ class RecordedProvider implements ModelProvider {
 
 const media: BurstMediaResolver = { async resolve() { return photo(); } };
 
+/** The store's own products, as the owner sets them up in Tienda: names, prices, how each is sold. */
+const STORE: readonly { name: string; price: number; soldBy?: "unit" | "weight" }[] = [
+  { name: "Arroz 1 lb", price: 1800, soldBy: "unit" },
+  { name: "Salsa de tomate Naturas 400 g", price: 2800 },
+  { name: "Tomate", price: 500 },
+  { name: "Papel higiénico 4 rollos", price: 4800 },
+  { name: "Pollo entero", price: 4500, soldBy: "weight" },
+];
+
 async function plannerTrip(readings: unknown[], plans: unknown[]) {
-  const store = await seedStore({ members: [] });
+  const owner = newPhone();
+  const store = await seedStore({ members: [{ phone: owner, role: "owner" }] });
+  const tenant = { businessId: store.businessId };
   const phone = newPhone();
+  const customerId = crypto.randomUUID();
   // Introduced, and the name was asked on an earlier order: Confirmar confirms at once.
   await env.DB.prepare(`INSERT INTO customers (id, business_id, phone, created_at_ms, introduced_at_ms, name_asked_at_ms) VALUES (?, ?, ?, 0, 1, 1)`)
-    .bind(crypto.randomUUID(), store.businessId, phone)
+    .bind(customerId, store.businessId, phone)
     .run();
-  const engine = new D1PretendEngine(env.DB, { catalog: CATALOG });
+  const setup = new D1StoreSetupRepository(env.DB);
+  for (const product of STORE) await setup.addProduct(tenant, { name: product.name, otherNames: [], price: product.price }, 1);
+  const products = await setup.listProducts(tenant);
+  for (const product of STORE.filter((p) => p.soldBy !== undefined)) {
+    const saved = products.find((p) => p.name === product.name)!;
+    await setup.updateProduct(tenant, saved.productId, { name: saved.name, otherNames: [], price: saved.price }, 2, { soldBy: product.soldBy!, usualQuantity: null });
+  }
+  const engine = new D1PretendEngine(env.DB, { setup });
   const provider = new RecordedProvider(readings, plans);
   const h = harness({ engine, modelProvider: provider, burstMedia: media, env: testEnv({ CONVERSATION: "planner" } as unknown as Partial<Env>) });
   const at = () => ({ from: phone, id: wamid(), timestampS: Math.floor(h.clock.now() / 1000) });
@@ -334,8 +372,15 @@ async function plannerTrip(readings: unknown[], plans: unknown[]) {
     h.clock.advance(4_000);
     await h.deliver(h.takeRingsFor(store.businessId));
   };
-  return { h, store, phone, engine, provider, at, burst, tenant: { businessId: store.businessId } };
+  return { h, store, phone, customerId, engine, provider, at, burst, tenant, productIds: products.map((p) => p.productId) };
 }
+
+const aliasesOf = (businessId: string) =>
+  rows<{ said: string; name: string; state: string; source: string; source_order_id: string | null }>(
+    `SELECT a.said, p.name, a.state, a.source, a.source_order_id FROM store_aliases a
+     JOIN store_products p ON p.business_id = a.business_id AND p.id = a.product_id WHERE a.business_id = ? ORDER BY a.said`,
+    businessId,
+  );
 
 describe("the planner path on local D1, from a photo of a list to one confirmed order", () => {
   it("asks every quantity at once, reads back what it assumed, and Confirmar saves once", async () => {
@@ -362,7 +407,7 @@ describe("the planner path on local D1, from a photo of a list to one confirmed 
         "Va 👍",
         "Tu pedido:",
         "• 6 × platanos: te confirmo si hay y el precio.",
-        "• 2 × Pollo entero · L 90",
+        "• 2 libras de Pollo entero · L 90",
         "• 4 × Tomate · L 20",
         "• 1 × Arroz 1 lb · L 18",
         "• 1 × piña (te puse 1): te confirmo si hay y el precio.",
@@ -382,13 +427,13 @@ describe("the planner path on local D1, from a photo of a list to one confirmed 
     const list = await t.engine.preparationList(t.tenant);
     expect(list).toHaveLength(1);
     expect(list[0]!.order).toMatchObject({ state: "confirmado", version: 1 });
-    expect(list[0]!.order.lines.map((l) => [l.productId, l.quantity, l.quantitySource])).toEqual([
+    expect(list[0]!.order.lines.map((l) => [l.productName, l.quantity, l.quantitySource])).toEqual([
       [null, "6", undefined],
-      ["p-pollo", "2", undefined],
-      ["p-tomate", "4", undefined],
-      ["p-arroz", "1", undefined],
+      ["Pollo entero", "2", undefined],
+      ["Tomate", "4", undefined],
+      ["Arroz 1 lb", "1", undefined],
       [null, "1", undefined],
-      ["p-salsa", "1", undefined],
+      ["Salsa de tomate Naturas 400 g", "1", undefined],
     ]);
     const sent = t.h.sentTo(t.phone);
     expect(sent.filter((b) => b.startsWith("Listo 🙌 Tu pedido #101 quedó anotado."))).toHaveLength(1);
@@ -398,7 +443,7 @@ describe("the planner path on local D1, from a photo of a list to one confirmed 
     expect(t.provider.requests.map((r) => r.schemaName)).toEqual(["BurstReading", "TurnProposal", "BurstReading", "TurnProposal"]);
     // The planner saw labels, never IDs or prices; the reader saw no catalog.
     for (const n of [1, 3]) {
-      for (const secret of ["p-arroz", "p-salsa", "p-tomate", "p-pollo", "1800", "2800", "4500", "order-"]) expect(t.provider.textOf(n)).not.toContain(secret);
+      for (const secret of [...t.productIds, "1800", "2800", "4500", "order-"]) expect(t.provider.textOf(n)).not.toContain(secret);
     }
     expect(t.provider.textOf(0)).not.toContain("CATALOGO");
     expect(t.h.log.fields("planner.planned")).toEqual([
@@ -406,6 +451,25 @@ describe("the planner path on local D1, from a photo of a list to one confirmed 
       expect.objectContaining({ outcome: "readback", reason: "none" }),
     ]);
     expect(await rows(`SELECT 1 FROM inbound_messages WHERE business_id = ? AND job_state <> 'done'`, t.store.businessId)).toEqual([]);
+
+    // Confirmed: each line the planner matched by weaker evidence proposes the customer's words as
+    // an alias, once (the second tap added none). "tomates" found Tomate by its own name: nothing to learn.
+    const orderId = list[0]!.order.orderId;
+    expect(await aliasesOf(t.store.businessId)).toEqual([
+      { said: "arroz", name: "Arroz 1 lb", state: "proposed", source: "order", source_order_id: orderId },
+      { said: "pollo", name: "Pollo entero", state: "proposed", source: "order", source_order_id: orderId },
+      { said: "salsa de tomate", name: "Salsa de tomate Naturas 400 g", state: "proposed", source: "order", source_order_id: orderId },
+    ]);
+
+    // The customer asks to delete their data: proposals from their orders go; one the owner already
+    // approved stays as the store's, no longer linked to their order.
+    const book = new D1RetrievalRepository(env.DB);
+    const pollo = (await book.listProposed(t.tenant)).find((a) => a.said === "pollo")!;
+    expect(await book.approveAlias(t.tenant, pollo.id, t.store.members[0]!.userId, t.h.clock.now())).toBe(true);
+    await env.DB.prepare(`UPDATE customers SET deletion_requested_at_ms = ? WHERE id = ?`).bind(t.h.clock.now(), t.customerId).run();
+    expect(await t.h.deps.customerControls.purge(t.tenant, t.customerId, null, t.h.clock.now())).toBe(true);
+    expect(await aliasesOf(t.store.businessId)).toEqual([{ said: "pollo", name: "Pollo entero", state: "approved", source: "order", source_order_id: null }]);
+    expect(await book.listApprovedAliases(t.tenant)).toEqual([{ words: "pollo", productId: expect.any(String) }]);
   }, 30_000);
 
   it("a planner answer that isn't the schema leaves the burst to the classic path, and the logs say so", async () => {
@@ -421,7 +485,12 @@ describe("the planner path on local D1, from a photo of a list to one confirmed 
     const engine = new MemoryEngine(() => [], { catalog: CATALOG });
     const log = new RecordingLogger();
     const planned = await planTurn(
-      { model: { propose: async () => ({ ok: false, reason: "spend_cap", calls: [] }) }, retrieve: interimRetrieveCandidates, source: engine, log },
+      {
+        model: { propose: async () => ({ ok: false, reason: "spend_cap", calls: [] }) },
+        retrieval: { listProducts: async () => [], listApprovedAliases: async () => [] },
+        source: engine,
+        log,
+      },
       {
         context: { businessId: "b", conversationId: "c", customerId: "u", jobId: "j", nowMs: 1, customerName: null, customerNameAsked: false, savedPlace: null },
         reading: { observations: [order(item("arroz"))], calls: [] },

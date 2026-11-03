@@ -34,6 +34,12 @@ export interface OrderLineView {
    * or store-usual quantity is shown openly ("te puse 1") and becomes the agreed one on Confirmar.
    */
   readonly quantitySource?: QuantitySource;
+  /**
+   * Proposed (Nov 2, planner): the quantity is in pounds (or the weight unit said): the product is
+   * sold by weight, or the customer said a weight. Read back as "2 libras de Pollo entero". Absent:
+   * a count ("2 × …").
+   */
+  readonly byWeight?: true;
 }
 
 export interface OrderView {

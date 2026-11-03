@@ -84,14 +84,14 @@ export class BurstReader {
       system: plannerMode ? PLANNER_MODE_PROMPT.text : SYSTEM_PROMPT[request.audience],
       user: userContent(messages, context, { catalogSection: !plannerMode }),
       schemaName: READING_SCHEMA_NAME,
-      schema: readingSchema(request.audience),
+      schema: readingSchema(request.audience, { otherNames: plannerMode }),
       maxOutputTokens: MAX_OUTPUT_TOKENS,
     };
     const promptVersion = plannerMode ? PLANNER_MODE_PROMPT.version : PROMPT_VERSION[request.audience];
     const called = await meteredCall(this.deps, tenant, modelRequest, { promptVersion, logPrefix: "perception" });
     if (!called.ok) return { ok: false, reason: called.reason, calls: called.calls };
 
-    const validated = validateReading(called.json, request.audience, messages, context);
+    const validated = validateReading(called.json, request.audience, messages, context, { otherNames: plannerMode });
     if (!validated.ok) {
       // Not the mismatch path: an unexpected key is the model's text, and logs carry no content.
       log.warn("perception.invalid_output", { businessId: tenant.businessId, reason: "schema" });

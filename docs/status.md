@@ -10,10 +10,12 @@ Last updated: Mon Nov 2, 2026, evening Honduras time, by Claude Code (lane L0, t
 - **Planner (Nov 2, D-45 to D-51, behind `CONVERSATION=planner`, default `classic`):** a second Muse Spark call per
   burst decides the next step from two instruction files (`src/application/planner/instructions/`); code checks it
   (`src/domain/planner/validate.ts`), the readiness gate (`src/domain/readiness.ts`) has the last word, and the
-  pretend engine applies the plan. Simulator: `npm run dev:sim -- --ai --store --planner`. Retrieval is an interim
-  adapter until lane L1's lands; the real engine runs classic until it has what contract.md "Proposed (Nov 2):
-  planner" lists. The flag flips only when the eval suite (lane L2) says the planner path is at least as good with
-  zero truth failures.
+  pretend engine applies the plan. Simulator: `npm run dev:sim -- --ai --store --planner`. Retrieval is L1's over
+  the whole catalog, widened by other names the reader proposes ("catsup" → "ketchup"; no spelling table); a
+  confirmed order proposes learned aliases for its planner picks, approved in Pendientes; weighed items read back in
+  pounds. The real engine runs classic until it has what contract.md "Proposed (Nov 2): planner" lists. The flag
+  flips only when the eval suite (lane L2) says the planner path is at least as good with zero truth failures.
+  Latency is the open risk (another lane is on it).
 
 - The product is an order assistant: customers order on WhatsApp, Johan and staff work from a phone console, and
   both end in the same engine. Two-person team (D-37): Angel owns conversations, perception, replies, the console

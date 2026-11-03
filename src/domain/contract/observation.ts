@@ -39,6 +39,12 @@ export interface ItemLine {
   /** Alcohol or tobacco, even for a product the store doesn't list. Code decides what to do. */
   readonly restrictedCategory: boolean;
   readonly evidence: Evidence;
+  /**
+   * Proposed (Nov 2, planner mode only): up to three other common names the reader proposes for
+   * the item ("catsup" → "ketchup", "salsa de tomate"). Only to widen the product search, ranked
+   * below the customer's own words; never a match by itself, never shown. Absent: none.
+   */
+  readonly otherNames?: readonly string[];
 }
 
 export interface PricedLine extends ItemLine {

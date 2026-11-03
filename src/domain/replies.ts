@@ -739,6 +739,8 @@ function readbackLine(line: OrderLineView): string {
 /** "5 ×" for whole numbers; "1.5 libras" with its unit otherwise (before the name: "1.5 libras de"). */
 function quantityShown(line: OrderLineView): string {
   const quantity = line.quantity!;
+  // In pounds (planner path): "2 libras de Pollo entero", never "2 ×", which reads as two chickens.
+  if (line.byWeight === true) return `${formatQuantity(quantity, line.unit ?? "libra")} de`;
   if (/^\d+$/u.test(quantity)) return `${quantity} ×`;
   return `${formatQuantity(quantity, line.unit)}${line.unit === null ? " ×" : " de"}`;
 }

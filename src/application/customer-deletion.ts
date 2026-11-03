@@ -5,7 +5,9 @@
  *
  * 1. R2: every object under the customer's media prefixes.
  * 2. D1, one batch: phone, name, message text, provider IDs, media references, the bodies we sent
- *    them; unsent rows fail; a tombstone keyed by the phone's keyed hash, never the phone.
+ *    them; unsent rows fail; learned aliases their orders proposed and the store hasn't decided
+ *    (decided ones stay, unlinked from the order: they're the store's); a tombstone keyed by the
+ *    phone's keyed hash, never the phone.
  * 3. R2 again, on every sweep for MEDIA_RECHECK_AFTER_PURGE_MS: a job that was already downloading
  *    a photo when step 1 ran can still write it afterwards. Once the D1 batch has run, no new job
  *    starts (pending ones are failed) and the media IDs are gone, so only uploads already in flight

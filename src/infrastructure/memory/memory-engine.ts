@@ -62,7 +62,7 @@ import { productWords, searchCatalog } from "../../domain/catalog-search";
 import { fulfillmentWords, optionNumber, quantityFrom } from "../../domain/answer-words";
 import { MAX_OPTIONS, type ProductOption } from "../../domain/contract/outcomes";
 import type { DecimalString } from "../../domain/contract/numbers";
-import type { AskKind, RetrievableProduct, SoldBy, TurnPlan } from "../../domain/planner/types";
+import type { AskKind, SoldBy, TurnPlan } from "../../domain/planner/types";
 import { isWeightUnit, settleStep } from "../../domain/planner/validate";
 import { missingFor } from "../../domain/readiness";
 import type { LastAsk, PlannerContext, PlannerSource } from "../../application/planner/source";
@@ -119,6 +119,10 @@ interface PlannedDraft {
   last: LastAsk | null;
   /** Line ID → how many times its quantity was asked (readiness stops after MAX_QUANTITY_ASKS). */
   readonly quantityAsks: Record<string, number>;
+  /** Lines whose product the planner picked: after Confirmar, their words may become an alias. */
+  picked?: string[];
+  /** Line ID → other names the reader proposed for the item, for retrieval only. */
+  otherNames?: Record<string, readonly string[]>;
 }
 
 /**
@@ -268,8 +272,9 @@ export class MemoryEngine implements Engine, OrderReadingSource, PlannerSource {
     return {
       order: open?.order ?? null,
       said: Object.fromEntries((open?.order.lines ?? []).map((line) => [line.lineId, draft?.names.get(line.lineId) ?? line.text])),
+      otherNames: { ...(draft?.planned?.otherNames ?? {}) },
+      picked: [...(draft?.planned?.picked ?? [])],
       lastAsk: draft?.planned?.last ?? null,
-      products: (this.options.catalog ?? []).map(retrievable),
       store: { hoursSet: (this.options.storeHours ?? null) !== null, delivery: (this.options.deliveryFee ?? null) !== null ? "yes" : "unknown" },
     };
   }
@@ -550,14 +555,14 @@ class BurstApplier {
     if (observation.issues.some((issue) => issue.code === "illegible")) this.illegible = true;
     switch (observation.kind) {
       case "customer_order":
-        observation.lines.forEach((line, n) => this.addLine(line, this.matchOf(index, n)));
+        observation.lines.forEach((line, n) => this.addLine(line, this.matchOf(index, n), this.matchAt(index, n)?.how));
         if (this.planning) return;
         this.queueIssues(observation, observation.lines.length);
         this.queueLineQuestions();
         return;
       case "order_change":
         observation.edits.forEach((edit, n) => {
-          if (edit.op === "add") return this.addLine(edit.line, this.matchOf(index, n));
+          if (edit.op === "add") return this.addLine(edit.line, this.matchOf(index, n), this.matchAt(index, n)?.how);
           const at = edit.target.ref === null ? -1 : Number(edit.target.ref.slice(1)) - 1;
           const line = this.stored?.order.lines[at];
           if (line === undefined) return this.planning ? undefined : this.draft.pending.push({ code: "ambiguous_product", lineId: null });
@@ -708,6 +713,8 @@ class BurstApplier {
       if (product !== undefined && product.productId !== line.productId) {
         const restricted = line.restricted || product.restricted === true;
         next = { ...next, productId: product.productId, productName: product.names[0] ?? null, unitPrice: restricted ? null : product.price, availability: soldOutOrUnknown(product), restricted };
+        const planned = this.plannedDraft();
+        planned.picked = [...(planned.picked ?? []).filter((id) => id !== line.lineId), line.lineId];
       }
       if (change.quantity !== undefined && (change.quantity !== line.quantity || line.quantitySource !== undefined)) next = withQuantity(next, change.quantity);
       if (next !== line) this.setLines(this.stored!.order.lines.map((l) => (l.lineId === lineId ? next : l)));
@@ -735,7 +742,7 @@ class BurstApplier {
    */
   private plannedStep(): EngineOutcome {
     const order = this.stored!.order;
-    const planned = (this.draft.planned ??= { last: null, quantityAsks: {} });
+    const planned = this.plannedDraft();
     const plan = this.plan;
     const options = this.optionsByLine();
     let proposed: Parameters<typeof settleStep>[0]["proposed"] = null;
@@ -812,7 +819,26 @@ class BurstApplier {
   private soldByWeight(line: OrderLineView | undefined): boolean {
     if (line === undefined) return false;
     const product = line.productId === null ? undefined : this.catalog.find((p) => p.productId === line.productId);
-    return isWeightUnit(line.unit) || product?.soldBy === "weight";
+    return weighed(line.unit, product);
+  }
+
+  /** The planner path's state for this draft, made on first use. */
+  private plannedDraft(): PlannedDraft {
+    return (this.draft.planned ??= { last: null, quantityAsks: {} });
+  }
+
+  /**
+   * A line in pounds (D-46 readback): its product is sold by weight, or the customer said a weight
+   * for a product the store doesn't sell by unit. The unit is the one said, or "libra".
+   */
+  private withWeight(line: OrderLineView): OrderLineView {
+    const product = line.productId === null ? undefined : this.catalog.find((p) => p.productId === line.productId);
+    if (weighed(line.unit, product)) {
+      return line.byWeight === true && isWeightUnit(line.unit) ? line : { ...line, byWeight: true, unit: isWeightUnit(line.unit) ? line.unit : "libra" };
+    }
+    if (line.byWeight === undefined) return line;
+    const { byWeight: _weighed, ...counted } = line;
+    return counted;
   }
 
   /**
@@ -1019,8 +1045,12 @@ class BurstApplier {
   }
 
   private matchOf(observation: number, line: number): PretendProduct | null {
-    const match = this.matches.find((m) => m.observation === observation && m.line === line);
+    const match = this.matchAt(observation, line);
     return match === undefined ? null : (this.catalog.find((product) => product.productId === match.productId) ?? null);
+  }
+
+  private matchAt(observation: number, line: number): LineMatch | undefined {
+    return this.matches.find((m) => m.observation === observation && m.line === line);
   }
 
   /**
@@ -1028,7 +1058,7 @@ class BurstApplier {
    * product; a few (up to MAX_OPTIONS) are offered to pick from; none or too many leave it unmatched.
    * A line with no quantity gets the quantity question: absent is never one.
    */
-  private addLine(line: ItemLine, product: PretendProduct | null): void {
+  private addLine(line: ItemLine, product: PretendProduct | null, how?: LineMatch["how"]): void {
     const order = this.stored?.order ?? this.newOrder();
     const lineId = `${order.orderId}-${order.lines.length + 1}`;
     this.draft.names.set(lineId, line.name);
@@ -1036,6 +1066,9 @@ class BurstApplier {
       // Only code's exact matches and the planner's picks: never a guess by words or a typo.
       this.setLines([...order.lines, lineView(lineId, line, product)], order);
       this.newLines.push(lineId);
+      const planned = this.plannedDraft();
+      if (product !== null && how === "planner_pick") planned.picked = [...(planned.picked ?? []), lineId];
+      if ((line.otherNames ?? []).length > 0) planned.otherNames = { ...planned.otherNames, [lineId]: [...line.otherNames!] };
       return;
     }
     let options: string[] = [];
@@ -1192,6 +1225,8 @@ class BurstApplier {
   }
 
   private setOrder(order: OrderView): void {
+    // Planner path: lines in pounds say so (readback "2 libras de Pollo entero").
+    if (this.planning) order = { ...order, lines: order.lines.map((line) => this.withWeight(line)) };
     if (this.draft.shown) {
       // The first change after a readback: a new version.
       this.draft.shown = false;
@@ -1283,20 +1318,9 @@ function questionCodeOf(kind: Exclude<AskKind, "none">, lines: number): Question
   }
 }
 
-/** A pretend product as retrieval sees it: no price, only whether there is one. */
-function retrievable(product: PretendProduct): RetrievableProduct {
-  const restricted = product.restricted === true;
-  return {
-    productId: product.productId,
-    names: product.names,
-    aliases: product.aliases,
-    barcode: product.barcode,
-    soldBy: product.soldBy ?? null,
-    usualQuantity: product.usualQuantity ?? null,
-    hasPrice: product.price !== null && !restricted,
-    availability: product.availability ?? "no_se",
-    restricted,
-  };
+/** Sold by weight, or a weight said for a product the store doesn't sell by unit. */
+function weighed(unit: string | null, product: PretendProduct | undefined): boolean {
+  return product?.soldBy === "weight" || (isWeightUnit(unit) && product?.soldBy !== "unit");
 }
 
 /** "el paquete de 10" asked about "Tortillas paquete 10": the 10 is the product, not the quantity. */

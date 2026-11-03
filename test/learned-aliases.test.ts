@@ -196,8 +196,10 @@ describe("after a confirmed order (the spine's call)", () => {
       orderId: "order-1",
       lines: [
         { said: "salsa roja", productId: salsa, how: "planner_pick" },
-        // "Catsup" already finds the product through its other name "ketchup": nothing to learn.
-        { said: "Catsup", productId: salsa, how: "planner_pick" },
+        // "Ketchup" already finds the product through its other name: nothing to learn. ("Catsup" no
+        // longer does since the spelling table went: the reader's other names find it, and the store
+        // learns it through a proposal like "salsa roja".)
+        { said: "Ketchup", productId: salsa, how: "planner_pick" },
         { said: "pollo entero", productId: pollo, how: "exact_name" },
         { said: "pollito", productId: pollo, how: "label_pick" },
         { said: "algo raro", productId: null, how: "planner_pick" },
