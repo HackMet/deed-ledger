@@ -75,7 +75,7 @@ export class BurstReader {
     const promptVersion = plannerMode ? PLANNER_MODE_PROMPT.version : PROMPT_VERSION[request.audience];
     const modelRequest: ModelRequest = {
       system: plannerMode ? PLANNER_MODE_PROMPT.text : SYSTEM_PROMPT[request.audience],
-      user: userContent(messages, context, { catalogSection: !plannerMode }),
+      user: userContent(messages, context, { catalogSection: !plannerMode, lastAnswered: plannerMode }),
       schemaName: READING_SCHEMA_NAME,
       schema: readingSchema(request.audience, { otherNames: plannerMode }),
       maxOutputTokens: MAX_OUTPUT_TOKENS,

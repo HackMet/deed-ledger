@@ -337,7 +337,19 @@ the engine a `TurnPlan`. Code still renders every fact, and the claim check is u
    (a product the line's own words don't find is refused), then `validateProposal`. When the reader's other names
    find a product the customer's words didn't ("catsup" → "ketchup"), the planner is asked again with them (the
    second call the two-call path makes anyway). Any other failure goes the two-call way, logged
-   (`one_call.fallback`). Photos, voice notes and pins always take two calls.
+   (`one_call.fallback`). A voice note's transcript takes the same one call as the same words typed (eval E21,
+   Nov 3); photos and pins always take two calls.
+16. **"Which one" answers and the loop guard** (eval E19, E09b, Nov 3). When the question last shown listed
+   options, code reads the answer itself (`chosenOption`, `src/domain/planner/option-answer.ts`): the number shown
+   ("2"), the price shown ("esa de 34"), or words only one option holds ("mazola", "el clover de litro"). Exactly
+   one option, or nothing. That pick is added to the plan whatever the model made of the burst (a reading that
+   missed the answer, or a plan that asked the same list again). The engine never asks a line's "which one" (or
+   unreadable) question a third time (`MAX_WHICH_ASKS`): the line is left for the store to confirm and the order
+   moves on. `plannerContext` carries the options as shown (`shownOptions`: number, line, product, name, price).
+17. **What the last answer was about** (eval E11, Nov 3): **`PerceptionContext.lastAnswered?`** (proposed) lists the
+   products the engine's last answer named ("Miel de abeja Don Pancho 500 ml: te confirmo si hay"), until the
+   customer's next burst. The planner-mode reader sees it as ULTIMA RESPUESTA and reads "me manda una" as that
+   product; the planner sees it as `last_answer`, and the one call is offered it as candidates (`A1…`).
 
 **What the real engine (`OrderEngine`, kercmari) would need** before the planner can run on it. Nothing here breaks
 its current types; it runs the classic path until then, since it has no `plannerContext`.

@@ -22,7 +22,7 @@ import type { CustomerContextWithName } from "../order-handler";
 import type { Logger, ModelContentPart, Tenant } from "../ports";
 import { plannerInstructions, type PlannerInstructions } from "./instructions";
 import { buildPlannerInput } from "./input";
-import type { PlannerSource } from "./source";
+import type { PlannerContext, PlannerSource } from "./source";
 
 /**
  * Reasoning plus the answer. A long list's ops are a few hundred tokens; the rest is room to
@@ -90,12 +90,14 @@ export async function planTurn(
     readonly reading: BurstReading;
     readonly matches: readonly LineMatch[];
     readonly messages: readonly BurstMessage[];
+    /** The engine's planner read, when the caller already has it. */
+    readonly plannerContext?: PlannerContext;
   },
 ): Promise<PlannedTurn | null> {
   const { context, reading } = request;
   const ids = { businessId: context.businessId, conversationId: context.conversationId };
   const tenant = { businessId: context.businessId };
-  const [plannerContext, products] = await Promise.all([deps.source.plannerContext(context), deps.retrieval.listProducts(tenant)]);
+  const [plannerContext, products] = await Promise.all([request.plannerContext ?? deps.source.plannerContext(context), deps.retrieval.listProducts(tenant)]);
   // The products read once: retrieval and code's checks see the same catalog.
   const once: RetrievalSource = { listProducts: async () => products, listApprovedAliases: (t) => deps.retrieval.listApprovedAliases(t) };
   const input = await buildPlannerInput(

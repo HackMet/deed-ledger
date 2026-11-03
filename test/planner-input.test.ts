@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { BurstReader } from "../src/application/perception/reader";
-import { LINE_PICK_RULE, OPTION_PICK_RULE, OTHER_NAMES_RULE, PLANNER_MODE_PROMPT, SYSTEM_PROMPT, userContent } from "../src/application/perception/prompt";
+import { LINE_PICK_RULE, OPTION_PICK_RULE, OTHER_NAMES_RULE, PLANNER_MODE_PROMPT, REFERENCE_RULE, SYSTEM_PROMPT, userContent } from "../src/application/perception/prompt";
 import { BASE_LAYER, BUSINESS_LAYERS, plannerInstructions } from "../src/application/planner/instructions";
 import { buildPlannerInput, type PlannerRequest } from "../src/application/planner/input";
 import { otherNamesOf, validateReading } from "../src/domain/perception/validate";
@@ -86,11 +86,11 @@ describe("the instruction layers", () => {
 });
 
 describe("the reader in planner mode", () => {
-  it("gets the classic prompt word for word, minus the two pick rules, plus other names", () => {
+  it("gets the classic prompt word for word, minus the two pick rules, plus other names and the last answer rule", () => {
     expect(SYSTEM_PROMPT.customer).toContain(LINE_PICK_RULE);
     expect(SYSTEM_PROMPT.customer).toContain(OPTION_PICK_RULE);
     expect(PLANNER_MODE_PROMPT.text).toBe(
-      SYSTEM_PROMPT.customer.replace(LINE_PICK_RULE, `- pick: siempre null.\n${OTHER_NAMES_RULE}`).replace(OPTION_PICK_RULE, "pick: siempre null."),
+      SYSTEM_PROMPT.customer.replace(LINE_PICK_RULE, `- pick: siempre null.\n${OTHER_NAMES_RULE}\n${REFERENCE_RULE}`).replace(OPTION_PICK_RULE, "pick: siempre null."),
     );
     expect(PLANNER_MODE_PROMPT.text).not.toContain("CATALOGO");
     expect(SYSTEM_PROMPT.customer).not.toContain("other_names");
@@ -159,6 +159,8 @@ const CONTEXT: PlannerContext = {
   said: { "order-secret-id-1": "aceite", "order-secret-id-2": "arroz" },
   otherNames: {},
   picked: [],
+  shownOptions: [],
+  lastAnswered: [],
   lastAsk: { kind: "options", lineIds: ["order-secret-id-1"], options: { "order-secret-id-1": ["p-clover-1l", "p-mazola"] }, times: 1 },
   store: { hoursSet: true, delivery: "unknown" },
 };
