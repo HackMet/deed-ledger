@@ -352,7 +352,7 @@ describe("K2b: every order transition is exactly one fact, in the same batch", (
     const price = (orderId: string, version: number) =>
       env.DB.prepare(`UPDATE order_versions SET total_centavos = 34500 WHERE order_id = ? AND version = ?`).bind(orderId, version).run();
 
-    // Cancelled while waiting: the version itself is closed, so nothing about it is backed any more.
+    // Cancelled while waiting: the version itself is closed; only "it is cancelled" is backed any more.
     const waiting = await placeFirstOrder(s, "customer-waiting");
     await price(waiting.orderId, 1);
     const waitingClaims = [stateClaim(waiting.orderId, 1, "por_confirmar"), totalClaim(waiting.orderId, 1, 34_500)];
@@ -363,7 +363,24 @@ describe("K2b: every order transition is exactly one fact, in the same batch", (
         actor: { type: "customer", customerId: "customer-waiting" },
       }),
     );
-    expect(await engine.verifyClaims(s.context(), [...waitingClaims, stateClaim(waiting.orderId, 1, "cancelado")])).toEqual([false, false, false]);
+    expect(await engine.verifyClaims(s.context(), [...waitingClaims, stateClaim(waiting.orderId, 1, "cancelado")])).toEqual([false, false, true]);
+
+    // Cancelled after confirming: the cancel closes only the confirm and the version stays live, yet the
+    // live cancel takes the whole order back: the total is no longer backed, "cancelado" is (both paths alike).
+    const confirmed = await placeFirstOrder(s, "customer-confirmed");
+    const asConfirmed = (nowMs: number) => s.context({ customerId: "customer-confirmed", nowMs });
+    const confirmedActor = { type: "customer", customerId: "customer-confirmed" } as const;
+    await save(await engine.onCustomerAction(asConfirmed(T0 + 500), { ...confirmTap(confirmed.orderId, 1), actor: confirmedActor }));
+    await price(confirmed.orderId, 1);
+    const confirmedClaims = [stateClaim(confirmed.orderId, 1, "confirmado"), totalClaim(confirmed.orderId, 1, 34_500)];
+    expect(await engine.verifyClaims(s.context(), confirmedClaims)).toEqual([true, true]);
+    await save(await engine.onCustomerAction(asConfirmed(T0 + 600), { ...cancelTap(confirmed.orderId, 1), actor: confirmedActor }));
+    expect((await orderRow(confirmed.orderId))!.state).toBe("cancelado");
+    expect(await engine.verifyClaims(s.context(), [...confirmedClaims, stateClaim(confirmed.orderId, 1, "cancelado")])).toEqual([
+      false,
+      false,
+      true,
+    ]);
 
     // Superseded: v1's claims go false; v2's are true.
     const v1 = await placeFirstOrder(s);

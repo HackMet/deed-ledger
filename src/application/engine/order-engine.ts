@@ -447,7 +447,7 @@ export class OrderEngine implements Engine {
   /**
    * True only when the records back the claim now. Absent means unknown: anything not stored is false.
    * The ledger answers (R5): the claim's version fact must be live (not superseded, not cancelled),
-   * and a state must be the one the facts derive, not just the cache's.
+   * a live cancel backs only `cancelado`, and a state must be the one the facts derive, not just the cache's.
    */
   private async verifyClaim(tenant: Tenant, claim: Claim): Promise<boolean> {
     try {
@@ -458,6 +458,11 @@ export class OrderEngine implements Engine {
       const head = await store.orderHead(tenant, claim.orderId);
       if (head === null || head.version !== claim.version) return false;
       const facts = await store.orderFacts(tenant, claim.orderId);
+      // A live cancel takes the whole order back, whichever fact it closed (the confirm, or the version
+      // when it was never confirmed): on either path, only "it is cancelled" is backed, never a total.
+      if (facts.some((fact) => fact.kind === "order_cancel" && fact.live)) {
+        return claim.type === "order_state" && claim.state === "cancelado" && deriveOrderState(facts, claim.version, head.state) === "cancelado";
+      }
       if (!facts.some((fact) => fact.kind === "order_version" && fact.version === claim.version && fact.live)) return false;
       // unit_price, availability, payment_confirmed, balance and store hours aren't stored in this cut.
       if (claim.type === "order_state") return deriveOrderState(facts, claim.version, head.state) === claim.state;
