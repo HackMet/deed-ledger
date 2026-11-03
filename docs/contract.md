@@ -253,6 +253,9 @@ the engine a `TurnPlan`. Code still renders every fact, and the claim check is u
 3. **`OrderLineView.quantitySource?: "said" | "suggested" | "store_usual"`**; absent means said. The readback marks
    the other two ("• 1 × Piña (te puse 1): …"); Confirmar makes them the agreed quantity (the pretend engine drops
    the mark on confirm). A quantity the customer later says replaces the assumption and drops the mark.
+   **`OrderLineView.byWeight?: true`** (planner path): the quantity is in pounds, because the product is sold by
+   weight, or the customer said a weight for a product the store doesn't sell by unit. The unit is the one said, or
+   "libra". The readback says "2 libras de Pollo entero", never "2 ×"; absent, a count as before.
 4. **`EngineOutcome.ask` gains `questions?: AskQuestions` and `assumed?: lineId[]`**. `AskQuestions`:
    `{ kind, lineIds, options?: Record<lineId, ProductOption[]>, byWeight?: lineId[] }`: every missing quantity
    together, or every "which one" together, or pickup/delivery, the place, what to order. `question` and `line` stay
@@ -265,14 +268,33 @@ the engine a `TurnPlan`. Code still renders every fact, and the claim check is u
    without a place. Unmatched products and unknown prices are not blocking (they read back as "te confirmo");
    restricted and out-of-stock lines never need a quantity.
 6. **The planner's read** (`src/application/planner/source.ts`, local until agreed, like gaps a and b):
-   `plannerContext(context)` → the open order, each line's words as perception read them, the question last shown
-   on the planner path (kind, line IDs, options shown, times in a row), the store's products as retrieval needs
-   them (`RetrievableProduct`: whether there's a price, never the price), and the store layer as booleans
-   (`hoursSet`, `delivery`).
+   `plannerContext(context)` → the open order, each line's words as perception read them, the other names the
+   reader proposed for each line, the lines whose product the planner picked, the question last shown on the
+   planner path (kind, line IDs, options shown, times in a row), and the store layer as booleans (`hoursSet`,
+   `delivery`). The store's products come from retrieval's own source (`D1RetrievalRepository`), not the engine.
 7. **Catalog fields** (our temporary products now; the engine's `products` later): `sold_by: "unit" | "weight" |
-   null` and `usual_quantity: DecimalString | null`, optional on `PretendProduct` today and empty until lane L1
-   adds the columns; `store_aliases` (proposed / approved) with L1. Migration number still to settle: our range
-   0003–0019 is used up except the gaps 0009, 0011–0013; the engine's is 0020–0039.
+   null` and `usual_quantity: DecimalString | null` (L1, migration 0011 `store_product_selling`, read through
+   `RetrievableProduct`; the pretend engine carries them on `PretendProduct`), and `store_aliases` (proposed /
+   approved / rejected). Migration numbers still to settle: our gaps left are 0009, 0012, 0013; the engine's range is
+   0020–0039.
+8. **Retrieval** is L1's `retrieveForStore(source, tenant, lines)` (`src/application/learned-aliases.ts`, pure core
+   `retrieveCandidates` in `src/domain/retrieval.ts`) over the whole catalog. `CandidateTable` now carries
+   `howByLine` (per line, how each candidate was found), and the planner sees it as `found_by`: `exact_name`,
+   `store_name` (the store's other name or an approved alias), `all_words`, `some_words`, `other_name`,
+   `near_spelling`. There is no spelling table: **`ItemLine.otherNames?`** (planner mode only, reader-proposed,
+   at most 3 short plain names, e.g. "catsup" → "ketchup", "salsa de tomate") widens the search as
+   `CandidateHow` **`"other_name"`**, ranked below the customer's own words and above near spelling; never a match
+   by itself, never shown to the customer. The classic reader's schema and prompt are unchanged.
+9. **Learned aliases from confirmed orders** (D-49): once an order is confirmed, each line whose product the
+   planner picked proposes the customer's words for it (`proposeAliasesFromConfirmedOrder`), unless those words
+   already find the product on their own. Called by our side outside the job's completion batch, just before it:
+   it never throws, never holds up the confirmation, and a retried job proposes nothing new. The engine only has to
+   remember, per line, the words retrieval looked up and that the planner picked it (`plannerContext`).
+10. **Customer data deletion** also deletes the learned aliases still `proposed` from that customer's orders (the
+   engine's `orders` and the pretend engine's snapshot); approved or rejected ones are the store's decision and stay,
+   unlinked from the order. They keep `source = 'order'` (where they came from doesn't change) and the person in
+   `decided_by_user_id`; migration 0011 requires the order link only while an alias is still proposed. In the purge
+   batch (`D1CustomerControlRepository.purge`).
 
 **What the real engine (`OrderEngine`, kercmari) would need** before the planner can run on it. Nothing here breaks
 its current types; it runs the classic path until then, since it has no `plannerContext`.
@@ -285,5 +307,7 @@ its current types; it runs the classic path until then, since it has no `planner
 - Store `quantitySource` on order lines, mark it in the readback version, and clear it when the customer confirms
   or says a quantity.
 - Remember the question last shown per open order (kind, line IDs, options shown, times) and quantity asks per
-  line, and expose them with the order through `plannerContext`.
+  line, the words and other names each line was looked up by, and which lines the planner picked, and expose them
+  with the order through `plannerContext`.
+- Mark lines in pounds (`byWeight`) from its products' `sold_by`.
 - Return `ask` outcomes with `questions` (and `assumed`), with the option prices from its own price records.

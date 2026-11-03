@@ -177,6 +177,10 @@ export class D1CustomerControlRepository implements CustomerControlRepository {
     const due = `EXISTS (SELECT 1 FROM customers WHERE business_id = ? AND id = ?
                            AND deletion_requested_at_ms IS NOT NULL AND deleted_at_ms IS NULL)`;
     const theirConversations = `SELECT id FROM conversations WHERE business_id = ? AND customer_id = ?`;
+    // Their orders: the engine's table, and the pretend engine's snapshot until the real one runs.
+    const theirOrders = `SELECT id FROM orders WHERE business_id = ? AND customer_id = ?
+                         UNION SELECT json_extract(o.value, '$[0]') FROM pretend_engine_state s, json_each(s.state_json, '$.orders') o
+                         WHERE s.business_id = ? AND json_extract(o.value, '$[1].customerId') = ?`;
     const statements: D1PreparedStatement[] = [];
     if (senderHash !== null) {
       statements.push(
@@ -239,6 +243,19 @@ export class D1CustomerControlRepository implements CustomerControlRepository {
            WHERE business_id = ? AND customer_id = ? AND ${due}`,
         )
         .bind(b, customerId, b, customerId),
+      // Learned aliases their confirmed orders proposed (D-49): a proposal still waiting is their
+      // words and goes; one the store approved or rejected is the store's decision and stays, no
+      // longer linked to their order. It stays source 'order' (migration 0011 allows a decided one
+      // without its link); the person who decided it is still recorded.
+      this.db
+        .prepare(`DELETE FROM store_aliases WHERE business_id = ? AND state = 'proposed' AND source_order_id IN (${theirOrders}) AND ${due}`)
+        .bind(b, b, customerId, b, customerId, b, customerId),
+      this.db
+        .prepare(
+          `UPDATE store_aliases SET source_order_id = NULL
+           WHERE business_id = ? AND state <> 'proposed' AND source_order_id IN (${theirOrders}) AND ${due}`,
+        )
+        .bind(b, b, customerId, b, customerId, b, customerId),
       this.db
         .prepare(
           `UPDATE customers

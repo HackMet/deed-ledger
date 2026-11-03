@@ -3,7 +3,8 @@
  * may choose from, best first, labelled P1… for this turn. Pure: no I/O, no model, no vectors.
  *
  * Evidence, strongest first: barcode, exact name, the product's own other names, a name the store
- * approved (learned alias), every word said, some word said, near spelling. A hit on one of the
+ * approved (learned alias), every word said, some word said, a name the reader proposed for the
+ * item (`other_name`: "catsup" → "ketchup"), near spelling. A hit on one of the
  * first four stands alone (several hits on the same step are all offered). Anything weaker is only
  * a candidate, at most MAX_CANDIDATES_PER_LINE per line. Near spelling ("aciete") is never more
  * than a candidate, ranked last. Words are compared the way catalog-search compares them (case,
@@ -20,14 +21,8 @@ import {
   type RetrievalLine,
 } from "./planner/types";
 
-/** The candidate table, plus how each candidate was found for each line it's offered for. */
-export interface RetrievedCandidates extends CandidateTable {
-  /**
-   * Line label → candidate label → how it was found for that line. `Candidate.how` is the strongest
-   * across every line the product is offered for; this is the per-line truth.
-   */
-  readonly howByLine: ReadonlyMap<string, ReadonlyMap<string, CandidateHow>>;
-}
+/** The candidate table; `howByLine` (how each was found, per line) now lives in `CandidateTable`. */
+export type RetrievedCandidates = CandidateTable;
 
 /** Evidence that may stand alone: one hit here is that product. */
 export const STANDS_ALONE: ReadonlySet<CandidateHow> = new Set(["barcode", "exact_name", "known_alias", "learned_alias"]);
@@ -39,27 +34,12 @@ const STRENGTH: readonly CandidateHow[] = [
   "learned_alias",
   "all_words",
   "any_word",
+  "other_name",
   "near_spelling",
 ];
 
 /** Longest learned-alias key kept (the words of one item, not a sentence). */
 export const MAX_ALIAS_CHARS = 80;
-
-/**
- * One loanword spelled several ways, folded to one spelling on both sides. Spellings only, never
- * synonyms: "catsup" is "ketchup", but "salsa de tomate" is taught by the store (other names or
- * learned aliases).
- */
-const SPELLINGS: Readonly<Record<string, string>> = {
-  catsup: "ketchup",
-  catchup: "ketchup",
-  kechup: "ketchup",
-  yogurt: "yogur",
-  yoghurt: "yogur",
-  spaghetti: "espagueti",
-  spagueti: "espagueti",
-  espaguetti: "espagueti",
-};
 
 /** A run of meaningful words and every form they may take. */
 interface Phrase {
@@ -173,6 +153,17 @@ function lookUp(line: RetrievalLine, index: readonly Entry[], learned: readonly 
     const matched = (entry: Entry) => content.filter((word) => hasWord(entry.own, word)).length;
     take("any_word", index.filter((entry) => matched(entry) > 0), matched);
   }
+  // Other names the reader proposed ("catsup" → "ketchup", "salsa de tomate"): below the customer's
+  // own words, above near spelling. A product's name or other name, or all of the name's words.
+  const others = (line.otherNames ?? []).map(phraseOf).filter((phrase) => phrase.words.length > 0);
+  if (found.length < MAX_CANDIDATES_PER_LINE && others.length > 0) {
+    const fits = (entry: Entry) =>
+      others.some(
+        (other) =>
+          [...entry.names, ...entry.aliases].some((name) => samePhrase(other, name)) || other.words.every((word) => hasWord(entry.own, word)),
+      );
+    take("other_name", index.filter(fits));
+  }
   if (found.length < MAX_CANDIDATES_PER_LINE) {
     take("near_spelling", index.filter((entry) => nearSpelling(said, entry)));
   }
@@ -211,9 +202,12 @@ function candidateOf(label: string, product: RetrievableProduct, how: CandidateH
   };
 }
 
-/** The meaningful words of a text as retrieval compares them: catalog-search's, spellings folded. */
+/**
+ * The meaningful words of a text as retrieval compares them: catalog-search's. Other spellings and
+ * names ("catsup" for "ketchup") come from the reader's proposed other names, never a table here.
+ */
 function wordsOf(text: string): string[] {
-  return productWords(text).map((word) => SPELLINGS[word] ?? word);
+  return productWords(text);
 }
 
 function phraseOf(text: string): Phrase {

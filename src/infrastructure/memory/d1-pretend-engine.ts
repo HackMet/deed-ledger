@@ -180,5 +180,8 @@ function pretendProduct(product: StoreProduct): PretendProduct {
     barcode: null,
     price: product.price,
     ...(product.noHay ? { availability: "se_acabo" as const } : {}),
+    // How it's sold (L1, store_product_selling): the planner path's pounds and usual amounts.
+    ...(product.soldBy === null ? {} : { soldBy: product.soldBy }),
+    ...(product.usualQuantity === null ? {} : { usualQuantity: product.usualQuantity }),
   };
 }

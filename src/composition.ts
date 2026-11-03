@@ -8,7 +8,6 @@ import type { Engine } from "./application/engine";
 import { type BurstReader as OrderBurstReader, createOrderHandler } from "./application/order-handler";
 import { type BurstMediaResolver, createOrderReading, readingSourceOf, storedMediaResolver } from "./application/order-reading";
 import { BurstReader } from "./application/perception/reader";
-import { interimRetrieveCandidates } from "./application/planner/interim-retrieval";
 import { PlannerModel } from "./application/planner/plan-turn";
 import { plannerSourceOf } from "./application/planner/source";
 import { placeholderHandler } from "./application/placeholder-handler";
@@ -128,11 +127,12 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
   const mediaStore = overrides.mediaStore ?? new R2MediaStore(env.MEDIA);
   const audioDecoder = overrides.audioDecoder ?? new OpusAudioDecoder();
   const transcriber = overrides.transcriber ?? museTranscriber(config);
+  const retrieval = new D1RetrievalRepository(db);
   // Customers' messages go to the order handler once an engine is wired in (#13 plugs the real one in here).
   const reader =
     engine === null
       ? null
-      : buildOrderReading(env, engine, { clock, log }, { db, jobs, mediaStore, audioDecoder, transcriber, ...readingOverrides(overrides) });
+      : buildOrderReading(env, engine, { clock, log }, { db, jobs, mediaStore, audioDecoder, transcriber, retrieval, ...readingOverrides(overrides) });
   const orderHandler = engine === null ? null : createOrderHandler({
           engine,
           jobs,
@@ -144,13 +144,15 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
           gate,
           places: new D1CustomerPlaceRepository(db),
           buttonsShown: new D1ButtonsShown(db),
+          // Planner path: a confirmed order's planner picks propose learned aliases (D-49).
+          aliases: config.conversation === "planner" ? retrieval : null,
         });
   return {
     config,
     simMedia,
     engine,
     storeSetup,
-    retrieval: new D1RetrievalRepository(db),
+    retrieval,
     burstReader:
       overrides.burstReader ??
       buildBurstReader(env, { clock, log }, { db, ...(overrides.modelProvider === undefined ? {} : { provider: overrides.modelProvider }) }),
@@ -246,6 +248,7 @@ export function buildOrderReading(
     readonly mediaStore?: MediaStore;
     readonly audioDecoder?: AudioDecoder;
     readonly transcriber?: Transcriber;
+    readonly retrieval?: D1RetrievalRepository;
   } = {},
 ): OrderBurstReader | null {
   const source = readingSourceOf(engine);
@@ -275,8 +278,7 @@ export function buildOrderReading(
         ? null
         : {
             model: new PlannerModel({ provider, spend: new D1SpendLedger(overrides.db ?? env.DB), clock: deps.clock, log: deps.log }),
-            // Lane L1's retrieveCandidates (src/domain/retrieval.ts) replaces this at merge.
-            retrieve: interimRetrieveCandidates,
+            retrieval: overrides.retrieval ?? new D1RetrievalRepository(overrides.db ?? env.DB),
             source: plannerSource,
             log: deps.log,
           },

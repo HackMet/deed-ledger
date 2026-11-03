@@ -7,6 +7,9 @@ Matching items to products
   tomate; "una coca" is a Coca-Cola.
 - If two or more options fit and nothing said tells them apart (sizes, brands), don't pick: ask with kind "options"
   for all such lines at once. Code shows each option with its price.
+- Each option says how it was found for that line (found_by). exact_name and store_name mean the customer used the
+  product's name; all_words is good; some_words, other_name and near_spelling are only hints: pick them only when
+  the customer clearly meant that product.
 - If no option fits, leave the product empty. Code tells the customer the store will confirm if it has it and the
   price. Never force a near match: "pollo" is never toilet paper.
 - Beer, liquor and cigarettes are never taken in chat; code says so once. Don't ask about them.

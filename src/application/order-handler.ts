@@ -53,8 +53,10 @@ import {
 } from "../domain/replies";
 import { type CustomerGateDeps, gateCustomerJob } from "./customer-gate";
 import type { AnsweredQuestion, CustomerContext, Engine, EngineResult, LineMatch } from "./engine";
-import { BurstMediaUnreadableError } from "./errors";
+import { BurstMediaUnreadableError, describeError } from "./errors";
+import { type AliasBook, proposeAliasesFromConfirmedOrder } from "./learned-aliases";
 import { readingSourceOf } from "./order-reading";
+import { plannerSourceOf } from "./planner/source";
 import { CUSTOMER_REPLY_TTL_MS, type ReplyContext, replyForOutcome } from "./replies";
 import type {
   ButtonsShown,
@@ -136,6 +138,11 @@ export interface OrderHandlerDeps {
   readonly places?: CustomerPlaceRepository | null;
   /** The last message's buttons, for typed numbers and a typed yes. Without it, both are read. */
   readonly buttonsShown?: ButtonsShown | null;
+  /**
+   * Planner path (D-49): where a confirmed order's planner picks propose learned aliases. Without
+   * it (classic), nothing is proposed.
+   */
+  readonly aliases?: AliasBook | null;
 }
 
 const ACTION_TYPES = {
@@ -618,11 +625,42 @@ async function complete(
   if (result.answered != null && before.length > 0 && before[0]!.body !== safeReply().body) {
     await raiseUnanswered(deps, lease, job, customer, result.answered);
   }
+  await proposeAliases(deps, lease, job, customer, result.outcome, nowMs);
   // Notices for other customers (staff actions) don't arise from a customer's own message here.
   if (result.notices.length > 0) {
     deps.log.warn("customer_notices_dropped", { businessId: lease.businessId, count: result.notices.length });
   }
   return { replies, commits };
+}
+
+/**
+ * A confirmed order teaches the store (D-49): each line the planner matched proposes the customer's
+ * words for it as an alias, for the owner to approve in Pendientes. Written outside the job's
+ * completion batch, before it: a proposal never holds up or breaks the confirmation, and a retried
+ * job proposes the same words again, which adds nothing. Never throws.
+ */
+async function proposeAliases(
+  deps: OrderHandlerDeps,
+  lease: Lease,
+  job: Job,
+  customer: ConversationCustomer,
+  outcome: EngineOutcome,
+  nowMs: number,
+): Promise<void> {
+  const source = plannerSourceOf(deps.engine);
+  if (deps.aliases == null || source === null || outcome.type !== "order_confirmed") return;
+  try {
+    const known = await source.plannerContext({ businessId: lease.businessId, conversationId: lease.conversationId, customerId: customer.id, jobId: job.id, nowMs });
+    if (known.order?.orderId !== outcome.order.orderId) return;
+    const lines = outcome.order.lines.map((line) => ({
+      said: known.said[line.lineId] ?? line.text,
+      productId: line.productId,
+      how: known.picked.includes(line.lineId) ? "planner_pick" : null,
+    }));
+    await proposeAliasesFromConfirmedOrder(deps.aliases, deps.log, lease, { orderId: outcome.order.orderId, lines }, nowMs);
+  } catch (error) {
+    deps.log.error("alias_proposal_failed", { businessId: lease.businessId, conversationId: lease.conversationId, reason: describeError(error) });
+  }
 }
 
 /**

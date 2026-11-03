@@ -4,7 +4,7 @@
  * it gets the planner in composition (`CONVERSATION=planner`).
  */
 import type { OrderView } from "../../domain/contract/outcomes";
-import type { AskKind, RetrievableProduct } from "../../domain/planner/types";
+import type { AskKind } from "../../domain/planner/types";
 import type { CustomerContext, Engine } from "../engine";
 
 /** The question last shown on the planner path, by line ID, and how many times in a row. */
@@ -21,9 +21,11 @@ export interface PlannerContext {
   readonly order: OrderView | null;
   /** Line ID → the customer's words for the product ("platanos"), as perception read them. */
   readonly said: Readonly<Record<string, string>>;
+  /** Line ID → other names the reader proposed for the item, for retrieval only. */
+  readonly otherNames: Readonly<Record<string, readonly string[]>>;
+  /** Lines whose product the planner picked: once the order is confirmed, their words may teach the store. */
+  readonly picked: readonly string[];
   readonly lastAsk: LastAsk | null;
-  /** The store's products, scoped to the store, as retrieval needs them. */
-  readonly products: readonly RetrievableProduct[];
   /** The store layer the planner sees: only whether things are set, never amounts. */
   readonly store: { readonly hoursSet: boolean; readonly delivery: "yes" | "no" | "unknown" };
 }

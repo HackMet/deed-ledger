@@ -15,12 +15,12 @@ import { validateProposal } from "../../domain/planner/validate";
 import type { TurnPlan } from "../../domain/planner/types";
 import { TURN_SCHEMA_NAME, turnSchema } from "../../domain/planner/wire";
 import type { LineMatch } from "../engine";
+import { retrieveForStore, type RetrievalSource } from "../learned-aliases";
 import { meteredCall, type MeteredCallDeps, type MeteredOutcome } from "../metered-call";
 import type { CustomerContextWithName } from "../order-handler";
 import type { Logger, ModelContentPart, Tenant } from "../ports";
 import { plannerInstructions, type PlannerInstructions } from "./instructions";
 import { buildPlannerInput } from "./input";
-import type { RetrieveCandidates } from "./interim-retrieval";
 import type { PlannerSource } from "./source";
 
 /**
@@ -52,8 +52,8 @@ export class PlannerModel implements TurnProposer {
 
 export interface TurnPlannerDeps {
   readonly model: TurnProposer;
-  /** Lane L1's `retrieveCandidates` once merged; the interim adapter until then. */
-  readonly retrieve: RetrieveCandidates;
+  /** The store's products and approved aliases (`D1RetrievalRepository`), for L1's retrieval. */
+  readonly retrieval: RetrievalSource;
   readonly source: PlannerSource;
   readonly log: Logger;
 }
@@ -85,18 +85,22 @@ export async function planTurn(
 ): Promise<PlannedTurn | null> {
   const { context, reading } = request;
   const ids = { businessId: context.businessId, conversationId: context.conversationId };
-  const plannerContext = await deps.source.plannerContext(context);
-  const input = buildPlannerInput(
+  const tenant = { businessId: context.businessId };
+  const [plannerContext, products] = await Promise.all([deps.source.plannerContext(context), deps.retrieval.listProducts(tenant)]);
+  // The products read once: retrieval and code's checks see the same catalog.
+  const once: RetrievalSource = { listProducts: async () => products, listApprovedAliases: (t) => deps.retrieval.listApprovedAliases(t) };
+  const input = await buildPlannerInput(
     {
       reading,
       matches: request.matches,
       messages: request.messages,
       context: plannerContext,
+      products,
       customer: { nameKnown: context.customerName !== null, savedPlace: context.savedPlace !== null },
     },
-    deps.retrieve,
+    (lines) => retrieveForStore(once, tenant, lines),
   );
-  const outcome = await deps.model.propose({ businessId: context.businessId }, input.user);
+  const outcome = await deps.model.propose(tenant, input.user);
   if (!outcome.ok) {
     deps.log.warn("planner.fallback", { ...ids, reason: outcome.reason });
     return null;

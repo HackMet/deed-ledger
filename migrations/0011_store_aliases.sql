@@ -37,7 +37,8 @@ CREATE TABLE store_aliases (
   product_id TEXT NOT NULL,
   state TEXT NOT NULL CHECK (state IN ('proposed', 'approved', 'rejected')),
   -- 'order': proposed from a confirmed order (source_order_id). 'staff': taught by a person, who
-  -- is also the one who decided.
+  -- is also the one who decided. A decided 'order' alias loses its order link when that customer's
+  -- data is deleted, and stays 'order': where it came from doesn't change.
   source TEXT NOT NULL CHECK (source IN ('order', 'staff')),
   source_order_id TEXT CHECK (source_order_id IS NULL OR length(source_order_id) BETWEEN 1 AND 100),
   proposed_at_ms INTEGER NOT NULL,
@@ -49,7 +50,8 @@ CREATE TABLE store_aliases (
   -- A product the store removes takes its aliases with it.
   FOREIGN KEY (business_id, product_id) REFERENCES store_products (business_id, id) ON DELETE CASCADE,
   FOREIGN KEY (business_id, decided_by_user_id) REFERENCES memberships (business_id, user_id),
-  CHECK ((source = 'order') = (source_order_id IS NOT NULL)),
+  CHECK (source = 'order' OR source_order_id IS NULL),
+  CHECK (source <> 'order' OR state <> 'proposed' OR source_order_id IS NOT NULL),
   CHECK ((decided_at_ms IS NULL) = (decided_by_user_id IS NULL)),
   CHECK ((state = 'proposed') = (decided_at_ms IS NULL))
 ) STRICT;

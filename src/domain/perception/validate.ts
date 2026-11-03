@@ -25,6 +25,7 @@ import type { BurstMessage, ReadingContext } from "./burst";
 import { resolveEvidence, saysWords, spanText } from "./evidence";
 import { schemaMismatch } from "./schema-check";
 import {
+  MAX_OTHER_NAMES,
   readingSchema,
   type Audience,
   type WireEdit,
@@ -49,13 +50,18 @@ export type ValidatedReading =
   | { readonly ok: true; readonly observations: readonly Observation[]; readonly picks: readonly LinePick[] }
   | { readonly ok: false; readonly mismatch: string };
 
+/**
+ * `otherNames` (planner mode): the schema carries `other_names` on order lines, kept as short plain
+ * names for retrieval only (`otherNamesOf`).
+ */
 export function validateReading(
   raw: unknown,
   audience: Audience,
   messages: readonly BurstMessage[],
   context: ReadingContext,
+  options: { readonly otherNames?: boolean } = {},
 ): ValidatedReading {
-  const mismatch = schemaMismatch(readingSchema(audience), raw);
+  const mismatch = schemaMismatch(readingSchema(audience, options), raw);
   if (mismatch) return { ok: false, mismatch };
   const wire = raw as WireReading;
 
@@ -259,6 +265,7 @@ class ObservationReader {
         unit: text(wire.unit),
         restrictedCategory: wire.restricted,
         evidence: placed,
+        ...otherNamesOf(wire.other_names, wire.name),
       },
       bad: quantity.bad || evidence === null,
     };
@@ -329,6 +336,7 @@ class ObservationReader {
             unit: text(wire.unit),
             restrictedCategory: wire.restricted,
             evidence,
+            ...otherNamesOf(wire.other_names, wire.name),
           },
         },
         bad: quantity.bad,
@@ -398,4 +406,27 @@ function money(value: number | null): { value: Centavos | null; bad: boolean } {
 
 function centavos(value: number | null): Centavos | null {
   return money(value).value;
+}
+
+/** Longest other name kept: a product's name, never a sentence. */
+const MAX_OTHER_NAME_CHARS = 40;
+
+/**
+ * The reader's other names for an item (planner mode), as plain short names: letters, numbers,
+ * spaces and a little punctuation, at most MAX_OTHER_NAMES, none equal to the name said. Anything
+ * else is dropped, never repaired; none left is no field (the classic shape).
+ */
+export function otherNamesOf(raw: readonly string[] | undefined, said: string): { otherNames?: readonly string[] } {
+  if (raw === undefined) return {};
+  const fold = (value: string) => value.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+  const seen = new Set([fold(said.trim())]);
+  const kept: string[] = [];
+  for (const value of raw) {
+    const name = value.replace(/\s+/gu, " ").trim();
+    if (name === "" || [...name].length > MAX_OTHER_NAME_CHARS || !/^[\p{L}\p{N} .,'&/-]+$/u.test(name) || seen.has(fold(name))) continue;
+    seen.add(fold(name));
+    kept.push(name);
+    if (kept.length === MAX_OTHER_NAMES) break;
+  }
+  return kept.length === 0 ? {} : { otherNames: kept };
 }

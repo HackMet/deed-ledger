@@ -72,6 +72,12 @@ export interface RetrievalLine {
   readonly label: string;
   readonly said: string;
   readonly unit: string | null;
+  /**
+   * Added by L0 (Nov 2): other common names the reader proposed for the item ("catsup" →
+   * "ketchup", "salsa de tomate"). They only widen the search, ranked below the customer's own
+   * words (`other_name`): never a match by themselves, never shown to the customer.
+   */
+  readonly otherNames?: readonly string[];
 }
 
 export type CandidateHow =
@@ -81,6 +87,8 @@ export type CandidateHow =
   | "learned_alias"
   | "all_words"
   | "any_word"
+  /** Found only through a name the reader proposed for the item, never the customer's own words. */
+  | "other_name"
   | "near_spelling";
 
 /** One product offered to the planner this turn. `productId` never goes into the prompt. */
@@ -104,6 +112,12 @@ export interface CandidateTable {
   readonly candidates: readonly Candidate[];
   /** Line label → candidate labels offered for it, best first, at most MAX_CANDIDATES_PER_LINE. */
   readonly offered: ReadonlyMap<string, readonly string[]>;
+  /**
+   * Line label → candidate label → how it was found for that line (moved here from L1's
+   * `RetrievedCandidates`, Nov 2). `Candidate.how` is the strongest across every line the product is
+   * offered for; this is the per-line truth, and what the planner sees as evidence.
+   */
+  readonly howByLine: ReadonlyMap<string, ReadonlyMap<string, CandidateHow>>;
 }
 
 /** What the engine receives once a proposal is validated (proposed in docs/contract.md, Nov 2). */

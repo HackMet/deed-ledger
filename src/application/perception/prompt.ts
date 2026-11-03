@@ -77,14 +77,19 @@ export const LINE_PICK_RULE =
 export const OPTION_PICK_RULE =
   'pick: si el contexto trae OPCIONES (O1, O2...), la etiqueta de la opcion que la persona eligio, como sea que lo diga ("mazola porfavor", "la de 34", "el segundo", "esa grande"); null si no hay opciones o no queda claro cual. Nunca inventes etiquetas.';
 
+/** Planner mode only: other names for the item, so the store's products can be found by them. */
+export const OTHER_NAMES_RULE =
+  '- other_names: hasta 3 otros nombres comunes con que un comprador o una pulperia hondurena llama ese mismo producto ("catsup" -> "ketchup", "salsa de tomate"; "guineo" -> "banano"). Solo nombres de producto, sin cantidades ni marcas que no dijo. [] si no se te ocurre ninguno. Sirven solo para buscarlo en la tienda: nunca cambian lo que dijo.';
+
 /**
  * Planner mode (D-45): the customer prompt with no catalog and no picks. The reader only reports
- * what was said; which product a line is, and what to ask, is the planner's (application/planner).
- * Everything else is the classic prompt, word for word.
+ * what was said, plus other common names for each item (retrieval only); which product a line is,
+ * and what to ask, is the planner's (application/planner). Everything else is the classic prompt,
+ * word for word.
  */
 export const PLANNER_MODE_PROMPT = {
-  version: "order-v2-nopick",
-  text: CUSTOMER.replace(LINE_PICK_RULE, "- pick: siempre null.").replace(OPTION_PICK_RULE, "pick: siempre null."),
+  version: "order-v2-nopick-names",
+  text: CUSTOMER.replace(LINE_PICK_RULE, `- pick: siempre null.\n${OTHER_NAMES_RULE}`).replace(OPTION_PICK_RULE, "pick: siempre null."),
 } as const;
 
 const TYPE_LABEL: Record<BurstMessage["type"], string> = {

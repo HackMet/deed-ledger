@@ -68,11 +68,21 @@ describe("retrieval over the whole catalog", () => {
     expect(found("N2")).toEqual([{ productId: "salsa-naturas", how: "all_words" }]);
   });
 
-  it("offers the ketchup-style product for «catsup», however it's spelled", () => {
+  it("reaches «Salsa de tomate…» for «catsup» only through the reader's other names, ranked as such", () => {
     const products = catalog();
-    for (const said of ["catsup", "Catsup", "kétchup", "una catchup"]) {
-      expect(offeredFor([line("N1", said)], products)("N1").map((c) => c.productId), said).toContain("salsa-naturas");
+    const withNames = (said: string, otherNames: readonly string[]): RetrievalLine => ({ ...line("N1", said), otherNames });
+    // No spelling table: "catsup" alone finds nothing.
+    expect(offeredFor([line("N1", "catsup")], products)("N1").map((c) => c.productId)).not.toContain("salsa-naturas");
+    for (const said of ["catsup", "Catsup", "una catchup"]) {
+      const found = offeredFor([withNames(said, ["ketchup", "salsa de tomate"])], products)("N1");
+      expect(found.find((c) => c.productId === "salsa-naturas"), said).toEqual({ productId: "salsa-naturas", how: "other_name" });
+      expect(found.some((c) => STANDS_ALONE.has(c.how)), said).toBe(false);
     }
+    // The product's own other name, said as such, still stands alone.
+    expect(offeredFor([line("N1", "kétchup")], products)("N1")).toEqual([{ productId: "salsa-naturas", how: "known_alias" }]);
+    // Below the customer's own words: what their words find comes first.
+    const salsas = offeredFor([withNames("salsa", ["ketchup"])], products)("N1");
+    expect(salsas[0]).toEqual({ productId: "salsa-naturas", how: "all_words" });
   });
 
   it("never offers «Papel higiénico 4 rollos» for pollo", () => {
