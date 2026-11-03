@@ -161,9 +161,12 @@ describe("a text-only burst on the planner path, in one call", () => {
     // so it's asked with the platanos. "Ya vi tu lista" says nothing: there was no photo.
     expect(t.h.sentTo(t.phone)).toEqual([
       [
-        "Anotado ✅ 1 × una piña, 2 × Arroz 1 lb.",
+        "Anotado ✅",
+        "• 1 Piña",
+        "• 2 Arroz 1 lb",
+        "",
         "¿Cuántos querés de estos?",
-        "• platanos",
+        "• Platanos",
         "• Salsa de tomate Naturas 400 g",
         "Escribime todo junto, por ejemplo: «2 platanos, 1 salsa de tomate naturas 400 g».",
       ].join("\n"),
@@ -201,8 +204,8 @@ describe("a text-only burst on the planner path, in one call", () => {
     expect(t.provider.requests.map((r) => r.schemaName)).toEqual([ONE_CALL_SCHEMA_NAME, "TurnProposal"]);
     expect(t.h.log.fields("one_call.second_call")).toEqual([expect.objectContaining({ reason: "other_names" })]);
     const readback = t.h.sentTo(t.phone).at(-1)!;
-    expect(readback).toContain("• 1 × Salsa de tomate Naturas 400 g · L 28\n• 2 libras de Pollo entero · L 90");
-    expect(readback).toContain("*Total: L 118*");
+    expect(readback).toContain("• 1 Salsa de tomate Naturas 400 g · L 28\n• 2 libras de Pollo entero · L 90");
+    expect(readback).toContain("💵 Total: L 118.");
   });
 
   it("an answer that isn't the schema goes the two-call way, and the logs say so", async () => {
@@ -216,7 +219,7 @@ describe("a text-only burst on the planner path, in one call", () => {
     await t.say("2 libras de arroz, lo paso a traer");
     expect(t.provider.requests.map((r) => r.schemaName)).toEqual([ONE_CALL_SCHEMA_NAME, "BurstReading", "TurnProposal"]);
     expect(t.h.log.fields("one_call.fallback")).toEqual([expect.objectContaining({ reason: "invalid_output" })]);
-    expect(t.h.sentTo(t.phone).at(-1)).toContain("• 2 × Arroz 1 lb · L 36");
+    expect(t.h.sentTo(t.phone).at(-1)).toContain("• 2 Arroz 1 lb · L 36");
     expect(await rows(`SELECT 1 FROM inbound_messages WHERE business_id = ? AND job_state <> 'done'`, t.store.businessId)).toEqual([]);
   });
 });

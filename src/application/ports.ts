@@ -135,9 +135,14 @@ export type SendResult =
   | { readonly ok: true; readonly providerMessageId: string }
   | { readonly ok: false; readonly disposition: "retry" | "permanent" | "unknown"; readonly errorCode: string };
 
-/** A text with reply buttons (Confirmar / Corregir / Cancelar). The body carries the typed fallback. */
+/**
+ * A text with reply buttons (Confirmar / Corregir / Cancelar), and the grey footer under them. When
+ * the buttons can't be shown, the body goes as plain text with `textFallback` under it.
+ */
 export interface OutgoingButtons extends OutgoingText {
   readonly buttons: readonly ReplyButton[];
+  readonly footer?: string;
+  readonly textFallback?: string;
 }
 
 export interface MessagingChannel {
@@ -252,6 +257,10 @@ export interface ReplyDraft {
   readonly claims?: readonly ClaimCheck[];
   /** Reply buttons; only the reply's last part carries them. */
   readonly buttons?: readonly ReplyButton[];
+  /** The grey line under the buttons; goes with them. */
+  readonly footer?: string;
+  /** Put under the body only if it goes as plain text, without its buttons (the typed choices). */
+  readonly textFallback?: string;
   /**
    * The outbox row's kind; "reply" when absent. A direct answer to a customer's control word
    * (CONTROL_REPLY_KIND) is the only kind dispatch still sends to a customer who typed ALTO.
@@ -414,7 +423,10 @@ export interface OutboxDraft {
   readonly expiresAtMs: number;
   /** Every part of a reply carries the reply's claims. */
   readonly claims?: readonly ClaimCheck[];
+  /** The last part carries the buttons, and the footer and text fallback that go with them. */
   readonly buttons?: readonly ReplyButton[];
+  readonly footer?: string;
+  readonly textFallback?: string;
 }
 
 /**
@@ -552,6 +564,10 @@ export interface OutboxMessage {
   /** Checked right before the send. A stored value that can't be read never holds. */
   readonly claims?: readonly ClaimCheck[];
   readonly buttons?: readonly ReplyButton[];
+  /** Under the buttons; sent only with them. */
+  readonly footer?: string;
+  /** Under the body when it goes as plain text after all. */
+  readonly textFallback?: string;
 }
 
 export interface OutboxMaintenance {

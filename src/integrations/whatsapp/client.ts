@@ -6,12 +6,13 @@
  * https://developers.facebook.com/documentation/business-messaging/whatsapp/messages/interactive-reply-buttons-messages
  * type "interactive", interactive.type "button", body.text up to 1024 characters, action.buttons of
  * up to 3 `{ type: "reply", reply: { id, title } }`, IDs up to 256 characters, titles up to 20 and
- * unique. A tap comes back as an interactive message with `button_reply.id`.
+ * unique, and an optional `footer: { text }` of up to 60 characters (limits.ts, checked October 28).
+ * A tap comes back as an interactive message with `button_reply.id`.
  *
  * Never called by the default test run: tests use a fake MessagingChannel.
  */
 import type { MessagingChannel, OutgoingButtons, OutgoingText, SendResult } from "../../application/ports";
-import type { ReplyButton } from "../../domain/replies";
+import { plainTextBody, type ReplyButton } from "../../domain/replies";
 import { WHATSAPP_LIMITS } from "./limits";
 
 export interface WhatsAppCloudOptions {
@@ -39,14 +40,20 @@ export class WhatsAppCloudChannel implements MessagingChannel {
     return this.post(message, { type: "text", text: { preview_url: false, body: message.body } });
   }
 
-  /** Buttons that break Meta's limits are dropped: the body goes as text, with its typed fallback. */
+  /**
+   * Buttons (or a footer) that break Meta's limits are dropped: the body goes as plain text, with
+   * its typed fallback under it.
+   */
   async sendButtons(message: OutgoingButtons): Promise<SendResult> {
-    if (!fitsReplyButtons(message.body, message.buttons)) return this.sendText(message);
+    if (!fitsReplyButtons(message.body, message.buttons, message.footer)) {
+      return this.sendText({ fromPhoneNumberId: message.fromPhoneNumberId, toPhone: message.toPhone, body: plainTextBody(message.body, message.textFallback) });
+    }
     return this.post(message, {
       type: "interactive",
       interactive: {
         type: "button",
         body: { text: message.body },
+        ...(message.footer === undefined ? {} : { footer: { text: message.footer } }),
         action: { buttons: message.buttons.map(({ id, title }) => ({ type: "reply", reply: { id, title } })) },
       },
     });
@@ -92,11 +99,12 @@ export class WhatsAppCloudChannel implements MessagingChannel {
   }
 }
 
-/** Whether Meta accepts these as reply buttons with this body. */
-export function fitsReplyButtons(body: string, buttons: readonly ReplyButton[]): boolean {
+/** Whether Meta accepts these as reply buttons with this body, and this footer when there is one. */
+export function fitsReplyButtons(body: string, buttons: readonly ReplyButton[], footer?: string): boolean {
   const limits = WHATSAPP_LIMITS.replyButtons;
   const titles = new Set(buttons.map((b) => b.title));
   return (
+    (footer === undefined || fitsFooter(footer)) &&
     buttons.length >= 1 &&
     buttons.length <= limits.maxButtons &&
     titles.size === buttons.length &&
@@ -107,6 +115,11 @@ export function fitsReplyButtons(body: string, buttons: readonly ReplyButton[]):
         b.id !== "" && b.id.length <= limits.buttonIdChars && b.title.trim() !== "" && b.title.length <= limits.buttonTitleChars,
     )
   );
+}
+
+/** A footer is one line of plain text: no line breaks or control characters, at most 60 characters. */
+export function fitsFooter(footer: string): boolean {
+  return footer.trim() !== "" && footer.length <= WHATSAPP_LIMITS.replyButtons.footerChars && !/[\p{Cc}\p{Cf}\u2028\u2029]/u.test(footer);
 }
 
 function readMessageId(body: unknown): string | null {

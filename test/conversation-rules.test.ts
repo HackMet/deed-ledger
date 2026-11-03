@@ -11,7 +11,7 @@ import type { ModelProvider, ModelRequest } from "../src/application/ports";
 import { HANDED_TO_STORE } from "../src/domain/copy";
 import { asksToStop, controlWord, STOP_ASK, stopConfirmed } from "../src/domain/customer-controls";
 import { nameFrom } from "../src/domain/customer-name";
-import { COPY, confirmNudge, greetingLine, handoffText, renderOutcome } from "../src/domain/replies";
+import { COPY, confirmNudge, greetingLine, handoffText, plainTextBody, renderOutcome } from "../src/domain/replies";
 import { foldShortText, isTypedYes, smallTalk, typedButtonNumber } from "../src/domain/small-talk";
 import type { OrderView } from "../src/domain/contract/outcomes";
 import { D1PretendEngine } from "../src/infrastructure/memory/d1-pretend-engine";
@@ -44,7 +44,9 @@ const READ = {
   },
 } as const;
 
-const ASK_HOW = "Anotado ✅ 2 × Arroz 1 lb.\n¿Lo recogés en la tienda o te lo llevamos?";
+const HOW = "¿Lo recogés en la tienda o te lo llevamos?";
+/** The question after the burst that added the arroz: what it noted first, a blank line apart. */
+const ASK_HOW = `Anotado ✅\n• 2 Arroz 1 lb\n\n${HOW}`;
 const CONFIRMED_CARLA = "Listo, Carla 🙌 Tu pedido #101 quedó anotado. Total: L 60. Te aviso cuando esté listo.";
 
 class RecordedProvider implements ModelProvider {
@@ -141,7 +143,8 @@ describe("never silent", () => {
     const c = await customer([READ.arroz, READ.nothing], { name: "Carla", makeEngine });
     expect(await c.say("2 libras de arroz")).toBe(ASK_HOW);
     const before = c.sent().length;
-    expect(await c.say("mmm déjame ver")).toBe(ASK_HOW);
+    // Said again, without repeating what was already noted.
+    expect(await c.say("mmm déjame ver")).toBe(HOW);
     expect(c.sent()).toHaveLength(before + 1);
   });
 
@@ -247,14 +250,15 @@ describe("thanks, ok and greetings", () => {
   it("a greeting mid-order says hi by name and asks the open question again", async () => {
     const c = await customer([READ.arroz], { name: "Carla" });
     expect(await c.say("2 libras de arroz")).toBe(ASK_HOW);
-    expect(await c.say("buenas")).toBe(`${greetingLine("Carla")}\n${ASK_HOW}`);
+    expect(await c.say("buenas")).toBe(`${greetingLine("Carla")}\n\n${HOW}`);
     expect(c.provider.requests).toHaveLength(1);
   });
 
   it("a greeting without a name on file", async () => {
     const c = await customer([READ.arroz]);
     await c.say("2 libras de arroz");
-    expect(await c.say("Buenos días")).toBe(`¡Buenas! 👋\n${ASK_HOW}`);
+    // Nothing new in a greeting: the open question again, without repeating what was noted.
+    expect(await c.say("Buenos días")).toBe(`¡Buenas! 👋\n\n${HOW}`);
   });
 
   it("a thanks after a readback that was never sent (withheld for it) gets the readback in full", async () => {
@@ -275,7 +279,7 @@ describe("thanks, ok and greetings", () => {
   it("a greeting with a readback waiting nudges toward Confirmar, with its buttons", async () => {
     const c = await customer([READ.arroz, READ.pickup], { name: "Carla" });
     await toReadback(c);
-    expect(await c.say("hola")).toBe(`${greetingLine("Carla")}\n${COPY.confirmNudge}`);
+    expect(await c.say("hola")).toBe(`${greetingLine("Carla")}\n\n${COPY.confirmNudge}`);
     expect(c.lastSent().buttons?.map((b) => b.title)).toEqual(["Confirmar", "Corregir", "Cancelar"]);
   });
 });
@@ -284,7 +288,7 @@ describe("a question and an order in one message", () => {
   it.each(ENGINES)("answers the question first, then the order's next step, in one reply (%s)", async (_label, makeEngine) => {
     const c = await customer([READ.priceAndOrder], { name: "Carla", makeEngine });
     const reply = await c.say("¿a cómo la leche? y mandame 2 libras de arroz");
-    expect(reply.split("\n")).toEqual(["La leche: L 32.", ...ASK_HOW.split("\n")]);
+    expect(reply.split("\n")).toEqual(["La leche: L 32.", "", ...ASK_HOW.split("\n")]);
     expect(c.sent()).toHaveLength(1);
   });
 });
@@ -422,9 +426,12 @@ describe("tocá only when there is a button", () => {
     expect(nudge.buttons.map((b) => b.title)).toEqual(["Confirmar", "Corregir", "Cancelar"]);
   });
 
-  it("the readback keeps a typed fallback as its soft last line", () => {
-    const body = renderOutcome({ type: "readback", order: readback }, { customerId: "c-1" })!.body;
-    expect(body.split("\n").at(-1)).toBe(COPY.typedFallbackSoft);
-    expect(body.match(/[\p{Extended_Pictographic}]/gu) ?? []).toHaveLength(0);
+  it("the readback keeps a typed fallback for plain text, and the footer under its buttons", () => {
+    const reply = renderOutcome({ type: "readback", order: readback }, { customerId: "c-1" })!;
+    expect(reply.body.split("\n").at(-1)).toBe(COPY.confirmQuestion);
+    expect(reply.footer).toBe(COPY.fixHint);
+    expect(plainTextBody(reply.body, reply.textFallback).split("\n").at(-1)).toBe(COPY.typedFallbackSoft);
+    // Only the summary's two markers: how it's received and what it costs.
+    expect(reply.body.match(/[\p{Extended_Pictographic}]/gu) ?? []).toEqual(["🏪", "💵"]);
   });
 });

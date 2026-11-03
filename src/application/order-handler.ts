@@ -45,6 +45,7 @@ import {
   confirmNudge,
   decisionKey,
   greetingLine,
+  joinBlocks,
   questionText,
   type RenderedReply,
   safeReply,
@@ -710,14 +711,14 @@ async function answeredFirst(deps: OrderHandlerDeps, lease: Lease, facts: JobFac
 }
 
 /**
- * One message: the answer first, then a lead line ("¡Buenas, Carla! 👋"), then the step. Claims of
- * every part go with it; the buttons are the step's, the message's last part.
+ * One message: the answer first, then a lead line ("¡Buenas, Carla! 👋"), then the step, one blank
+ * line apart. Claims of every part go with it; the buttons are the step's, the message's last part.
  */
 function joined(before: readonly ReplyDraft[], lead: string | null, step: readonly ReplyDraft[], closesBurst: boolean): ReplyDraft[] {
   const [main, ...rest] = step;
   if (main === undefined) return [...before];
   const first = before[0];
-  const body = [first?.body, lead, main.body].filter((part): part is string => part != null).join("\n");
+  const body = joinBlocks(first?.body, lead, main.body);
   if (body === main.body) return [...step];
   const claims = [...(first?.claims ?? []), ...(main.claims ?? [])];
   const merged: ReplyDraft = {

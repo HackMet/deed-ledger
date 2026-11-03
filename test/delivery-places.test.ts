@@ -45,9 +45,12 @@ const READ = {
   yes: { observations: [{ kind: "clarification", answer: "Sí", pick: null, quantity: null, evidence: quote(0, "Sí"), ...none }] },
 } as const;
 
-const NOTED_ARROZ = "Anotado ✅ 2 × Arroz 1 lb.";
-const ASK_HOW = `${NOTED_ARROZ}\n¿Lo recogés en la tienda o te lo llevamos?`;
-const ASK_WHERE = `${NOTED_ARROZ}\n¿A dónde te lo llevamos? Mandame tu ubicación o escribime la dirección.`;
+const NOTED_ARROZ = "Anotado ✅\n• 2 Arroz 1 lb";
+const ASK_HOW = `${NOTED_ARROZ}\n\n¿Lo recogés en la tienda o te lo llevamos?`;
+/** Asked after "a domicilio": nothing new in the order, so nothing echoed again. */
+const ASK_WHERE = "¿A dónde te lo llevamos? Mandame tu ubicación o escribime la dirección.";
+/** The summary's place line for PLACE_TEXT, first letter up. */
+const TO_PLACE = "📍 Te lo llevamos a: Frente a la iglesia, casa verde";
 
 /** Muse Spark's place: each call gets the next recorded reading. Never the network. */
 class RecordedProvider implements ModelProvider {
@@ -170,15 +173,15 @@ async function customer(readings: unknown[], makeEngine: () => PretendEngine = E
   };
 }
 
-const readback = (placeLine: string, total = "L 60", lineText = "• 2 × Arroz 1 lb · L 60") =>
+const readback = (placeLine: string, total = "L 60", lineText = "• 2 Arroz 1 lb · L 60") =>
   [
     "Tu pedido:",
     lineText,
+    "",
     placeLine,
-    `*Total: ${total}*`,
-    placeLine === COPY.pickup ? COPY.payOnPickup : COPY.payOnDelivery,
+    `💵 Total: ${total}. ${placeLine === `🏪 ${COPY.pickup}` ? COPY.payOnPickup : COPY.payOnDelivery}`,
+    "",
     COPY.confirmQuestion,
-    COPY.typedFallbackSoft,
   ].join("\n");
 
 describe("a pin from the webhook", () => {
@@ -191,7 +194,7 @@ describe("a pin from the webhook", () => {
     // The model was told a location was shared, never its coordinates.
     expect(c.provider.textOf(1)).toContain("[1] ubicacion compartida");
     expect(c.provider.textOf(1)).not.toContain("10.12");
-    const shown = readback(COPY.deliveryToPin);
+    const shown = readback(`📍 ${COPY.deliveryToPin}`);
     expect(c.sent().at(-1)).toBe(shown);
     expect(shown).not.toContain("envío");
     expect(await c.places()).toEqual([]); // nothing is saved before Confirmar
@@ -217,14 +220,14 @@ describe("a pin from the webhook", () => {
     await c.burst(c.text("2 libras de arroz"));
     await c.burst(c.pin());
     expect(c.provider.requests).toHaveLength(1);
-    expect(c.sent().at(-1)).toBe(readback(COPY.deliveryToPin));
+    expect(c.sent().at(-1)).toBe(readback(`📍 ${COPY.deliveryToPin}`));
   });
 
   it("sent with pickup is not used, and nothing is saved", async () => {
     const c = await customer([READ.arroz, READ.pickup]);
     await c.burst(c.text("2 libras de arroz"));
     await c.burst(c.text("lo paso a traer"), c.pin());
-    expect(c.sent().at(-1)).toBe(readback(COPY.pickup));
+    expect(c.sent().at(-1)).toBe(readback(`🏪 ${COPY.pickup}`));
     await c.tap("Confirmar");
     expect(await c.places()).toEqual([]);
   });
@@ -257,7 +260,7 @@ describe("the next delivery order", () => {
     expect(c.sent().some((body) => body.startsWith("Tu pedido:"))).toBe(false);
 
     await c.tap("Sí");
-    expect(c.sent().at(-1)).toBe(readback(`Te lo llevamos a: ${PLACE_TEXT}.`));
+    expect(c.sent().at(-1)).toBe(readback(TO_PLACE));
     expect((await c.openOrder())!.fulfillment).toMatchObject({ mode: "delivery", placeId, placeText: PLACE_TEXT });
 
     // A second tap on Sí is the same operation: nothing more is saved, and it isn't left unanswered.
@@ -289,7 +292,7 @@ describe("the next delivery order", () => {
     await c.tap("Otro lugar");
     expect(c.sent().at(-1)).toBe(ASK_WHERE);
     await c.burst(c.text(PLACE_TEXT));
-    expect(c.sent().at(-1)).toBe(readback(`Te lo llevamos a: ${PLACE_TEXT}.`));
+    expect(c.sent().at(-1)).toBe(readback(TO_PLACE));
     c.h.clock.advance(60_000);
     await c.tap("Confirmar");
     expect((await c.places()).map((p) => p.place_text)).toEqual([null, PLACE_TEXT]);
@@ -297,7 +300,7 @@ describe("the next delivery order", () => {
     // The next order offers the newest place, again as a question.
     await c.handOver();
     await c.burst(c.text("1 jabon xtra"));
-    expect(c.sent().at(-1)).toBe("Anotado ✅ 1 × Jabón Xtra.\n¿Lo recogés en la tienda o te lo llevamos?");
+    expect(c.sent().at(-1)).toBe("Anotado ✅\n• 1 Jabón Xtra\n\n¿Lo recogés en la tienda o te lo llevamos?");
     await c.burst(c.text("me lo mandan"));
     expect(c.sent().at(-1)).toContain(`La vez pasada te lo llevamos a: ${PLACE_TEXT}.`);
   });
@@ -310,7 +313,7 @@ describe("the next delivery order", () => {
     await c.burst(c.text("Sí"));
     // Perception was told the question pending.
     expect(c.provider.textOf(2)).toContain("PREGUNTA PENDIENTE: same_place");
-    expect(c.sent().at(-1)).toBe(readback(`Te lo llevamos a: ${PLACE_TEXT}.`));
+    expect(c.sent().at(-1)).toBe(readback(TO_PLACE));
   });
 
   it("a Sí tap naming a place that isn't the customer's saved one applies nothing", async () => {
@@ -452,8 +455,8 @@ describe("pieces", () => {
     });
     const body = (fee: number | null) => renderOutcome({ type: "readback", order: order(fee) }, { customerId: "c" })!.body;
     expect(body(null)).not.toContain("envío");
-    expect(body(null)).toContain("*Total: L 60*\n");
-    expect(body(2500)).toContain("*Total: L 85* (L 60 + L 25 de envío)");
+    expect(body(null)).toContain("💵 Total: L 60. Pagás cuando te lo entregamos.\n");
+    expect(body(2500)).toContain("💵 Total: L 85 (L 60 + L 25 de envío). Pagás cuando te lo entregamos.\n");
   });
 
   it("knows a clear yes from anything else", () => {

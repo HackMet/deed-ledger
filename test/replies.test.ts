@@ -157,17 +157,20 @@ describe("templates", () => {
     expect(reply.body).toBe(
       [
         "Tu pedido:",
-        "• 1 × Aceite Clover 1 L · L 60",
-        "• 3 × Arroz 1 lb · L 90",
-        "• 2 × Azúcar 1 lb · L 60",
-        "• 3 × Jabón Xtra · L 105",
-        "Lo recogés en la tienda.",
-        "*Total: L 315*",
-        "Pagás cuando lo recogés.",
+        "• 1 Aceite Clover 1 L · L 60",
+        "• 3 Arroz 1 lb · L 90",
+        "• 2 Azúcar 1 lb · L 60",
+        "• 3 Jabón Xtra · L 105",
+        "",
+        "🏪 Lo recogés en la tienda.",
+        "💵 Total: L 315. Pagás cuando lo recogés.",
+        "",
         "¿Te lo preparo así?",
-        "_O escribí: confirmar, corregir o cancelar._",
       ].join("\n"),
     );
+    // Under the buttons, the footer; the typed choices only if it goes as plain text.
+    expect(reply.footer).toBe(COPY.fixHint);
+    expect(reply.textFallback).toBe(COPY.typedFallbackSoft);
     expect(reply.claims).toEqual([
       { anyOf: [{ type: "order_state", orderId: ids.order, version: 1, state: "por_confirmar" }] },
       { anyOf: [{ type: "order_total", orderId: ids.order, version: 1, total: 31500 }] },
@@ -191,11 +194,13 @@ describe("templates", () => {
       total: null,
     };
     const reply = render({ type: "readback", order });
-    expect(reply.body).toContain("• 1 × Aceite Clover 1 L: el precio te lo confirmo.");
+    expect(reply.body).toContain("• 1 Aceite Clover 1 L\n");
     expect(reply.body).toContain("• 1.5 libras de Arroz 1 lb · L 45");
     expect(reply.body).toContain("• Azúcar 1 lb: no nos queda.");
-    expect(reply.body).toContain("• un six de Salva Vida: eso solo lo vendemos aquí en la tienda.");
-    expect(reply.body).toContain("El total te lo confirmo.");
+    expect(reply.body).toContain("• Six de Salva Vida: eso solo lo vendemos aquí en la tienda.");
+    // Only the line the store still has to price, named: not the sold-out or the restricted one.
+    expect(reply.body).toContain("De estos te confirmo si hay y el precio: Aceite Clover 1 L.");
+    expect(reply.body).toContain("💵 El total te lo confirmo.");
     expect(reply.body).not.toContain("Total:");
     expect(reply.claims.flatMap((c) => c.anyOf).map((c) => c.type)).toEqual(["order_state"]);
   });
@@ -206,8 +211,8 @@ describe("templates", () => {
       fulfillment: { mode: "delivery", placeId: null, placeText: "frente a la iglesia,\ncasa verde", fee: 2000 },
     };
     const body = render({ type: "readback", order }).body;
-    expect(body).toContain("Te lo llevamos a: frente a la iglesia, casa verde.");
-    expect(body).toContain("*Total: L 335* (L 315 + L 20 de envío)");
+    expect(body).toContain("📍 Te lo llevamos a: Frente a la iglesia, casa verde\n");
+    expect(body).toContain("💵 Total: L 335 (L 315 + L 20 de envío).");
     // No fee set: none is mentioned.
     const free = render({ type: "readback", order: { ...order, fulfillment: { mode: "delivery", placeId: "p1", placeText: null, fee: null } } }).body;
     expect(free).not.toContain("envío");
@@ -216,8 +221,8 @@ describe("templates", () => {
   it("reads back a change after confirming as a new version with its own buttons", () => {
     const reply = render(orderChanged);
     expect(reply.body.startsWith("Listo, así queda tu pedido:\n")).toBe(true);
-    expect(reply.body).toContain("• 3 × Azúcar 1 lb · L 90");
-    expect(reply.body).toContain("*Total: L 345*");
+    expect(reply.body).toContain("• 3 Azúcar 1 lb · L 90");
+    expect(reply.body).toContain("💵 Total: L 345.");
     expect(reply.buttons.map((b) => b.id)).toEqual(["confirm:order-0001:v2", "correct:order-0001:v2", "cancel:order-0001:v2"]);
   });
 
@@ -270,16 +275,20 @@ describe("templates", () => {
   });
 
   it("asks one question at a time, naming the line it's about", () => {
-    const ask = (question: Extract<EngineOutcome, { type: "ask" }>["question"], line: number | null = null) =>
-      render({ type: "ask", question, line, order: readbackOrder }).body;
-    // A question about one line echoes the others first.
-    expect(ask("ambiguous_size", 0)).toBe("Anotado ✅ 3 × Arroz 1 lb, 2 × Azúcar 1 lb, 3 × Jabón Xtra.\n¿De qué tamaño querés Aceite Clover 1 L?");
+    const ask = (question: Extract<EngineOutcome, { type: "ask" }>["question"], line: number | null = null, noted?: string[]) =>
+      render({ type: "ask", question, line, order: readbackOrder, ...(noted === undefined ? {} : { noted }) }).body;
+    // A question about one line echoes the others first, one per line, a blank line before the question.
+    expect(ask("ambiguous_size", 0)).toBe("Anotado ✅\n• 3 Arroz 1 lb\n• 2 Azúcar 1 lb\n• 3 Jabón Xtra\n\n¿De qué tamaño querés Aceite Clover 1 L?");
     expect(ask("pickup_or_delivery")).toBe(
-      "Anotado ✅ 1 × Aceite Clover 1 L, 3 × Arroz 1 lb, 2 × Azúcar 1 lb, 3 × Jabón Xtra.\n¿Lo recogés en la tienda o te lo llevamos?",
+      "Anotado ✅\n• 1 Aceite Clover 1 L\n• 3 Arroz 1 lb\n• 2 Azúcar 1 lb\n• 3 Jabón Xtra\n\n¿Lo recogés en la tienda o te lo llevamos?",
     );
+    // Only what the burst added or changed is echoed; nothing new, no echo.
+    expect(ask("pickup_or_delivery", null, ["line-2"])).toBe("Anotado ✅\n• 3 Arroz 1 lb\n\n¿Lo recogés en la tienda o te lo llevamos?");
+    expect(ask("pickup_or_delivery", null, [])).toBe("¿Lo recogés en la tienda o te lo llevamos?");
     expect(ask("customer_name")).toBe("¡Va! ¿A nombre de quién lo anoto?");
-    // Without a saved place in the context there's nothing to echo and no buttons: the typed choices only.
-    expect(ask("same_place")).toBe("¿Te lo llevamos al mismo lugar de siempre?\nRespondé Sí u Otro lugar.");
+    // Without a saved place in the context there's no place to echo and no buttons: the typed choices only.
+    expect(ask("same_place", null, [])).toBe("¿Te lo llevamos al mismo lugar de siempre?\nRespondé Sí u Otro lugar.");
+    expect(ask("same_place", null, ["line-4"])).toBe("Anotado ✅\n• 3 Jabón Xtra\n\n¿Te lo llevamos al mismo lugar de siempre?\nRespondé Sí u Otro lugar.");
     expect(ask("embedded_instructions")).toBe("Te ayudo con tu pedido. ¿Qué te mando?");
     expect(ask("illegible", 9)).toBe("No alcancé a leer una parte de tu lista. ¿Me la escribís?");
     for (const q of ["illegible", "ambiguous_product", "quantity", "delivery_place"] as const) {

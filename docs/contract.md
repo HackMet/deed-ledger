@@ -257,18 +257,21 @@ the engine a `TurnPlan`. Code still renders every fact, and the claim check is u
 2. **`LineMatch.how: "planner_pick"`**: a candidate the planner chose for a new item, mapped to a product by code,
    like `label_pick`.
 3. **`OrderLineView.quantitySource?: "said" | "suggested" | "store_usual"`**; absent means said. The readback marks
-   the other two ("• 1 × Piña (te puse 1): …"); Confirmar makes them the agreed quantity (the pretend engine drops
+   the other two ("• 1 Piña (te puse 1)"); Confirmar makes them the agreed quantity (the pretend engine drops
    the mark on confirm). A quantity the customer later says replaces the assumption and drops the mark.
    **`OrderLineView.byWeight?: true`** (planner path): the quantity is in pounds, because the product is sold by
    weight, or the customer said a weight for a product the store doesn't sell by unit. The unit is the one said, or
-   "libra". The readback says "2 libras de Pollo entero", never "2 ×"; absent, a count as before.
+   "libra". The readback says "2 libras de Pollo entero"; absent, a count ("2 Pollo entero").
 4. **`EngineOutcome.ask` gains `questions?: AskQuestions` and `assumed?: lineId[]`**. `AskQuestions`:
    `{ kind, lineIds, options?: Record<lineId, ProductOption[]>, byWeight?: lineId[] }`: every missing quantity
    together, or every "which one" together, or pickup/delivery, the place, what to order. `question` and `line` stay
    filled (`quantity`/`quantities`, `ambiguous_product`, `illegible`, `pickup_or_delivery`, `delivery_place`,
    `what_to_order`) so perception's PREGUNTA PENDIENTE and the never-silent fallback keep working. Option prices
    are claims, backed by the outcome (`backedClaims` reads `questions.options` too). `assumed` lists the lines
-   whose quantity this burst assumed, for "Te puse 1 de…".
+   whose quantity this burst assumed, for "Te puse 1 de…". **Proposed (Nov 3): `noted?: lineId[]`** (both
+   paths) lists the lines this burst added or changed (quantity, product or unit), the only ones the reply echoes
+   as "Anotado ✅"; empty means nothing new and no echo; "¿ya anotaste…?" notes every line. Absent: every line,
+   as before.
 5. **`missingFor(order, quantityAsks)`** (`src/domain/readiness.ts`, pure) is the shared readiness rule: no lines
    (what to order), lines without a quantity until asked twice (`MAX_QUANTITY_ASKS`), unknown fulfillment, delivery
    without a place. Unmatched products and unknown prices are not blocking (they read back as "te confirmo");
@@ -365,4 +368,5 @@ its current types; it runs the classic path until then, since it has no `planner
   line, the words and other names each line was looked up by, and which lines the planner picked, and expose them
   with the order through `plannerContext`.
 - Mark lines in pounds (`byWeight`) from its products' `sold_by`.
-- Return `ask` outcomes with `questions` (and `assumed`), with the option prices from its own price records.
+- Return `ask` outcomes with `questions` (and `assumed`, `noted`), with the option prices from its own price
+  records.

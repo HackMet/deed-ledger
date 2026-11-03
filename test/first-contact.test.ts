@@ -159,7 +159,7 @@ describe("a new customer's first reply", () => {
     expect(t.sent()).toEqual([expect.objectContaining({ body: WELCOME, buttons: introButtons(VOICE) })]);
     // Introduced once: later, a greeting gets "¡Buenas! 👋" and the same question, without buttons.
     await t.say("hola?");
-    expect(t.sent().at(-1)!.body).toBe(`${greetingLine(null)}\n${WHAT_TO_ORDER}`);
+    expect(t.sent().at(-1)!.body).toBe(`${greetingLine(null)}\n\n${WHAT_TO_ORDER}`);
     expect(t.sent().at(-1)!.buttons).toBeUndefined();
   });
 

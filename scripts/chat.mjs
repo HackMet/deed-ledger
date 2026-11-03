@@ -11,7 +11,7 @@
 //           only; scripts/sim-media has some) · "a | b | c" sends three messages in a row
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline/promises";
-import { mediaMessage, parseArgs, postWebhook, queryLocal, SIM, simChildEnv, uploadSimMedia } from "./lib/sim.mjs";
+import { mediaMessage, parseArgs, postWebhook, queryLocal, readButtonsJson, SIM, simChildEnv, uploadSimMedia } from "./lib/sim.mjs";
 
 const args = parseArgs(process.argv.slice(2));
 const url = typeof args.url === "string" ? args.url : `http://127.0.0.1:${SIM.port}`;
@@ -89,6 +89,16 @@ async function send(message) {
   return response.ok;
 }
 
+/** One reply as it looks on the phone: the body, its buttons, and the grey footer under them. */
+function printRow(row) {
+  console.log(`${color.bot}Tienda:${color.off} ${String(row.body_text).replaceAll("\n", "\n        ")}`);
+  const parsed = readButtonsJson(row.buttons_json);
+  if (parsed.buttons.length === 0) return;
+  buttons = parsed.buttons;
+  console.log(`        ${parsed.buttons.map((b, i) => `[${i + 1}] ${b.title}`).join("   ")}`);
+  if (parsed.footer !== null) console.log(`        ${color.dim}${parsed.footer}${color.off}`);
+}
+
 /** Waits for the bot to answer, then prints every new reply as it would look on the phone. */
 async function printReplies() {
   const started = Date.now();
@@ -102,12 +112,7 @@ async function printReplies() {
       process.stdout.write("\r\x1b[K");
       for (const row of rows) {
         lastSeq = Math.max(lastSeq, row.seq);
-        console.log(`${color.bot}Tienda:${color.off} ${String(row.body_text).replaceAll("\n", "\n        ")}`);
-        const parsed = row.buttons_json === null ? [] : JSON.parse(row.buttons_json);
-        if (parsed.length > 0) {
-          buttons = parsed;
-          console.log(`        ${parsed.map((b, i) => `[${i + 1}] ${b.title}`).join("   ")}`);
-        }
+        printRow(row);
       }
       lastNewAt = Date.now();
       process.stdout.write(`${color.dim}  escribiendo…${color.off}`);
@@ -142,12 +147,7 @@ setInterval(async () => {
     process.stdout.write("\r\x1b[K");
     for (const row of rows) {
       lastSeq = Math.max(lastSeq, row.seq);
-      console.log(`${color.bot}Tienda:${color.off} ${String(row.body_text).replaceAll("\n", "\n        ")}`);
-      const parsed = row.buttons_json === null ? [] : JSON.parse(row.buttons_json);
-      if (parsed.length > 0) {
-        buttons = parsed;
-        console.log(`        ${parsed.map((b, i) => `[${i + 1}] ${b.title}`).join("   ")}`);
-      }
+      printRow(row);
     }
     rl.prompt(true);
   } catch {

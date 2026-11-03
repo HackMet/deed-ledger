@@ -12,7 +12,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { mediaMessage, parseArgs, postWebhook, queryLocal, SIM, uploadSimMedia } from "./lib/sim.mjs";
+import { mediaMessage, parseArgs, postWebhook, queryLocal, readButtonsJson, SIM, uploadSimMedia } from "./lib/sim.mjs";
 import { QA_CATALOG, QA_FEE, QA_HOURS, QA_NO_HAY, QA_UNPRICED, SCENARIOS } from "./qa-scenarios.mjs";
 
 const args = parseArgs(process.argv.slice(2));
@@ -124,7 +124,7 @@ class Customer {
       if (rows.length > 0) {
         for (const row of rows) {
           this.lastSeq = Math.max(this.lastSeq, row.seq);
-          const buttons = row.buttons_json === null ? [] : JSON.parse(row.buttons_json);
+          const { buttons } = readButtonsJson(row.buttons_json);
           if (buttons.length > 0) this.buttons = buttons;
           this.log.push({ who: "bot", text: row.body_text, buttons: buttons.map((b) => b.title), afterMs: Date.now() - started, kind: row.kind });
         }

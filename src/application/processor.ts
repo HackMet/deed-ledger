@@ -12,6 +12,7 @@ import {
   secondsUntil,
   settleDelaySeconds,
 } from "../domain/processing";
+import { buttonExtras } from "../domain/replies";
 import { splitText } from "../domain/text";
 import { describeError, LeaseLostError, PermanentWriteError, StaleSnapshotError, StaleWriteError } from "./errors";
 import type { ConversationRef, Deps, Job, JobOutcome, Lease, OutboxDraft, ReplyDraft } from "./ports";
@@ -234,7 +235,8 @@ function toOutbox(deps: Deps, job: Job, replies: readonly ReplyDraft[]): OutboxD
   const now = deps.clock.now();
   const maxChars = Math.min(deps.channel.maxTextChars, OUTBOX_BODY_MAX_CHARS);
   return replies.flatMap((reply, n) => {
-    const parts = splitText(reply.body, maxChars);
+    // Room for the typed fallback, in case the buttons can't be shown and it goes as plain text.
+    const parts = splitText(reply.body, maxChars - fallbackRoom(reply));
     // Every part carries the reply's claims; only the last carries its buttons.
     return parts.map((body, part) => ({
       id: deps.ids.newId(),
@@ -245,9 +247,14 @@ function toOutbox(deps: Deps, job: Job, replies: readonly ReplyDraft[]): OutboxD
       partIndex: part,
       expiresAtMs: now + reply.ttlMs,
       ...(reply.claims === undefined ? {} : { claims: reply.claims }),
-      ...(reply.buttons === undefined || part !== parts.length - 1 ? {} : { buttons: reply.buttons }),
+      ...(reply.buttons === undefined || part !== parts.length - 1 ? {} : { buttons: reply.buttons, ...buttonExtras(reply) }),
     }));
   });
+}
+
+/** The characters a plain-text send adds under the body: a newline and the typed fallback. */
+function fallbackRoom(reply: ReplyDraft): number {
+  return reply.buttons === undefined || reply.textFallback === undefined ? 0 : reply.textFallback.length + 1;
 }
 
 /**

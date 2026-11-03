@@ -85,6 +85,21 @@ export function parseArgs(argv) {
   return args;
 }
 
+/**
+ * An outbox row's buttons_json, in either shape: a plain array of buttons, or (with a footer or a
+ * text fallback) `{ buttons, footer, textFallback }`. Missing or unreadable: no buttons.
+ */
+export function readButtonsJson(json) {
+  if (json === null || json === undefined) return { buttons: [], footer: null };
+  try {
+    const value = JSON.parse(json);
+    if (Array.isArray(value)) return { buttons: value, footer: null };
+    return { buttons: Array.isArray(value?.buttons) ? value.buttons : [], footer: typeof value?.footer === "string" ? value.footer : null };
+  } catch {
+    return { buttons: [], footer: null };
+  }
+}
+
 /** Posts one message to the local Worker as a Meta webhook, signed with the simulator's app secret. */
 export async function postWebhook(url, message, { from, to = SIM.phoneNumberId }) {
   const body = JSON.stringify({
