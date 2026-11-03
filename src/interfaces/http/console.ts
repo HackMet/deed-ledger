@@ -19,7 +19,9 @@ import {
   sameSiteForms,
   simplePage,
 } from "./console/auth";
+import { negocioScreen } from "./console/negocio";
 import { pedidosScreen } from "./console/pedidos";
+import { productosScreen } from "./console/productos";
 
 const REFRESH_SECONDS = 15;
 
@@ -59,6 +61,8 @@ export function consoleRoutes() {
   });
 
   pedidosScreen(app);
+  productosScreen(app);
+  negocioScreen(app);
 
   app.post("/acciones", async (c) => {
     const { engine, deps } = c.get("runtime");
