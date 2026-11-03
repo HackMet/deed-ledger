@@ -25,7 +25,9 @@ Last updated: Mon Nov 2, 2026, night Honduras time, by Claude Code (latency lane
   (E11); the eval runner writes all.md and results.json again, keeps a failed scenario's transcript and retries a
   dropped socket once (E22 passes). Re-run of E09b, E11, E19, E21, E22 on the planner path: 4 of 5 pass; E21's
   recording is a store owner's sales report ("Vendí tres refrescos…"), read as no order whether spoken or typed,
-  so its expectation needs another recording or a decision.
+  so its expectation needs another recording or a decision. WhatsApp test commands (Nov 3): `/new` makes a store
+  member's phone a new customer again and `/help` lists the commands, only with `TEST_COMMANDS=1` and only for the
+  store's own members (docs/deploy.md "Testing on the live number").
 - **Planner-path latency (Nov 2, [handoff](handoffs/2026-11-02-latency.md)):** each call now sends its own reasoning
   effort and a prompt-cache key per instruction version. Planner-path defaults: reader `low`, planner `minimal`
   (`READER_REASONING_EFFORT`, `PLANNER_REASONING_EFFORT`; the classic reader keeps the model's own). On the fixed

@@ -147,6 +147,16 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
           buttonsShown: new D1ButtonsShown(db),
           // Planner path: a confirmed order's planner picks propose learned aliases (D-49).
           aliases: config.conversation === "planner" ? retrieval : null,
+          testCommands: {
+            enabled: config.testCommands,
+            engine,
+            controls: customerControls,
+            customers,
+            jobs,
+            mediaEraser: overrides.mediaEraser ?? new R2MediaEraser(env.MEDIA),
+            clock,
+            log,
+          },
         });
   return {
     config,

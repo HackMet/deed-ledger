@@ -176,11 +176,6 @@ export class D1CustomerControlRepository implements CustomerControlRepository {
     // own row goes last, so its change count says whether this batch did the purge.
     const due = `EXISTS (SELECT 1 FROM customers WHERE business_id = ? AND id = ?
                            AND deletion_requested_at_ms IS NOT NULL AND deleted_at_ms IS NULL)`;
-    const theirConversations = `SELECT id FROM conversations WHERE business_id = ? AND customer_id = ?`;
-    // Their orders: the engine's table, and the pretend engine's snapshot until the real one runs.
-    const theirOrders = `SELECT id FROM orders WHERE business_id = ? AND customer_id = ?
-                         UNION SELECT json_extract(o.value, '$[0]') FROM pretend_engine_state s, json_each(s.state_json, '$.orders') o
-                         WHERE s.business_id = ? AND json_extract(o.value, '$[1].customerId') = ?`;
     const statements: D1PreparedStatement[] = [];
     if (senderHash !== null) {
       statements.push(
@@ -194,68 +189,7 @@ export class D1CustomerControlRepository implements CustomerControlRepository {
       );
     }
     statements.push(
-      // Media references: the provider's ID and hash, and the stored object (already erased from R2).
-      this.db
-        .prepare(
-          `UPDATE media_assets
-           SET provider_media_id = 'deleted:' || id, mime_type = NULL, provider_sha256 = NULL, state = 'failed',
-               content_sha256 = NULL, stored_key = NULL, byte_size = NULL
-           WHERE business_id = ? AND id IN (SELECT media_asset_id FROM inbound_messages
-                                            WHERE business_id = ? AND conversation_id IN (${theirConversations}))
-             AND ${due}`,
-        )
-        .bind(b, b, b, customerId, b, customerId),
-      // Message text, shared locations and provider IDs (they embed the phone). Unstarted jobs end without a reply.
-      this.db
-        .prepare(
-          `UPDATE inbound_messages
-           SET text_body = NULL, reply_id = NULL, context_message_id = NULL, latitude_e6 = NULL, longitude_e6 = NULL,
-               provider_message_id = 'deleted:' || id,
-               last_error = CASE WHEN job_state = 'pending' THEN 'customer_deleted' ELSE last_error END,
-               job_finished_at_ms = CASE WHEN job_state = 'pending' THEN ? ELSE job_finished_at_ms END,
-               retry_after_ms = CASE WHEN job_state = 'pending' THEN NULL ELSE retry_after_ms END,
-               job_state = CASE WHEN job_state = 'pending' THEN 'failed' ELSE job_state END
-           WHERE business_id = ? AND conversation_id IN (${theirConversations}) AND ${due}`,
-        )
-        .bind(nowMs, b, b, customerId, b, customerId),
-      // What we sent them (it can carry their name and order), the provider IDs, and anything unsent.
-      this.db
-        .prepare(
-          `UPDATE outbound_messages
-           SET body_text = ?, provider_message_id = NULL, claims_json = NULL, buttons_json = NULL,
-               last_error = CASE WHEN status IN ('pending', 'waiting_window') THEN 'customer_deleted' ELSE last_error END,
-               status = CASE WHEN status IN ('pending', 'waiting_window') THEN 'failed' ELSE status END,
-               updated_at_ms = ?
-           WHERE business_id = ? AND conversation_id IN (${theirConversations}) AND ${due}`,
-        )
-        .bind(ERASED_BODY, nowMs, b, b, customerId, b, customerId),
-      // Their saved delivery places (#29): what they wrote and where they are.
-      this.db
-        .prepare(`DELETE FROM customer_places WHERE business_id = ? AND customer_id = ? AND ${due}`)
-        .bind(b, customerId, b, customerId),
-      // Their Pendientes: the owner's list no longer points at them.
-      this.db
-        .prepare(`DELETE FROM conversation_pendientes WHERE business_id = ? AND conversation_id IN (${theirConversations}) AND ${due}`)
-        .bind(b, b, customerId, b, customerId),
-      this.db
-        .prepare(
-          `UPDATE conversations SET last_readback_order_id = NULL, last_readback_version = NULL, last_readback_at_ms = NULL
-           WHERE business_id = ? AND customer_id = ? AND ${due}`,
-        )
-        .bind(b, customerId, b, customerId),
-      // Learned aliases their confirmed orders proposed (D-49): a proposal still waiting is their
-      // words and goes; one the store approved or rejected is the store's decision and stays, no
-      // longer linked to their order. It stays source 'order' (migration 0011 allows a decided one
-      // without its link); the person who decided it is still recorded.
-      this.db
-        .prepare(`DELETE FROM store_aliases WHERE business_id = ? AND state = 'proposed' AND source_order_id IN (${theirOrders}) AND ${due}`)
-        .bind(b, b, customerId, b, customerId, b, customerId),
-      this.db
-        .prepare(
-          `UPDATE store_aliases SET source_order_id = NULL
-           WHERE business_id = ? AND state <> 'proposed' AND source_order_id IN (${theirOrders}) AND ${due}`,
-        )
-        .bind(b, b, customerId, b, customerId, b, customerId),
+      ...this.erasure(tenant, customerId, due, nowMs, null),
       this.db
         .prepare(
           `UPDATE customers
@@ -266,6 +200,119 @@ export class D1CustomerControlRepository implements CustomerControlRepository {
     );
     const results = await this.db.batch(statements);
     return results[results.length - 1]!.meta.changes === 1;
+  }
+
+  async isStoreMember(tenant: Tenant, customerId: string): Promise<boolean> {
+    // The customer's phone is an active member's phone in this same store; no other store counts.
+    const row = await this.db
+      .prepare(
+        `SELECT 1 AS member FROM customers cu
+         JOIN users u ON u.phone = cu.phone
+         JOIN memberships m ON m.user_id = u.id AND m.business_id = cu.business_id AND m.active = 1
+         WHERE cu.business_id = ? AND cu.id = ? AND cu.phone IS NOT NULL`,
+      )
+      .bind(tenant.businessId, customerId)
+      .first<{ member: number }>();
+    return row !== null;
+  }
+
+  resetCommit(tenant: Tenant, customerId: string, uptoReceivedAtMs: number, nowMs: number): Commit {
+    const b = tenant.businessId;
+    // The same erasure as the purge, for this customer's messages up to the command; the phone
+    // stays, so the reply reaches them and their next message finds the same, emptied record.
+    const live = `EXISTS (SELECT 1 FROM customers WHERE business_id = ? AND id = ? AND deleted_at_ms IS NULL)`;
+    return {
+      guards: [],
+      statements: [
+        ...this.erasure(tenant, customerId, live, nowMs, uptoReceivedAtMs),
+        this.db
+          .prepare(
+            `UPDATE customers
+             SET name = NULL, name_saved_at_ms = NULL, name_asked_at_ms = NULL, introduced_at_ms = NULL,
+                 stopped_at_ms = NULL, stop_reminded_at_ms = NULL, deletion_requested_at_ms = NULL
+             WHERE business_id = ? AND id = ? AND deleted_at_ms IS NULL`,
+          )
+          .bind(b, customerId),
+      ],
+    };
+  }
+
+  /**
+   * What the purge erases, shared with a test reset: media references, message text and provider
+   * IDs (`uptoReceivedAtMs`: only messages received by then), what we sent them, saved places,
+   * Pendientes, readback pointers, and learned aliases their orders proposed. Each statement runs
+   * only while `guard` (SQL with the business and customer IDs as its two parameters) holds.
+   */
+  private erasure(tenant: Tenant, customerId: string, guard: string, nowMs: number, uptoReceivedAtMs: number | null): D1PreparedStatement[] {
+    const b = tenant.businessId;
+    const theirConversations = `SELECT id FROM conversations WHERE business_id = ? AND customer_id = ?`;
+    // Their orders: the engine's table, and the pretend engine's snapshot until the real one runs.
+    const theirOrders = `SELECT id FROM orders WHERE business_id = ? AND customer_id = ?
+                         UNION SELECT json_extract(o.value, '$[0]') FROM pretend_engine_state s, json_each(s.state_json, '$.orders') o
+                         WHERE s.business_id = ? AND json_extract(o.value, '$[1].customerId') = ?`;
+    const upto = uptoReceivedAtMs === null ? { sql: "", params: [] as unknown[] } : { sql: "AND received_at_ms <= ?", params: [uptoReceivedAtMs] };
+    return [
+      // Media references: the provider's ID and hash, and the stored object (already erased from R2).
+      this.db
+        .prepare(
+          `UPDATE media_assets
+           SET provider_media_id = 'deleted:' || id, mime_type = NULL, provider_sha256 = NULL, state = 'failed',
+               content_sha256 = NULL, stored_key = NULL, byte_size = NULL
+           WHERE business_id = ? AND id IN (SELECT media_asset_id FROM inbound_messages
+                                            WHERE business_id = ? AND conversation_id IN (${theirConversations}) ${upto.sql})
+             AND ${guard}`,
+        )
+        .bind(b, b, b, customerId, ...upto.params, b, customerId),
+      // Message text, shared locations and provider IDs (they embed the phone). Unstarted jobs end without a reply.
+      this.db
+        .prepare(
+          `UPDATE inbound_messages
+           SET text_body = NULL, reply_id = NULL, context_message_id = NULL, latitude_e6 = NULL, longitude_e6 = NULL,
+               provider_message_id = 'deleted:' || id,
+               last_error = CASE WHEN job_state = 'pending' THEN 'customer_deleted' ELSE last_error END,
+               job_finished_at_ms = CASE WHEN job_state = 'pending' THEN ? ELSE job_finished_at_ms END,
+               retry_after_ms = CASE WHEN job_state = 'pending' THEN NULL ELSE retry_after_ms END,
+               job_state = CASE WHEN job_state = 'pending' THEN 'failed' ELSE job_state END
+           WHERE business_id = ? AND conversation_id IN (${theirConversations}) ${upto.sql} AND ${guard}`,
+        )
+        .bind(nowMs, b, b, customerId, ...upto.params, b, customerId),
+      // What we sent them (it can carry their name and order), the provider IDs, and anything unsent.
+      this.db
+        .prepare(
+          `UPDATE outbound_messages
+           SET body_text = ?, provider_message_id = NULL, claims_json = NULL, buttons_json = NULL,
+               last_error = CASE WHEN status IN ('pending', 'waiting_window') THEN 'customer_deleted' ELSE last_error END,
+               status = CASE WHEN status IN ('pending', 'waiting_window') THEN 'failed' ELSE status END,
+               updated_at_ms = ?
+           WHERE business_id = ? AND conversation_id IN (${theirConversations}) AND ${guard}`,
+        )
+        .bind(ERASED_BODY, nowMs, b, b, customerId, b, customerId),
+      // Their saved delivery places (#29): what they wrote and where they are.
+      this.db.prepare(`DELETE FROM customer_places WHERE business_id = ? AND customer_id = ? AND ${guard}`).bind(b, customerId, b, customerId),
+      // Their Pendientes: the owner's list no longer points at them.
+      this.db
+        .prepare(`DELETE FROM conversation_pendientes WHERE business_id = ? AND conversation_id IN (${theirConversations}) AND ${guard}`)
+        .bind(b, b, customerId, b, customerId),
+      this.db
+        .prepare(
+          `UPDATE conversations SET last_readback_order_id = NULL, last_readback_version = NULL, last_readback_at_ms = NULL
+           WHERE business_id = ? AND customer_id = ? AND ${guard}`,
+        )
+        .bind(b, customerId, b, customerId),
+      // Learned aliases their confirmed orders proposed (D-49): a proposal still waiting is their
+      // words and goes; one the store approved or rejected is the store's decision and stays, no
+      // longer linked to their order. It stays source 'order' (migration 0011 allows a decided one
+      // without its link); the person who decided it is still recorded.
+      this.db
+        .prepare(`DELETE FROM store_aliases WHERE business_id = ? AND state = 'proposed' AND source_order_id IN (${theirOrders}) AND ${guard}`)
+        .bind(b, b, customerId, b, customerId, b, customerId),
+      this.db
+        .prepare(
+          `UPDATE store_aliases SET source_order_id = NULL
+           WHERE business_id = ? AND state <> 'proposed' AND source_order_id IN (${theirOrders}) AND ${guard}`,
+        )
+        .bind(b, b, customerId, b, customerId, b, customerId),
+    ];
   }
 
   private customerCommit(tenant: Tenant, customerId: string, sql: string, params: readonly unknown[]): Commit {
