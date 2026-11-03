@@ -158,7 +158,10 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
 - Ordering uses the provider timestamp clamped to [received − 7 days, received + 5 minutes]. The 24-hour window uses
   our own receive time of a new message; a redelivery doesn't move it.
 - After the 200, each conversation with a new message gets a doorbell: a Queue message with only the store and
-  conversation IDs. D1 holds the work, and the cron sweep re-rings what a lost doorbell left.
+  conversation IDs. D1 holds the work, and the cron sweep re-rings what a lost doorbell left. The logs trace each
+  doorbell by IDs: `doorbell_rung` when the queue accepted it, `doorbell_received` with its delivery attempt and the
+  time since it was sent (a warning past 30 s: no ring asks for more than 10 s, so the queue held it), and
+  `stranded_rung` when the sweep re-rang a conversation.
 - The unknown-sender path (one fixed reply, keyed hashes only) is retired: intake no longer calls it. Its tables,
   repository method and the notice dispatch stay until the team agrees to remove them; the sweep still expires and
   prunes rows written before 0004.
@@ -318,7 +321,8 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
 
 - `src/domain/replies.ts` renders every engine outcome and customer notice from a fixed Spanish template
   (`OUTCOME_TEMPLATES`, `NOTICE_TEMPLATES`: a new kind fails typecheck until it has one). Numbers, names, prices
-  and states come from the outcome; customer words quoted back are flattened and capped at 60 characters.
+  and states come from the outcome; customer words quoted back are flattened and capped at 60 characters, a
+  delivery place at 160 (`PLACE_QUOTE_MAX_CHARS`), so an address with its landmarks reads back whole.
 - Each reply carries its claims as `ClaimCheck`s: a check holds when any of its alternatives does ("ya está en la
   lista" holds while the version is confirmado, preparando or listo). Order-line prices are pinned by the version
   claim; there is no per-line price claim in the contract yet.
