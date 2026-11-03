@@ -19,6 +19,7 @@ import {
   sameSiteForms,
   simplePage,
 } from "./console/auth";
+import { pedidosScreen } from "./console/pedidos";
 
 const REFRESH_SECONDS = 15;
 
@@ -56,6 +57,8 @@ export function consoleRoutes() {
     const notice = c.req.query("aviso");
     return c.html(page(cards, notice !== undefined && notice in NOTICES ? NOTICES[notice as NoticeKey] : null, c.get("csrf")));
   });
+
+  pedidosScreen(app);
 
   app.post("/acciones", async (c) => {
     const { engine, deps } = c.get("runtime");
