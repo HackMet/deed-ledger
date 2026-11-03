@@ -76,6 +76,30 @@ describe("the typing indicator while a burst is worked on", () => {
     expect(h.channel.typing.map((t) => t.providerMessageId)).toEqual([ids[0], later]);
   });
 
+  it("shows it again for a message that arrived while a long job ran and is taken in the same run's next round", async () => {
+    const later = wamid();
+    let posted = false;
+    const handler: JobHandler = {
+      async handle(input) {
+        if (!posted) {
+          posted = true;
+          await h.post(webhook(store.phoneNumberId, { messages: [textMessage({ from: phone, id: later, timestampS: nowS(h), body: "y 2 libras de azúcar" })] }));
+          // A slow photo: by the time this job ends, the new message has settled.
+          h.clock.advance(5_000);
+        }
+        return placeholderHandler.handle(input);
+      },
+    };
+    const h = harness({ jobHandler: handler });
+    const store = await seedStore({ members: [] });
+    const phone = newPhone();
+    const first = wamid();
+    await h.post(webhook(store.phoneNumberId, { messages: [textMessage({ from: phone, id: first, timestampS: nowS(h), body: "una coca" })] }));
+    h.clock.advance(4_000);
+    await h.deliver();
+    expect(h.channel.typing.map((t) => t.providerMessageId)).toEqual([first, later]);
+  });
+
   const failures: ReadonlyArray<[string, () => Promise<TypingResult>, string]> = [
     ["refused", async () => ({ ok: false, errorCode: "http_400" }), "http_400"],
     [

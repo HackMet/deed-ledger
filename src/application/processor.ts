@@ -64,7 +64,8 @@ export async function processConversation(deps: Deps, conversation: Conversation
 
 async function runRounds(deps: Deps, lease: Lease): Promise<ProcessOutcome> {
   let processedAny = false;
-  let typingShown = false;
+  // The message typing was last shown for: a later round with newer messages shows it again.
+  let typedFor: string | null = null;
   for (let round = 0; round < MAX_ROUNDS; round++) {
     const now = deps.clock.now();
     // One statement decides "settled?" and lists the jobs, so nothing can slip in between.
@@ -87,9 +88,10 @@ async function runRounds(deps: Deps, lease: Lease): Promise<ProcessOutcome> {
         // then continue in order with it included.
         return handOff(deps, lease, settleDelaySeconds(at, at), "settling");
       }
-      if (!typingShown) {
-        typingShown = true;
-        await showTyping(deps, lease, snapshot.jobs.at(-1) ?? job);
+      const newest = snapshot.jobs.at(-1) ?? job;
+      if (newest.id !== typedFor) {
+        typedFor = newest.id;
+        await showTyping(deps, lease, newest);
       }
       const result = await runJob(deps, lease, job, index === newestOfBurst);
       if (result.status === "deferred") {
