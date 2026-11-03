@@ -88,6 +88,16 @@ Last updated: Fri Oct 30, 2026, evening Honduras time, by Claude Code (E7: docs 
   resting on the one before; a `null` fulfillment is refused, and the customer can't cancel once it is on its way.
   Migration `0025_dispatch.sql` widens `orders.state`. The contract additions are Proposed in
   [contract.md](contract.md) and need Angel's OK; as with K12, nothing saves until `saveConsoleAction` (#63).
+- K14, supplier invoices (Nov 3, `claude/facturas`, local D1 only, **not deployed**): the owner uploads an invoice
+  photo at `/console/facturas/nueva` (≤ 10 MB, JPG/PNG/WEBP by its bytes; PDF refused with a Spanish message, no PDF
+  library), stored through `putImmutable`. It is read through the `ReceiptReader` port, today only by
+  `RecordedReceiptReader` (synthetic fixtures by SHA-256); every other photo is refused as unreadable. The draft
+  matches each line by exact name or known alias (no alias table yet, so names only) or marks it "nuevo"; edits bump
+  the revision; Aprobar ✓ is one guarded batch (new products, `receipt` fact with member + photo evidence and the
+  revision, movements, balances); Rechazar ✗ is one `receipt_review` fact with the reason; "Anular factura" is a
+  `cancellation` with compensating movements, refused when stock already left. Migration `0026_console_receipts.sql`
+  rebuilds `drafts` for console uploads. **Pending:** the Muse Spark adapter waits on PR #63 (`MuseSparkProvider`)
+  and decision Q2; its prompt draft is [prompts/receipt-reading.md](prompts/receipt-reading.md), for Angel's review.
 
 ## Next
 
@@ -117,6 +127,7 @@ staff use the preparation list on their own phones. If the console can't pass, i
 | K12 contract additions (`review_change`, `change_approved`, `change_declined`, `OrderView.openChangeRequest`, `OrderView.lastReview`) are Proposed and need Angel's OK | Angel | Nov 3 |
 | K12 touched two of Angel's files: `src/domain/copy.ts` gains the owner-facing copy `CHANGE_AFTER_READY` (new copy, not compile-only), and `test/secrets.test.ts` lists `0024_change_requests.sql` (compile-only); both need Angel's OK | Angel | Nov 3 |
 | K13 contract additions (`en_camino`, `dispatch`, `order_dispatched`) are Proposed and need Angel's OK | Angel | Nov 3 |
+| K14 Muse Spark receipt reader: needs PR #63's `MuseSparkProvider` and Q2; prompt draft in [prompts/receipt-reading.md](prompts/receipt-reading.md). K14 touched Angel's `test/secrets.test.ts` (lists `0026_console_receipts.sql`, compile-only) and `LogFields` (`draftId`) | Angel | Nov 3 |
 | K13 touched Angel's files: `memory-engine.ts` gains `case "dispatch"` returning null like `match_line` (compile-only), `copy.ts` gains `CANCEL_AFTER_DISPATCH` (new copy), `test/secrets.test.ts` lists `0025_dispatch.sql`; a delivery order at `listo` can no longer be marked delivered from Preparación (it needs a dispatch first) | Angel | Nov 3 |
 | D-41 (fact memory under `Commit`) and D-42 (read before every guard) are Proposed and need Angel's acceptance | Angel | Oct 30 |
 | D-43 (customer cancel refused once preparando; re-confirm returns to the interrupted state) and D-44 (operation keys derived from the customer's own order and action) are Proposed and need Angel's acceptance | Angel | Oct 30 |
