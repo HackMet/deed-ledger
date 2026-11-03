@@ -23,6 +23,7 @@ import type {
   OrderView,
   PreparationCard,
 } from "../../domain/contract/outcomes";
+import { deriveOrderState, type OrderFact } from "../../domain/order-state";
 import { totalOf } from "../../domain/order-total";
 import { indexOfLabel, labelOf, nextVersion } from "../../domain/orders";
 import type { EvidenceRef, FactCommit } from "../../domain/facts";
@@ -105,6 +106,8 @@ export interface OrderStore {
   productNames(tenant: Tenant, productIds: readonly string[]): Promise<ReadonlyMap<string, string>>;
   /** The current version's number, state and total of an order in this store; null when absent. */
   orderHead(tenant: Tenant, orderId: string): Promise<OrderHead | null>;
+  /** Every order fact of an order in this store (found by body.orderId), with its liveness. */
+  orderFacts(tenant: Tenant, orderId: string): Promise<readonly OrderFact[]>;
   /** Orders confirmado, preparando or listo, oldest first confirmation first (ties by id). */
   preparationOrders(tenant: Tenant): Promise<readonly StoredOrder[]>;
   /**
@@ -441,16 +444,24 @@ export class OrderEngine implements Engine {
     );
   }
 
-  /** True only when the records back the claim now. Absent means unknown: anything not stored is false. */
+  /**
+   * True only when the records back the claim now. Absent means unknown: anything not stored is false.
+   * The ledger answers (R5): the claim's version fact must be live (not superseded, not cancelled),
+   * and a state must be the one the facts derive, not just the cache's.
+   */
   private async verifyClaim(tenant: Tenant, claim: Claim): Promise<boolean> {
     try {
       if (typeof claim !== "object" || claim === null) return false;
       if (claim.type !== "order_state" && claim.type !== "order_total") return false;
       if (typeof claim.orderId !== "string" || !Number.isInteger(claim.version)) return false;
-      const head = await this.deps.store.orderHead(tenant, claim.orderId);
+      const { store } = this.deps;
+      const head = await store.orderHead(tenant, claim.orderId);
       if (head === null || head.version !== claim.version) return false;
+      const facts = await store.orderFacts(tenant, claim.orderId);
+      if (!facts.some((fact) => fact.kind === "order_version" && fact.version === claim.version && fact.live)) return false;
       // unit_price, availability, payment_confirmed, balance and store hours aren't stored in this cut.
-      return claim.type === "order_state" ? head.state === claim.state : head.total !== null && head.total === claim.total;
+      if (claim.type === "order_state") return deriveOrderState(facts, claim.version, head.state) === claim.state;
+      return head.total !== null && head.total === claim.total;
     } catch {
       // A claim the records can't back right now isn't sent.
       return false;

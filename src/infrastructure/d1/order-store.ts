@@ -3,6 +3,7 @@ import { fromThousandths, type OrderHead, type OrderStore, type OrderWrite, type
 import type { Commit, Tenant } from "../../application/ports";
 import type { EngineOutcome, OrderLineView, OrderState, OrderView } from "../../domain/contract/outcomes";
 import { toThousandths } from "../../domain/contract/numbers";
+import type { OrderFact } from "../../domain/order-state";
 import { isExcludedFromTotal } from "../../domain/order-total";
 import { labelOf } from "../../domain/orders";
 import type { Guard } from "./fence";
@@ -107,6 +108,48 @@ export class D1OrderStore implements OrderStore {
       .bind(tenant.businessId, orderId)
       .first<OrderHead>();
     return row ?? null;
+  }
+
+  async orderFacts(tenant: Tenant, orderId: string): Promise<readonly OrderFact[]> {
+    // Liveness per fact: no ancestor (itself included) is closed, except by a supersede from another
+    // of its ancestors. Mirrors KILLING_CLOSURE in fact-ledger.ts, the rule G4 enforces.
+    const { results } = await this.db
+      .prepare(
+        `WITH RECURSIVE
+           mine AS (
+             SELECT id, kind, body_json FROM facts
+             WHERE business_id = ?1 AND kind IN ('order_version', 'order_confirm', 'order_cancel', 'order_status')
+               AND json_extract(body_json, '$.orderId') = ?2
+           ),
+           anc(root, id) AS (
+             SELECT id, id FROM mine
+             UNION
+             SELECT a.root, d.depends_on_fact_id FROM fact_dependencies d JOIN anc a ON d.fact_id = a.id WHERE d.business_id = ?1
+           )
+         SELECT m.id, m.kind, m.body_json,
+           (SELECT json_group_array(d.depends_on_fact_id) FROM fact_dependencies d
+            WHERE d.business_id = ?1 AND d.fact_id = m.id) AS depends_json,
+           NOT EXISTS (
+             SELECT 1 FROM fact_closures c JOIN anc a ON c.fact_id = a.id AND a.root = m.id
+             WHERE c.business_id = ?1
+               AND NOT (c.reason = 'superseded' AND c.closed_by_fact_id IN (SELECT id FROM anc WHERE root = m.id))
+           ) AS live
+         FROM mine m`,
+      )
+      .bind(tenant.businessId, orderId)
+      .all<{ id: string; kind: OrderFact["kind"]; body_json: string; depends_json: string; live: number }>();
+    return results.map((row) => {
+      const body = JSON.parse(row.body_json) as { version: number; resumeState?: OrderFact["resumeState"]; status?: OrderFact["status"] };
+      return {
+        id: row.id,
+        kind: row.kind,
+        live: row.live === 1,
+        version: body.version,
+        dependsOn: JSON.parse(row.depends_json) as string[],
+        resumeState: body.resumeState ?? null,
+        status: body.status ?? null,
+      };
+    });
   }
 
   async preparationOrders(tenant: Tenant): Promise<readonly StoredOrder[]> {
