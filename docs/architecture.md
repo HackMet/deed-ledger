@@ -146,6 +146,8 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
   compares SHA-256 hashes of both verify tokens in constant time.
 - The store comes from `metadata.phone_number_id`, by exact match in `channel_accounts`. With no match, the event is
   dropped and only its type is logged.
+- `metadata.display_phone_number` (digits) is kept on that channel account when it changes, best effort, after the
+  message is saved. It is display only (the console's "Probar como cliente" wa.me link), never used to route.
 - Every event is saved before the 200. A transient failure answers 500, so Meta retries; a constraint violation
   answers 200 with an ID-only log.
 - Anyone writing to the store's number is that store's customer (0004); memberships only matter for the console. A

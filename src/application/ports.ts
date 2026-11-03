@@ -52,6 +52,11 @@ export interface InboundMessageEvent {
   readonly media: InboundMedia | null;
   /** A shared WhatsApp location (kind stays "other"): coordinates from the webhook. Absent means none. */
   readonly location?: Pin | null;
+  /**
+   * The store's number as customers see it (Meta's signed `metadata.display_phone_number`), digits
+   * only. For display ("Probar como cliente"), never to route. Absent or null: not sent or not usable.
+   */
+  readonly displayPhoneNumber?: string | null;
 }
 
 export interface StatusEvent {
@@ -317,6 +322,8 @@ export interface ChannelAccount {
   readonly id: string;
   readonly businessId: string;
   readonly phoneNumberId: string;
+  /** The number customers write to, digits only, once a webhook has said it. Display only. */
+  readonly displayPhoneNumber?: string | null;
 }
 
 export interface Member {
@@ -329,6 +336,10 @@ export interface TenancyRepository {
   findChannelAccount(phoneNumberId: string): Promise<ChannelAccount | null>;
   findChannelAccountOf(tenant: Tenant, channelAccountId: string): Promise<ChannelAccount | null>;
   findActiveMember(tenant: Tenant, phone: string): Promise<Member | null>;
+  /** Saves the number customers see for this channel account (from a verified webhook). Display only. */
+  rememberDisplayNumber(channel: ChannelAccount, digits: string): Promise<void>;
+  /** The store's numbers customers write to, digits only, oldest first; empty until a webhook said one. */
+  displayNumbersOf(tenant: Tenant): Promise<readonly string[]>;
 }
 
 export interface CustomerMessageInput {
