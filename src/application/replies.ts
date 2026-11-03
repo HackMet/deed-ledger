@@ -6,6 +6,7 @@
  */
 import type { CustomerNotice, EngineOutcome } from "../domain/contract/outcomes";
 import {
+  buttonExtras,
   firstCheck,
   type RenderedReply,
   renderNotice,
@@ -92,6 +93,6 @@ function toDraft(reply: RenderedReply, ttlMs: number, closesBurst: boolean): Rep
     ttlMs,
     ...(closesBurst ? { closesBurst } : {}),
     ...(reply.claims.length === 0 ? {} : { claims: reply.claims }),
-    ...(reply.buttons.length === 0 ? {} : { buttons: reply.buttons }),
+    ...(reply.buttons.length === 0 ? {} : { buttons: reply.buttons, ...buttonExtras(reply) }),
   };
 }

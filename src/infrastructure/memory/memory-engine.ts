@@ -872,7 +872,24 @@ class BurstApplier {
         ...(byWeight.length === 0 ? {} : { byWeight }),
       },
       ...(assumed.length === 0 ? {} : { assumed }),
+      noted: this.notedNow(order),
     };
+  }
+
+  /**
+   * The lines this burst added or changed (a new quantity, product or unit), which the reply echoes
+   * back. Nothing new (an answer about how it's received, an "ok"): none, and no echo. "¿Ya
+   * anotaste…?" asks exactly that: every line.
+   */
+  private notedNow(order: OrderView): string[] {
+    if (this.statusAsked) return order.lines.map((line) => line.lineId);
+    const before = new Map((this.before?.lines ?? []).map((line) => [line.lineId, line]));
+    return order.lines
+      .filter((line) => {
+        const was = before.get(line.lineId);
+        return was === undefined || was.quantity !== line.quantity || was.productId !== line.productId || was.unit !== line.unit;
+      })
+      .map((line) => line.lineId);
   }
 
   private soldByWeight(line: OrderLineView | undefined): boolean {
@@ -1059,7 +1076,8 @@ class BurstApplier {
       const product = this.catalog.find((p) => p.productId === id);
       return product === undefined ? [] : [{ productId: id, name: product.names[0] ?? id, unitPrice: product.restricted ? null : product.price }];
     });
-    return options.length > 1 ? { type: "ask", question, line, order, options } : { type: "ask", question, line, order };
+    const noted = this.notedNow(order);
+    return options.length > 1 ? { type: "ask", question, line, order, options, noted } : { type: "ask", question, line, order, noted };
   }
 
   /**

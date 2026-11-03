@@ -205,9 +205,12 @@ describe("reply buttons", () => {
     await h.runCron();
 
     const [sent] = h.channel.sent.filter((s) => s.toPhone === phone);
-    expect(sent!.body).toContain("*Total: L 315*");
-    // The typed fallback stays, as the soft last line under the buttons (PRD §6.1).
-    expect(sent!.body.split("\n").at(-1)).toBe(COPY.typedFallbackSoft);
+    expect(sent!.body).toContain("💵 Total: L 315.");
+    // With the buttons, the footer says it can be corrected by writing or a voice note; the typed
+    // fallback (PRD §6.1) travels with them, for when they can't be shown.
+    expect(sent!.body.split("\n").at(-1)).toBe(COPY.confirmQuestion);
+    expect(sent!.footer).toBe(COPY.fixHint);
+    expect(sent!.textFallback).toBe(COPY.typedFallbackSoft);
     expect(sent!.buttons).toEqual([
       { id: "confirm:order-0001:v1", title: "Confirmar" },
       { id: "correct:order-0001:v1", title: "Corregir" },
@@ -236,7 +239,52 @@ describe("reply buttons", () => {
     await engine.onCustomerAction(customer(tenant), cancelTap(readbackOrder));
     await h.runCron();
     const sent = h.channel.sent.filter((s) => s.toPhone === phone);
-    expect(sent.map((s) => [s.body, s.buttons])).toEqual([[COPY.safeReply, undefined]]);
+    // The safe reply alone: no footer, no typed choices for an order that no longer waits.
+    expect(sent.map((s) => [s.body, s.buttons, s.footer, s.textFallback])).toEqual([[COPY.safeReply, undefined, undefined, undefined]]);
+  });
+
+  it("stores the footer and the typed fallback with the buttons, and sends the footer with them", async () => {
+    const engine = engineWith(readbackOrder);
+    const { h, phone, store } = await setup({ engine, outcome: () => ({ type: "readback", order: readbackOrder }) });
+    await queueReply(h, store.phoneNumberId, phone, "lo paso a traer");
+    const [row] = await outboxRows(store.businessId);
+    expect(JSON.parse(row!.buttons_json!)).toEqual({
+      buttons: [
+        { id: "confirm:order-0001:v1", title: "Confirmar" },
+        { id: "correct:order-0001:v1", title: "Corregir" },
+        { id: "cancel:order-0001:v1", title: "Cancelar" },
+      ],
+      footer: COPY.fixHint,
+      textFallback: COPY.typedFallbackSoft,
+    });
+    expect(row!.body_text).not.toContain(COPY.typedFallbackSoft);
+    await h.runCron();
+    const [sent] = h.channel.sent.filter((s) => s.toPhone === phone);
+    expect(sent).toMatchObject({ body: row!.body_text, footer: COPY.fixHint });
+  });
+
+  it("puts the typed choices under the body when the channel can't show buttons", async () => {
+    const engine = engineWith(readbackOrder);
+    const { h, phone, store } = await setup({ engine, outcome: () => ({ type: "readback", order: readbackOrder }) });
+    (h.channel as { sendButtons?: unknown }).sendButtons = undefined;
+    await queueReply(h, store.phoneNumberId, phone, "lo paso a traer");
+    await h.runCron();
+    const [sent] = h.channel.sent.filter((s) => s.toPhone === phone);
+    expect(sent!.buttons).toBeUndefined();
+    expect(sent!.body.endsWith(`\n\n${COPY.confirmQuestion}\n${COPY.typedFallbackSoft}`)).toBe(true);
+    expect(sent!.body).not.toContain(COPY.fixHint);
+  });
+
+  it("still reads a row stored before footers: the buttons alone, as an array", async () => {
+    const engine = engineWith(readbackOrder);
+    const { h, phone, store } = await setup({ engine, outcome: () => ({ type: "readback", order: readbackOrder }) });
+    await queueReply(h, store.phoneNumberId, phone, "lo paso a traer");
+    const buttons = [{ id: "confirm:order-0001:v1", title: "Confirmar" }];
+    await rows(`UPDATE outbound_messages SET buttons_json = ? WHERE business_id = ?`, JSON.stringify(buttons), store.businessId);
+    await h.runCron();
+    const [sent] = h.channel.sent.filter((s) => s.toPhone === phone);
+    expect(sent).toMatchObject({ buttons });
+    expect(sent!.footer).toBeUndefined();
   });
 
   it("refuses a tap on another customer's order or an old version", async () => {
@@ -290,7 +338,7 @@ describe("order-dependent replies that aren't readbacks", () => {
     await queueReply(h, store.phoneNumberId, phone, "quiero agregar algo");
     await h.runCron();
     expect(h.sentTo(phone)).toEqual([
-      "Anotado ✅ 1 × Aceite Clover 1 L, 3 × Arroz 1 lb, 2 × Azúcar 1 lb, 3 × Jabón Xtra.\n¿Lo recogés en la tienda o te lo llevamos?",
+      "Anotado ✅\n• 1 Aceite Clover 1 L\n• 3 Arroz 1 lb\n• 2 Azúcar 1 lb\n• 3 Jabón Xtra\n\n¿Lo recogés en la tienda o te lo llevamos?",
     ]);
   });
 });

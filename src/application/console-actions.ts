@@ -8,6 +8,7 @@
 import type { ActionEnvelope, ConsoleAction } from "../domain/contract/actions";
 import type { CustomerNotice, EngineOutcome } from "../domain/contract/outcomes";
 import { OUTBOX_BODY_MAX_CHARS } from "../domain/outbox";
+import { buttonExtras } from "../domain/replies";
 import { splitText } from "../domain/text";
 import type { Engine, MemberContext } from "./engine";
 import type { ConsoleNoticeDraft, ConversationRef, Deps } from "./ports";
@@ -100,7 +101,7 @@ async function noticeDrafts(
         partIndex: part,
         expiresAtMs: now + reply.ttlMs,
         ...(reply.claims === undefined ? {} : { claims: reply.claims }),
-        ...(reply.buttons === undefined || part !== parts.length - 1 ? {} : { buttons: reply.buttons }),
+        ...(reply.buttons === undefined || part !== parts.length - 1 ? {} : { buttons: reply.buttons, ...buttonExtras(reply) }),
       });
     });
   }

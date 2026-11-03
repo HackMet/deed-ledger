@@ -6,7 +6,7 @@ import {
   SEND_CLAIM_MS,
   UNKNOWN_NOTICE_INLINE_RETRY_DELAYS_MS,
 } from "../domain/outbox";
-import { COPY, flattenClaims, secondCheckHolds } from "../domain/replies";
+import { buttonExtras, COPY, flattenClaims, plainTextBody, secondCheckHolds } from "../domain/replies";
 import { isStoppedRecipient } from "./customer-gate";
 import { describeError } from "./errors";
 import type { ConversationRef, Deps, OutboxMessage, SendResult, Tenant } from "./ports";
@@ -174,6 +174,7 @@ async function sendOne(
   }
   let body = message.body;
   let buttons = message.buttons ?? [];
+  let extras = buttonExtras(message);
   if (check === "blocked") {
     if (!(await deps.outbox.markClaimsBlocked(tenant, message.id, claimId, checkedAt))) {
       return claimLost(deps, fields, "not_sent");
@@ -188,15 +189,17 @@ async function sendOne(
     });
     body = COPY.safeReply;
     buttons = [];
+    extras = {};
   }
 
   let result: SendResult;
   try {
     const outgoing = { fromPhoneNumberId: channel.phoneNumberId, toPhone, body };
+    // Without its buttons, the body goes as plain text with its typed fallback under it.
     result =
       buttons.length > 0 && deps.channel.sendButtons !== undefined
-        ? await deps.channel.sendButtons({ ...outgoing, buttons })
-        : await deps.channel.sendText(outgoing);
+        ? await deps.channel.sendButtons({ ...outgoing, buttons, ...extras })
+        : await deps.channel.sendText({ ...outgoing, body: plainTextBody(body, extras.textFallback) });
   } catch (error) {
     // The channel failed in an unknown way; the message may have gone out.
     result = { ok: false, disposition: "unknown", errorCode: describeError(error) };

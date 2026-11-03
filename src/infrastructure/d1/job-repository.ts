@@ -19,7 +19,7 @@ import { MAX_JOB_ATTEMPTS, type MessageKind } from "../../domain/processing";
 import { pinFromE6 } from "../../domain/place";
 import { slowNoticeDedupeKey } from "../../domain/slow-notice";
 import { DB_NOW_MS, fencedBatch, type Guard, jobGuard, leaseIsHeld } from "./fence";
-import { NEXT_OUTBOX_SEQ } from "./outbox-repository";
+import { buttonsJson, NEXT_OUTBOX_SEQ } from "./outbox-repository";
 
 /** Job preconditions, checked inside the transition's batch. */
 const STARTABLE = `attempts < ? AND (
@@ -518,7 +518,7 @@ export class D1JobRepository implements JobRepository {
         nowMs,
         nowMs,
         reply.claims === undefined || reply.claims.length === 0 ? null : JSON.stringify(reply.claims),
-        reply.buttons === undefined || reply.buttons.length === 0 ? null : JSON.stringify(reply.buttons),
+        buttonsJson(reply),
         conversation.businessId,
         conversation.conversationId,
         ...(onlyIfLastOpenJob ? [jobId] : []),

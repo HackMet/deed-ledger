@@ -17,7 +17,7 @@ import {
   UNKNOWN_SENDER_NOTICE_INTERVAL_MS,
   UNKNOWN_SENDER_RETENTION_MS,
 } from "../../domain/outbox";
-import type { ClaimCheck, ReplyButton } from "../../domain/replies";
+import { type ButtonExtras, buttonExtras, type ClaimCheck, type ReplyButton } from "../../domain/replies";
 import { DB_NOW_MS, type Guard, guardedBatch } from "./fence";
 
 /** The next send order: one more than any row's. D1 runs one batch at a time, and seq is UNIQUE. */
@@ -89,7 +89,7 @@ const toMessage = (row: OutboxRow): OutboxMessage => ({
   attempts: row.attempts,
   expiresAtMs: row.expires_at_ms,
   ...(row.claims_json === null ? {} : { claims: readClaims(row.claims_json) }),
-  ...(row.buttons_json === null ? {} : { buttons: readButtons(row.buttons_json) }),
+  ...(row.buttons_json === null ? {} : readButtonSet(row.buttons_json)),
 });
 
 /** A check that never holds: what stored claims we can't read amount to. */
@@ -115,22 +115,43 @@ function readClaims(json: string): readonly ClaimCheck[] {
   }
 }
 
-/** Buttons we can't read are dropped: the body still carries the typed fallback. */
-function readButtons(json: string): readonly ReplyButton[] {
+/**
+ * buttons_json: the buttons as a JSON array; with a footer or a text fallback, an object
+ * `{ "buttons": [...], "footer": "...", "textFallback": "..." }` (Nov 3). Null without buttons.
+ */
+export function buttonsJson(row: { readonly buttons?: readonly ReplyButton[] } & ButtonExtras): string | null {
+  if (row.buttons === undefined || row.buttons.length === 0) return null;
+  const extras = buttonExtras(row);
+  return Object.keys(extras).length === 0 ? JSON.stringify(row.buttons) : JSON.stringify({ buttons: row.buttons, ...extras });
+}
+
+type ButtonSet = { readonly buttons: readonly ReplyButton[] } & ButtonExtras;
+
+/**
+ * buttons_json read back, in either shape. Buttons we can't read are dropped, with what goes with
+ * them; the body then goes as plain text with its text fallback, when one was stored.
+ */
+export function readButtonSet(json: string): ButtonSet {
   try {
     const value: unknown = JSON.parse(json);
-    if (!Array.isArray(value)) return [];
-    const valid = value.every(
-      (b: unknown) =>
-        typeof b === "object" &&
-        b !== null &&
-        typeof (b as { id?: unknown }).id === "string" &&
-        typeof (b as { title?: unknown }).title === "string",
-    );
-    return valid ? (value as ReplyButton[]) : [];
+    if (Array.isArray(value)) return { buttons: validButtons(value) };
+    if (typeof value !== "object" || value === null) return { buttons: [] };
+    const set = value as { buttons?: unknown; footer?: unknown; textFallback?: unknown };
+    const buttons = Array.isArray(set.buttons) ? validButtons(set.buttons) : [];
+    const textFallback = typeof set.textFallback === "string" ? { textFallback: set.textFallback } : {};
+    if (buttons.length === 0) return { buttons, ...textFallback };
+    return { buttons, ...(typeof set.footer === "string" ? { footer: set.footer } : {}), ...textFallback };
   } catch {
-    return [];
+    return { buttons: [] };
   }
+}
+
+function validButtons(value: readonly unknown[]): readonly ReplyButton[] {
+  const valid = value.every(
+    (b: unknown) =>
+      typeof b === "object" && b !== null && typeof (b as { id?: unknown }).id === "string" && typeof (b as { title?: unknown }).title === "string",
+  );
+  return valid ? (value as ReplyButton[]) : [];
 }
 
 /**
@@ -151,7 +172,7 @@ export class D1ButtonsShown implements ButtonsShown {
       )
       .bind(conversation.businessId, conversation.conversationId, beforeMs)
       .first<{ buttons_json: string | null }>();
-    return row?.buttons_json == null ? [] : readButtons(row.buttons_json);
+    return row?.buttons_json == null ? [] : readButtonSet(row.buttons_json).buttons;
   }
 }
 
@@ -508,7 +529,7 @@ export class D1OutboxRepository implements OutboxRepository {
         nowMs,
         nowMs,
         notice.claims === undefined || notice.claims.length === 0 ? null : JSON.stringify(notice.claims),
-        notice.buttons === undefined || notice.buttons.length === 0 ? null : JSON.stringify(notice.buttons),
+        buttonsJson(notice),
         tenant.businessId,
         notice.conversationId,
       );

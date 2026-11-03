@@ -29,7 +29,7 @@ import { testEnv } from "./helpers/harness";
 const SETTLED_MS = 4_000;
 const ASK_NAME = COPY.askName;
 /** The next step once an order has lines: the name waits for the end (Oct 31). */
-const ASK_HOW = "Anotado ✅ 3 × Arroz 1 lb, 2 × Azúcar 1 lb.\n¿Lo recogés en la tienda o te lo llevamos?";
+const ASK_HOW = "Anotado ✅\n• 3 Arroz 1 lb\n• 2 Azúcar 1 lb\n\n¿Lo recogés en la tienda o te lo llevamos?";
 /** The confirmation for the stubbed readbacks below: no order number, a total of L 90. */
 const CONFIRMED = "Listo 🙌 Tu pedido quedó anotado. Total: L 90. Te aviso cuando esté listo.";
 const nowS = (h: Harness) => Math.floor(h.clock.now() / 1000);
@@ -597,15 +597,15 @@ async function firstOrderTrip(readings: unknown[], makeEngine: () => PretendEngi
 
 const EXPECTED_READBACK = [
   "Tu pedido:",
-  "• 1 × Aceite Clover 1 L · L 60",
-  "• 3 × Arroz 1 lb · L 90",
-  "• 3 × Jabón Xtra · L 105",
-  "• 2 × Azúcar 1 lb · L 60",
-  "Lo recogés en la tienda.",
-  "*Total: L 315*",
-  "Pagás cuando lo recogés.",
+  "• 1 Aceite Clover 1 L · L 60",
+  "• 3 Arroz 1 lb · L 90",
+  "• 3 Jabón Xtra · L 105",
+  "• 2 Azúcar 1 lb · L 60",
+  "",
+  "🏪 Lo recogés en la tienda.",
+  "💵 Total: L 315. Pagás cuando lo recogés.",
+  "",
   "¿Te lo preparo así?",
-  "_O escribí: confirmar, corregir o cancelar._",
 ].join("\n");
 
 describe("the first order, from reading to reply", () => {
@@ -658,8 +658,19 @@ describe("the first order, from reading to reply", () => {
     expect(sent[0]).toContain("Te tomo el pedido y te aviso cuando esté listo. ¿Qué te mando?");
     expect(sent.slice(1)).toEqual([
       // The size question, for a line that fits two catalog products, lists them by number.
-      ["Anotado ✅ 3 × Arroz 1 lb, 3 × Jabón Xtra, 2 × Azúcar 1 lb.", "Para 1 aceite clover tengo:", "1. Aceite Clover 1 L · L 60", "2. Aceite Clover 500 ml · L 34", COPY.pickOption].join("\n"),
-      "Anotado ✅ 1 × Aceite Clover 1 L, 3 × Arroz 1 lb, 3 × Jabón Xtra, 2 × Azúcar 1 lb.\n¿Lo recogés en la tienda o te lo llevamos?",
+      [
+        "Anotado ✅",
+        "• 3 Arroz 1 lb",
+        "• 3 Jabón Xtra",
+        "• 2 Azúcar 1 lb",
+        "",
+        "Para 1 aceite clover tengo:",
+        "1. Aceite Clover 1 L · L 60",
+        "2. Aceite Clover 500 ml · L 34",
+        COPY.pickOption,
+      ].join("\n"),
+      // The answer changed only the aceite: it alone is echoed, the rest was noted already.
+      "Anotado ✅\n• 1 Aceite Clover 1 L\n\n¿Lo recogés en la tienda o te lo llevamos?",
       EXPECTED_READBACK,
       // Her name is on file, so Confirmar confirms at once and says it.
       "Listo, Carla 🙌 Tu pedido #101 quedó anotado. Total: L 315. Te aviso cuando esté listo.",
@@ -713,13 +724,13 @@ describe("the first order, from reading to reply", () => {
     expect(t.h.sentTo(t.phone).at(-1)).toBe(
       [
         "Tu pedido:",
-        "• 5 × Arroz 1 lb · L 90",
-        "• 5 × Azúcar 1 lb · L 82.50",
-        "Lo recogés en la tienda.",
-        "*Total: L 172.50*",
-        "Pagás cuando lo recogés.",
+        "• 5 Arroz 1 lb · L 90",
+        "• 5 Azúcar 1 lb · L 82.50",
+        "",
+        "🏪 Lo recogés en la tienda.",
+        "💵 Total: L 172.50. Pagás cuando lo recogés.",
+        "",
         "¿Te lo preparo así?",
-        "_O escribí: confirmar, corregir o cancelar._",
       ].join("\n"),
     );
   });

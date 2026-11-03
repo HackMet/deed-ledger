@@ -130,7 +130,7 @@ describe("the order, built from what the customer says", () => {
     // The jabón line found its product by its words.
     expect(orderOf(asked).lines[1]).toMatchObject({ productId: "p-jabon", unitPrice: 3500 });
     expect(renderOutcome(asked, { customerId: "cust-1" })!.body).toBe(
-      ["Anotado ✅ 2 × Jabón Xtra barra.", "Para un aceite tengo:", "1. Aceite Clover 1 L · L 60", "2. Aceite Clover 500 ml · L 34", "3. Aceite Mazola 1 L · L 65", "¿Cuál te mando? Respondé con el número."].join("\n"),
+      ["Anotado ✅", "• 2 Jabón Xtra barra", "", "Para un aceite tengo:", "1. Aceite Clover 1 L · L 60", "2. Aceite Clover 500 ml · L 34", "3. Aceite Mazola 1 L · L 65", "¿Cuál te mando? Respondé con el número."].join("\n"),
     );
     const next = await c.burst(answer("2"));
     expect(next).toMatchObject({ type: "ask", question: "pickup_or_delivery" });
@@ -178,7 +178,10 @@ describe("the order, built from what the customer says", () => {
     await c.burst(order(line("2 libras de arroz", "arroz", "2", "libra")));
     const again = await c.burst({ kind: "question", topic: "order_status", products: [], ...none });
     expect(again).toMatchObject({ type: "ask", question: "pickup_or_delivery" });
-    expect(renderOutcome(again, { customerId: "cust-1" })!.body).toBe("Anotado ✅ 2 × Arroz 1 lb.\n¿Lo recogés en la tienda o te lo llevamos?");
+    expect(renderOutcome(again, { customerId: "cust-1" })!.body).toBe("Anotado ✅\n• 2 Arroz 1 lb\n\n¿Lo recogés en la tienda o te lo llevamos?");
+    // Without the question, the same burst repeats nothing: only the open question.
+    const ok = await c.burst();
+    expect(renderOutcome(ok, { customerId: "cust-1" })!.body).toBe("¿Lo recogés en la tienda o te lo llevamos?");
   });
 
   it("takes perception's quantity, and never a number that is the product's own name", async () => {
@@ -201,7 +204,8 @@ describe("the order, built from what the customer says", () => {
     const asked = await c.burst(order(line("platanos", "platanos", null), line("piña", "piña", null), line("sal", "sal", null)));
     expect(asked).toMatchObject({ type: "ask", question: "quantities" });
     expect(renderOutcome(asked, { customerId: "cust-1" })!.body).toBe(
-      ["Anotado ✅ 3 productos.", "¿Cuántos querés de cada uno?", "• platanos", "• piña", "• Sal 1 lb", "Escribime, por ejemplo: «2 platanos, 1 piña»."].join("\n"),
+      // Every item is named once, in the question itself: nothing known yet to echo.
+      ["¿Cuántos querés de cada uno?", "• Platanos", "• Piña", "• Sal 1 lb", "Escribime, por ejemplo: «2 platanos, 1 piña»."].join("\n"),
     );
     // Read by code when perception passed it as one answer: two of three settled, asked again for one.
     const again = await c.burst(answer("6 platanos y una piña"));
@@ -265,7 +269,7 @@ describe("the order, built from what the customer says", () => {
   it("before a question about one line, echoes the others", async () => {
     const c = customer();
     const asked = await c.burst(order(line("3 libras de arroz", "arroz", "3", "libra"), line("unas tortillas", "tortillas", null)));
-    expect(renderOutcome(asked, { customerId: "cust-1" })!.body).toBe("Anotado ✅ 3 × Arroz 1 lb.\n¿Cuánto querés de Tortillas paquete 10?");
+    expect(renderOutcome(asked, { customerId: "cust-1" })!.body).toBe("Anotado ✅\n• 3 Arroz 1 lb\n\n¿Cuánto querés de Tortillas paquete 10?");
   });
 
   it("removing a line already marked No hay changes nothing", async () => {

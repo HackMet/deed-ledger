@@ -504,13 +504,13 @@ describe("No hay reaches the customer (PRETEND_ENGINE, end to end)", () => {
     const readback = (await t.say("2 libras de arroz, 1 leche, llevamelo frente al parque"))!;
     expect(readback.split("\n")).toEqual([
       "Tu pedido:",
-      "• 2 × Arroz 1 lb · L 36",
+      "• 2 Arroz 1 lb · L 36",
       "• Leche 1 L: no nos queda.",
-      expect.stringContaining("frente al parque"),
-      "*Total: L 61* (L 36 + L 25 de envío)",
-      "Pagás cuando te lo entregamos.",
+      "",
+      "📍 Te lo llevamos a: Frente al parque",
+      "💵 Total: L 61 (L 36 + L 25 de envío). Pagás cuando te lo entregamos.",
+      "",
       "¿Te lo preparo así?",
-      "_O escribí: confirmar, corregir o cancelar._",
     ]);
   });
 });
