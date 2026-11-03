@@ -50,6 +50,8 @@ Not yet on `origin/main`, on stacked local branches (commits counted against the
 | `claude/console-negocio` | 4 | `claude/dispatch` |
 | `claude/facturas` | 4 | `claude/console-negocio` |
 | `claude/engine-docs` | 4 | `origin/main` |
+| `claude/stack-on-main` | 26 | `origin/main` |
+| `claude/demo-on-main` | 7 | `claude/stack-on-main` |
 
 Angel's PR #63 is merged; it is on `main` and no longer a local branch.
 

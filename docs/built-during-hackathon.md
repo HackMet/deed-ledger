@@ -36,6 +36,8 @@ Commits are counted against the parent branch; the stack order is the merge orde
 | claude/console-negocio | claude/dispatch | 4 | 56fb3a4 |
 | claude/facturas | claude/console-negocio | 4 | 367813e |
 | claude/engine-docs | origin/main | 4 | d94b256 |
+| claude/stack-on-main | origin/main | 26 | 4fb745d |
+| claude/demo-on-main | claude/stack-on-main | 7 | 7a44d97 |
 
 ## Every commit on origin/main
 

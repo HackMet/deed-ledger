@@ -21,6 +21,8 @@ const STACK = [
   ["claude/console-negocio", "claude/dispatch"],
   ["claude/facturas", "claude/console-negocio"],
   ["claude/engine-docs", "origin/main"],
+  ["claude/stack-on-main", "origin/main"],
+  ["claude/demo-on-main", "claude/stack-on-main"],
 ];
 
 const run = (cmd, args) => execFileSync(cmd, args, { encoding: "utf8", maxBuffer: 64 << 20, stdio: ["ignore", "pipe", "ignore"] }).trim();
