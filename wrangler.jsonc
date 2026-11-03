@@ -39,6 +39,9 @@
     // How long Meta keeps a prompt-cache entry: "in_memory" or "24h". Blank sends none (Meta's
     // default). A cached prefix can hold a customer's messages, so "24h" needs the privacy check first.
     "PROMPT_CACHE_RETENTION": "",
+    // "1" turns on WhatsApp test commands (/new, /help) for the store's own members. Blank: off. The
+    // simulator sets it; on the live number only for testing (docs/deploy.md).
+    "TEST_COMMANDS": "",
     // The Worker's public origin (https://…, no trailing slash), for the privacy link in the first
     // message. Blank: the link is left out. Set it before customers write.
     "PUBLIC_BASE_URL": ""

@@ -57,6 +57,7 @@ import { BurstMediaUnreadableError, describeError } from "./errors";
 import { type AliasBook, aliasProposalCommits } from "./learned-aliases";
 import { readingSourceOf } from "./order-reading";
 import { plannerSourceOf } from "./planner/source";
+import { handleTestCommand, type TestCommandDeps } from "./test-commands";
 import { CUSTOMER_REPLY_TTL_MS, type ReplyContext, replyForOutcome } from "./replies";
 import type {
   ButtonsShown,
@@ -143,6 +144,8 @@ export interface OrderHandlerDeps {
    * it (classic), nothing is proposed.
    */
   readonly aliases?: AliasBook | null;
+  /** WhatsApp test commands (/new, /help) behind their two locks; null or absent: none. */
+  readonly testCommands?: TestCommandDeps | null;
 }
 
 const ACTION_TYPES = {
@@ -157,6 +160,9 @@ export function createOrderHandler(deps: OrderHandlerDeps): JobHandler {
       // A number typed after buttons is that button, before anything else looks at it (the
       // gate routes the welcome's Hablar con by its ID).
       const resolved = { ...input, job: await asTappedNumber(deps, input.lease, input.job) };
+      // A test command, when both its locks hold, is answered before the gate and any model call.
+      const command = await handleTestCommand(deps.testCommands, resolved);
+      if (command !== null) return command;
       return gateCustomerJob(deps.gate, resolved, () => neverSilent(deps, resolved, () => handleJob(deps, resolved)));
     },
   };

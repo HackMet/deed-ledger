@@ -50,6 +50,15 @@ or piped into `wrangler secret put`; never paste them into a file, a chat or a l
 - A voice note and a photo are read (the first real voice note also checks the end-of-stream rule; see #27).
 - `npx wrangler tail` while sending a message shows IDs only: no phone numbers, message text or secrets.
 
+## Testing on the live number
+
+- Deploy with `--var TEST_COMMANDS:1` to turn on the WhatsApp test commands; never on a store with real customers
+  unless the owner wants it. They answer only a phone that is an active member (owner or staff) of the store that
+  owns the number; for anyone else, or with the variable off, the text is an ordinary customer message.
+- `/new` (or `/nuevo`, `/reset`): you become a new customer of the store. Your open order is cancelled, your name,
+  saved places, messages and readback are erased as a data deletion erases them, and your next message gets the
+  first-message welcome. `/help` (or `/ayuda`) lists the commands.
+
 ## Every later deploy
 
 1. **Back up first**, outside the repo (the file holds real data once customers write):
