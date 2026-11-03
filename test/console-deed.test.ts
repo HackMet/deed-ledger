@@ -176,6 +176,23 @@ describe("/console/deed/:orderId: the order's facts as a graph", () => {
     expect(live).toContain(`http-equiv="refresh"`);
   });
 
+  it("never draws another store's refusals on this order's graph", async () => {
+    const s = await storeWithMembers();
+    const other = await newStore();
+    const { orderId } = await cancelledWithChange(s);
+    await env.DB.prepare(
+      `INSERT INTO deed_checks (business_id, id, at_ms, source, order_id, result, reason_code, operation_key)
+       VALUES (?, ?, ?, 'stale_version', ?, 'fail', 'stale_version', 'staff:foreign:1:mark_ready')`,
+    )
+      .bind(other.businessId, crypto.randomUUID(), T0 + 4_000, orderId)
+      .run();
+    const h = harness({ engine: checkedEngine });
+    const cookie = await login(h, s, "staff");
+    const body = await (await get(h, `/console/deed/${encodeURIComponent(orderId)}`, cookie)).text();
+    expect(body).not.toContain("Intento rechazado");
+    expect(body).not.toContain("foreign");
+  });
+
   it("answers 404 for another store's order, and lets an owner and staff open this one", async () => {
     const mine = await storeWithMembers();
     const theirs = await newStore();
