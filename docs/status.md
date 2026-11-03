@@ -82,6 +82,12 @@ Last updated: Fri Oct 30, 2026, evening Honduras time, by Claude Code (E7: docs 
   rebuilds `facts` with `change_request`, `change_review` and `receipt_review` (K14). The contract additions are
   Proposed in [contract.md](contract.md) and need Angel's OK before merging. The Pedidos buttons call the engine
   but, like every console tap on this branch, nothing saves until `saveConsoleAction` (#63) runs the commits.
+- K13, dispatch (Nov 3, `claude/dispatch`, local D1 only, **not deployed**): a ready delivery order is dispatched
+  from Pedidos with a courier picked from the store's active members (`en_camino`, blue, the courier's name in the
+  row and the trail), then marked delivered; pickup goes `listo → entregado`. Each step is an `order_status` fact
+  resting on the one before; a `null` fulfillment is refused, and the customer can't cancel once it is on its way.
+  Migration `0025_dispatch.sql` widens `orders.state`. The contract additions are Proposed in
+  [contract.md](contract.md) and need Angel's OK; as with K12, nothing saves until `saveConsoleAction` (#63).
 
 ## Next
 
@@ -110,6 +116,8 @@ staff use the preparation list on their own phones. If the console can't pass, i
 | Product and team name: "Johan AI" is a working title | Team | Oct 27 |
 | K12 contract additions (`review_change`, `change_approved`, `change_declined`, `OrderView.openChangeRequest`, `OrderView.lastReview`) are Proposed and need Angel's OK | Angel | Nov 3 |
 | K12 touched two of Angel's files: `src/domain/copy.ts` gains the owner-facing copy `CHANGE_AFTER_READY` (new copy, not compile-only), and `test/secrets.test.ts` lists `0024_change_requests.sql` (compile-only); both need Angel's OK | Angel | Nov 3 |
+| K13 contract additions (`en_camino`, `dispatch`, `order_dispatched`) are Proposed and need Angel's OK | Angel | Nov 3 |
+| K13 touched Angel's files: `memory-engine.ts` gains `case "dispatch"` returning null like `match_line` (compile-only), `copy.ts` gains `CANCEL_AFTER_DISPATCH` (new copy), `test/secrets.test.ts` lists `0025_dispatch.sql`; a delivery order at `listo` can no longer be marked delivered from Preparación (it needs a dispatch first) | Angel | Nov 3 |
 | D-41 (fact memory under `Commit`) and D-42 (read before every guard) are Proposed and need Angel's acceptance | Angel | Oct 30 |
 | D-43 (customer cancel refused once preparando; re-confirm returns to the interrupted state) and D-44 (operation keys derived from the customer's own order and action) are Proposed and need Angel's acceptance | Angel | Oct 30 |
 | Issue #12: `preparationList`, `verifyClaims` and the console taps are not built | Teammate | Oct 30 |

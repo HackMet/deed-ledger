@@ -80,6 +80,28 @@ Angel renders the WhatsApp copy.
 - A customer's change in `confirmado` or `preparando` no longer answers `order_changed`: the order stays as it is
   and the engine answers `order_status` with `openChangeRequest` set (the reply says it waits for the store). From
   `listo` on it answers `rejected`/`invalid_state`; the copy is `CHANGE_AFTER_READY` in `src/domain/copy.ts`.
+
+## Proposed (K13): dispatch and internal delivery
+
+Not agreed. Built behind these types on `claude/dispatch`; the PR can't merge until Angel accepts them (#5). Angel
+renders the WhatsApp copy.
+
+| Addition | Where | Status |
+|---|---|---|
+| `OrderState` `en_camino`: a delivery order out with a courier of the store, between `listo` and `entregado` | `outcomes.ts` | Proposed (K13) — Angel to accept |
+| `ConsoleAction` `{ type: "dispatch"; orderId; version; courierMemberId }`, any active member (Q4); the courier must be an active member of the same store; key `staff:<order>:<version>:dispatch` | `actions.ts` | Proposed (K13) — Angel to accept |
+| `CustomerNotice` `order_dispatched { order, courierName }` ("Tu pedido va en camino con <nombre>"); `courierName` is the store's name for the member, `null` when it has none | `outcomes.ts` | Proposed (K13) — Angel to accept |
+
+- Every step is an `order_status` fact, no new kind: dispatch's body carries `status: "dispatched"` and
+  `courierMemberId`, and it rests on the live confirm and the live `ready` tap; a delivery order's `delivered` rests
+  on the confirm and the live dispatch. A pickup order's `delivered` rests on the confirm, as before.
+- `dispatch` only for `fulfillment.mode = "delivery"` at `listo`; `mark_delivered` from `en_camino` (delivery) or
+  `listo` (pickup). A `null` fulfillment is neither: both answer `rejected`/`invalid_state`, never a guess. This
+  changes `mark_delivered` for a `listo` order with no fulfillment, which K2b accepted.
+- A courier id that isn't an active member of this store answers `rejected`/`not_found` with the order.
+- A customer's cancel (or change) from `en_camino` on answers `rejected`/`invalid_state`; the copy is
+  `CANCEL_AFTER_DISPATCH` ("Ya va en camino; hablá con la tienda.") in `src/domain/copy.ts`.
+- Migration `0025_dispatch.sql` rebuilds `orders` so its state CHECK admits `en_camino`.
 - A review with an empty or too long reason answers `rejected`/`not_allowed` (the contract has no input-error reason).
 
 ## Open for the meeting
