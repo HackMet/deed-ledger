@@ -165,15 +165,16 @@ export function deedGraph(facts: readonly DeedFact[], refusals: readonly DeedRef
 export const isLiveStatus = (status: DeedStatus): boolean => status === "live" || status === "pending";
 
 /**
- * For a blocked fact: the nearest closed ancestor and the path of facts from the blocked fact down to it
- * (both ends included), so the screen can draw what blocks it. Null for any fact that isn't blocked.
+ * For a blocked fact: the nearest ancestor whose closure kills it, and the path of facts from the blocked
+ * fact down to it (both ends included), so the screen can draw what blocks it. Null for any fact that isn't
+ * blocked. A closed ancestor whose supersede is one of the fact's own ancestors doesn't kill it, so it isn't named.
  */
 export function blockingPath(graph: DeedGraph, factId: string, facts: readonly DeedFact[]): { closedId: string; path: string[] } | null {
   const node = graph.nodes.find((candidate) => candidate.id === factId);
   if (node === undefined || node.status !== "blocked") return null;
   const byId = new Map(facts.map((fact) => [fact.id, fact]));
-  const status = new Map(graph.nodes.map((candidate) => [candidate.id, candidate.status]));
-  // Breadth first over `dependsOn`, so the nearest closed ancestor wins; `via` rebuilds the path.
+  const ancestors = ancestorsOf(factId, byId, new Map());
+  // Breadth first over `dependsOn`, so the nearest killing ancestor wins; `via` rebuilds the path.
   const via = new Map<string, string>();
   const queue = [factId];
   const seen = new Set([factId]);
@@ -183,7 +184,7 @@ export function blockingPath(graph: DeedGraph, factId: string, facts: readonly D
       if (!byId.has(dependency) || seen.has(dependency)) continue;
       seen.add(dependency);
       via.set(dependency, current);
-      if (status.get(dependency) === "closed") {
+      if (kills(byId.get(dependency)!.closure, ancestors)) {
         const path = [dependency];
         for (let step = via.get(dependency); step !== undefined; step = via.get(step)) path.unshift(step);
         return { closedId: dependency, path };

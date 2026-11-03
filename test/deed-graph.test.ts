@@ -145,6 +145,20 @@ describe("deedGraph: status", () => {
     expect(blockingPath(graph, "s2", facts)).toEqual({ closedId: "v1", path: ["s2", "s1", "c", "v1"] });
     expect(blockingPath(graph, "x", facts)).toBeNull();
   });
+
+  it("names the old version that kills a change review, not the request its own supersede closed (B1)", () => {
+    // Demo order D's shape: the review rests on the request it answers, and the request is superseded by the
+    // review. Its real killer is the old version, superseded by the new one, which the review does not rest on.
+    const facts = [
+      fact("v1", 1, [], { closedByFactId: "v2", reason: "superseded" }, "order_version"),
+      fact("v2", 2, [], null, "order_version"),
+      fact("r", 3, ["v1"], { closedByFactId: "rv", reason: "superseded" }, "change_request"),
+      fact("rv", 4, ["r"], null, "change_review"),
+    ];
+    const graph = deedGraph(facts);
+    expect(statusesOf(graph)).toEqual({ v1: "closed", v2: "live", r: "closed", rv: "blocked" });
+    expect(blockingPath(graph, "rv", facts)).toEqual({ closedId: "v1", path: ["rv", "r", "v1"] });
+  });
 });
 
 /** A seeded generator (mulberry32): the same seed draws the same numbers, on every run and host. */
@@ -174,6 +188,45 @@ function randomDag(seed: number, orderId: string): DeedFact[] {
       : null, kinds[Math.floor(random() * kinds.length)]);
   });
 }
+
+/** A fact and everything it rests on, found by a plain walk: an oracle for the property below, not the module's code. */
+function restingOn(id: string, byId: ReadonlyMap<string, DeedFact>): Set<string> {
+  const found = new Set<string>();
+  const stack = [id];
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    if (found.has(current) || !byId.has(current)) continue;
+    found.add(current);
+    stack.push(...byId.get(current)!.dependsOn);
+  }
+  return found;
+}
+
+describe("blockingPath names a blocker that really kills the fact (B1)", () => {
+  it("for 200 seeded random DAGs: a blocked fact's path runs down its dependencies to a closure that kills it", () => {
+    let blocked = 0;
+    for (let seed = 1; seed <= 200; seed++) {
+      const facts = randomDag(seed, `blocker-${seed}`);
+      const byId = new Map(facts.map((f) => [f.id, f]));
+      const graph = deedGraph(facts);
+      for (const node of graph.nodes.filter((candidate) => candidate.status === "blocked")) {
+        blocked++;
+        const named = blockingPath(graph, node.id, facts);
+        expect(named, `seed ${seed}, fact ${node.id}`).not.toBeNull();
+        const { closedId, path } = named!;
+        const ancestors = restingOn(node.id, byId);
+        const closure = byId.get(closedId)!.closure;
+        expect(closure !== null && !(closure.reason === "superseded" && ancestors.has(closure.closedByFactId)), `seed ${seed}, blocker ${closedId}`).toBe(true);
+        expect(path[0]).toBe(node.id);
+        expect(path[path.length - 1]).toBe(closedId);
+        for (let step = 0; step + 1 < path.length; step++) {
+          expect(byId.get(path[step]!)!.dependsOn).toContain(path[step + 1]);
+        }
+      }
+    }
+    expect(blocked).toBeGreaterThan(0);
+  });
+});
 
 describe("deedGraph agrees with the ledger's SQL liveness", () => {
   it("for 200 seeded random DAGs with random closures, written into local D1", async () => {
