@@ -81,5 +81,8 @@ describe("DEED_ENGINE=1 through the real reader", () => {
 
     await c.say("confirmar");
     expect(await c.factKinds()).toEqual(["order_version", "order_confirm"]);
+    // The repeat is answered from the first confirm's outcome (the duplicate check), not by the state
+    // check, which would answer that the order is not waiting for confirmation.
+    expect(c.h.sentTo(c.phone).at(-1)).toBe("¡A la orden! 🙌");
   });
 });
