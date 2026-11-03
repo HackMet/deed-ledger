@@ -1,7 +1,7 @@
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
-import type { MemberContext } from "../src/application/engine";
+import type { Engine, EngineResult, MemberContext } from "../src/application/engine";
 import { staffKey } from "../src/application/engine/order-engine";
 import type { ActionEnvelope, ConsoleAction } from "../src/domain/contract/actions";
 import { INVITE_TTL_MS } from "../src/domain/console-auth";
@@ -375,5 +375,116 @@ describe("K5: the Orders screen reads the ledger", () => {
     expect(trail).not.toContain("cerrado por");
     expect(trail).not.toContain("Personal");
     expect(trail).not.toContain("Depende de: Pedido confirmado");
+  });
+});
+
+describe("K12: Pedidos shows a change waiting for review and sends the answer to the engine", () => {
+  /** The real engine, keeping each console result so the test saves it where saveConsoleAction (#63) will. */
+  function recordingEngine() {
+    const results: EngineResult[] = [];
+    const wrapped: Engine = {
+      onBurst: (...a) => engine.onBurst(...a),
+      onCustomerAction: (...a) => engine.onCustomerAction(...a),
+      verifyClaims: (...a) => engine.verifyClaims(...a),
+      preparationList: (...a) => engine.preparationList(...a),
+      onConsoleAction: async (...a) => {
+        const result = await engine.onConsoleAction(...a);
+        results.push(result);
+        return result;
+      },
+    };
+    return { wrapped, results };
+  }
+
+  async function post(h: Harness, path: string, cookie: string, fields: Record<string, string>) {
+    const ctx = createExecutionContext();
+    const response = await h.worker.fetch(
+      new IncomingRequest(`https://worker.test${path}`, {
+        method: "POST",
+        headers: { origin: "https://worker.test", cookie },
+        body: new URLSearchParams(fields),
+        redirect: "manual",
+      }),
+      h.env,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    return response;
+  }
+
+  /** A confirmed order with "agregale un jabón más, lo paso a traer" waiting for review. */
+  async function withRequest(s: Store) {
+    const orderId = await confirmed(s);
+    const result = await engine.onBurst(s.context({ nowMs: T0 + 3000 }), addAndPickup, []);
+    await save(result);
+    const requestId = result.outcome.type === "order_status" ? result.outcome.order!.openChangeRequest!.id : "";
+    return { orderId, requestId };
+  }
+
+  const csrfOf = (page: string) => /name="csrf" value="([^"]+)"/.exec(page)?.[1] ?? "";
+
+  it("shows the request yellow with its diff and both answers, each with a required reason", async () => {
+    const h = harness();
+    const s = await storeWithSession();
+    const { orderId, requestId } = await withRequest(s);
+    const cookie = await login(h, s);
+    expect(row(await (await get(h, "/console/pedidos", cookie)).text(), orderId)).toBe("yellow");
+    const page = await (await get(h, `/console/pedidos/${orderId}`, cookie)).text();
+    expect(page).toContain("El cliente pidió un cambio");
+    expect(page).toContain("Agregar: un jabón más × 1");
+    expect(page).toContain("Aprobar ✓");
+    expect(page).toContain("Rechazar ✗");
+    expect(page.match(/<input name="motivo" required maxlength="200"/g)).toHaveLength(2);
+    expect(page.match(new RegExp(`name="cambio" value="${requestId}"`, "g"))).toHaveLength(2);
+    expect(page).toContain("Cambio pedido por el cliente");
+  });
+
+  it("approves through the engine; the trail shows the review with its reason, and the row is normal again", async () => {
+    const { wrapped, results } = recordingEngine();
+    const h = harness({ engine: wrapped });
+    const s = await storeWithSession();
+    const { orderId, requestId } = await withRequest(s);
+    const cookie = await login(h, s, "owner");
+    const csrf = csrfOf(await (await get(h, `/console/pedidos/${orderId}`, cookie)).text());
+    const response = await post(h, `/console/pedidos/${orderId}/revision`, cookie, { csrf, cambio: requestId, decision: "approve", motivo: " Va, sí hay " });
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toBe(`/console/pedidos/${orderId}?aviso=aprobado`);
+    expect(results).toHaveLength(1);
+    expect(results[0]!.outcome).toMatchObject({ type: "action_saved", order: { version: 2, lastReview: { decision: "approve", reason: "Va, sí hay" } } });
+    await save(results[0]!);
+
+    const page = await (await get(h, `/console/pedidos/${orderId}?aviso=aprobado`, cookie)).text();
+    expect(page).toContain("Cambio aprobado. Le avisamos al cliente.");
+    expect(page).not.toContain("El cliente pidió un cambio");
+    expect(page).toContain("Cambio revisado");
+    expect(page).toContain("Aprobado: Va, sí hay");
+    expect(page).toContain("Versión 2");
+    expect(row(await (await get(h, "/console/pedidos", cookie)).text(), orderId)).toBe("none");
+  });
+
+  it("declines with the reason in the trail; a missing reason never reaches the engine", async () => {
+    const { wrapped, results } = recordingEngine();
+    const h = harness({ engine: wrapped });
+    const s = await storeWithSession();
+    const { orderId, requestId } = await withRequest(s);
+    const cookie = await login(h, s);
+    const csrf = csrfOf(await (await get(h, `/console/pedidos/${orderId}`, cookie)).text());
+    const path = `/console/pedidos/${orderId}/revision`;
+
+    const empty = await post(h, path, cookie, { csrf, cambio: requestId, decision: "decline", motivo: "   " });
+    expect(empty.headers.get("location")).toBe(`/console/pedidos/${orderId}?aviso=motivo`);
+    expect((await post(h, path, cookie, { csrf, cambio: requestId, decision: "maybe", motivo: "x" })).status).toBe(400);
+    expect(results).toHaveLength(0);
+
+    const declined = await post(h, path, cookie, { csrf, cambio: requestId, decision: "decline", motivo: "No hay jabón" });
+    expect(declined.headers.get("location")).toBe(`/console/pedidos/${orderId}?aviso=rechazado`);
+    await save(results[0]!);
+    const page = await (await get(h, `/console/pedidos/${orderId}`, cookie)).text();
+    expect(page).toContain("Rechazado: No hay jabón");
+    expect(page).toContain("Versión 1");
+    // The same answer again is the first one's duplicate: the screen says it saved.
+    const again = await post(h, path, cookie, { csrf, cambio: requestId, decision: "approve", motivo: "Mejor sí" });
+    expect(again.headers.get("location")).toBe(`/console/pedidos/${orderId}?aviso=rechazado`);
+    expect(results[1]!.outcome.type).toBe("duplicate");
   });
 });

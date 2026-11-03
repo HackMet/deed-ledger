@@ -74,7 +74,8 @@ const EVIDENCE_COMPLETE = `WITH
  * G4b, after the statements: the fact just written and every ancestor exist and none is closed
  * (KILLING_CLOSURE, with the fact itself among the ancestors, so the version it supersedes doesn't
  * kill it). For a fact resting on another written earlier in the same batch. Holds when the fact is
- * absent, so the fence's re-check after a rolled-back batch reports the real cause.
+ * absent, so the fence's re-check after a rolled-back batch reports the real cause; a G4b failure
+ * itself surfaces, like P1's, as a PermanentWriteError with nothing written (the engine's read comes first).
  */
 const WRITTEN_LIVE = `WITH RECURSIVE ancestors(id) AS (
     SELECT ?

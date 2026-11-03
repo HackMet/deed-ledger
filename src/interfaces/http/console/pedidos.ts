@@ -97,8 +97,12 @@ export function pedidosScreen(app: Hono<ConsoleEnv>) {
 }
 
 function reviewNoticeFor(outcome: EngineOutcome, decision: "approve" | "decline"): ReviewNotice {
+  // A second tap answers with the first: the screen reports the answer that was saved.
   const answered = outcome.type === "duplicate" ? outcome.first : outcome;
-  if (answered.type !== "rejected") return decision === "approve" ? "aprobado" : "rechazado";
+  if (answered.type !== "rejected") {
+    const saved = answered.type === "action_saved" ? (answered.order?.lastReview?.decision ?? decision) : decision;
+    return saved === "approve" ? "aprobado" : "rechazado";
+  }
   switch (answered.reason) {
     case "not_found":
       return "falta";
