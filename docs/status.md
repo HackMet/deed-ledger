@@ -139,6 +139,12 @@ Kept as written on `main`. In this merge the default `jobHandler` is the order h
   resting on the one before; a `null` fulfillment is refused, and the customer can't cancel once it is on its way.
   Migration `0025_dispatch.sql` widens `orders.state`. The contract additions are Proposed in
   [contract.md](contract.md) and need Angel's OK; as with K12, taps save through `runConsoleAction` (#63).
+- K21 and K20 (Nov 3, `claude/deed-on-main`, from `claude/owner-on-main`, local only, **not deployed**):
+  - K21: `OrderEngine` gives Angel's reader `perceptionContext` and `catalog`. The catalog comes from our `products` table, not `store_products`.
+  - K21: with `DEED_ENGINE=1` the app runs on `OrderEngine`, and the Muse reader reads through it. The flag is off by default. `plannerContext` is not built, so the planner conversation mode can't run on it yet.
+  - K20: every refusal and claim check the engine makes is recorded in `deed_checks` (migration `0027`, append-only, IDs and codes only).
+  - K20: `/console/deed/<order>` shows the order's facts as a graph, and `/console/deed/verificaciones` shows the feed.
+  - Measured: 84 files / 1192 tests pass and `./demo.sh` gives 29/29.
 - K6, K15 and K14 on main (Nov 3, `claude/owner-on-main`, from `claude/demo-on-main`, local only): Productos,
   Mi tienda (`/console/negocio`) and Facturas are registered in `console/index.ts`; the invoice upload sets its own
   size limit there, like Anotar. Those three screens still draw their own pages, not the shared layout, and "Más"
@@ -180,6 +186,8 @@ Gate: Saturday Oct 31, 8:00 PM Honduras time.
 | K12 contract additions (`review_change`, `change_approved`, `change_declined`, `OrderView.openChangeRequest`, `OrderView.lastReview`) are Proposed and need Angel's OK | Angel | Nov 3 |
 | K12 touched two of Angel's files: `src/domain/copy.ts` gains the owner-facing copy `CHANGE_AFTER_READY` (new copy, not compile-only), and `test/secrets.test.ts` lists `0024_change_requests.sql` (compile-only); both need Angel's OK | Angel | Nov 3 |
 | K13 contract additions (`en_camino`, `dispatch`, `order_dispatched`) are Proposed and need Angel's OK | Angel | Nov 3 |
+| K21 touched Angel's files: `config.ts` (`deedEngine`), `wrangler.jsonc` (`DEED_ENGINE: "0"`), `worker-configuration.d.ts` (regenerated) and `composition.ts` (engine choice; the Deed checks recorder). Whether to turn `DEED_ENGINE` on is his call | Angel | Nov 3 |
+| K20 adds migration `0027_deed_checks.sql` and lists it in Angel's `test/secrets.test.ts` (compile-only) | Angel | Nov 3 |
 | K14 Muse Spark receipt reader: needs PR #63's `MuseSparkProvider` and Q2; prompt draft in [prompts/receipt-reading.md](prompts/receipt-reading.md). K14 touched Angel's `test/secrets.test.ts` (lists `0026_console_receipts.sql`, compile-only) and `LogFields` (`draftId`) | Angel | Nov 3 |
 | K13 touched Angel's files: `memory-engine.ts` gains `case "dispatch"` returning null like `match_line` (compile-only), `copy.ts` gains `CANCEL_AFTER_DISPATCH` (new copy), `test/secrets.test.ts` lists `0025_dispatch.sql`; a delivery order at `listo` can no longer be marked delivered from Preparación (it needs a dispatch first) | Angel | Nov 3 |
 | D-41 (fact memory under `Commit`) and D-42 (read before every guard) are Proposed and need Angel's acceptance | Angel | Oct 30 |
