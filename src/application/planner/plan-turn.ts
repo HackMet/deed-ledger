@@ -44,7 +44,15 @@ export class PlannerModel implements TurnProposer {
     return meteredCall(
       this.deps,
       tenant,
-      { system: this.instructions.system, user, schemaName: TURN_SCHEMA_NAME, schema: turnSchema, maxOutputTokens: PLANNER_MAX_OUTPUT_TOKENS },
+      {
+        system: this.instructions.system,
+        user,
+        schemaName: TURN_SCHEMA_NAME,
+        schema: turnSchema,
+        maxOutputTokens: PLANNER_MAX_OUTPUT_TOKENS,
+        // The instruction version is a hash of the layers' text: one cache group per exact wording.
+        promptCacheKey: this.instructions.version,
+      },
       { promptVersion: this.instructions.version, logPrefix: "planner" },
     );
   }

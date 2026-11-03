@@ -3,6 +3,7 @@
  * The system prompt is the only system message; everything else is user content. No retries here:
  * the job queue retries, and the spend cap is reserved per attempt.
  */
+import { isPromptCacheRetention, isReasoningEffort } from "../../application/model-settings";
 import type { ModelContentPart, ModelProvider, ModelRequest, ModelResult } from "../../application/ports";
 import { READING_MAX_MS } from "../../domain/processing";
 
@@ -65,6 +66,10 @@ export class MuseSparkProvider implements ModelProvider {
         type: "json_schema",
         json_schema: { name: request.schemaName, schema: request.schema, strict: true },
       },
+      // Only values Meta lists are sent ("none" is refused with HTTP 400); absent, Meta's defaults apply.
+      ...(isReasoningEffort(request.reasoningEffort) ? { reasoning_effort: request.reasoningEffort } : {}),
+      ...(request.promptCacheKey ? { prompt_cache_key: request.promptCacheKey } : {}),
+      ...(isPromptCacheRetention(request.promptCacheRetention) ? { prompt_cache_retention: request.promptCacheRetention } : {}),
     };
 
     const started = Date.now();
@@ -86,18 +91,18 @@ export class MuseSparkProvider implements ModelProvider {
       payload = null;
     }
     const latencyMs = Date.now() - started;
-    const { inputTokens, outputTokens } = usageOf(payload);
+    const usage = usageOf(payload);
 
     if (!response.ok) {
       const retryable = response.status === 429 || response.status >= 500;
-      return { ...failure(retryable ? "unavailable" : "rejected", response.status, latencyMs), inputTokens, outputTokens };
+      return { ...failure(retryable ? "unavailable" : "rejected", response.status, latencyMs), ...usage };
     }
     const content = contentOf(payload);
-    if (content === null) return { ...failure("invalid_json", response.status, latencyMs), inputTokens, outputTokens };
+    if (content === null) return { ...failure("invalid_json", response.status, latencyMs), ...usage };
     try {
-      return { ok: true, json: JSON.parse(content), latencyMs, inputTokens, outputTokens };
+      return { ok: true, json: JSON.parse(content), latencyMs, ...usage };
     } catch {
-      return { ...failure("invalid_json", response.status, latencyMs), inputTokens, outputTokens };
+      return { ...failure("invalid_json", response.status, latencyMs), ...usage };
     }
   }
 }
@@ -128,8 +133,20 @@ function contentOf(payload: unknown): string | null {
   return typeof content === "string" ? content : null;
 }
 
-function usageOf(payload: unknown): { inputTokens: number | null; outputTokens: number | null } {
-  const usage = (payload as { usage?: { prompt_tokens?: unknown; completion_tokens?: unknown } } | null)?.usage;
+interface Usage {
+  readonly prompt_tokens?: unknown;
+  readonly completion_tokens?: unknown;
+  readonly prompt_tokens_details?: { readonly cached_tokens?: unknown } | null;
+  readonly completion_tokens_details?: { readonly reasoning_tokens?: unknown } | null;
+}
+
+function usageOf(payload: unknown): Pick<ModelResult, "inputTokens" | "outputTokens" | "reasoningTokens" | "cachedTokens"> {
+  const usage = (payload as { usage?: Usage } | null)?.usage;
   const count = (value: unknown) => (typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null);
-  return { inputTokens: count(usage?.prompt_tokens), outputTokens: count(usage?.completion_tokens) };
+  return {
+    inputTokens: count(usage?.prompt_tokens),
+    outputTokens: count(usage?.completion_tokens),
+    reasoningTokens: count(usage?.completion_tokens_details?.reasoning_tokens),
+    cachedTokens: count(usage?.prompt_tokens_details?.cached_tokens),
+  };
 }

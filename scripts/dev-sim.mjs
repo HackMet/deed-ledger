@@ -18,6 +18,12 @@
 //
 // With --planner (and --ai), the planner decides each conversation step (CONVERSATION=planner,
 // D-45): two Muse Spark calls per customer message instead of one.
+//
+// --reader-effort and --planner-effort set each call's reasoning effort (minimal, low, medium, high,
+// xhigh, max, or default for the model's own); --cache-retention sets the prompt cache's (in_memory
+// or 24h). Left out, the Worker's defaults apply (src/infrastructure/config.ts).
+//
+//   npm run dev:sim -- --ai --store --planner --vars ../hackathon/.dev.vars --planner-effort low
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -39,7 +45,27 @@ function modelKey() {
   return value === "" ? null : value;
 }
 
+/** The model switches as Worker variables, only when given; "none" is refused (Muse Spark answers 400). */
+function modelVars() {
+  const efforts = ["minimal", "low", "medium", "high", "xhigh", "max", "default"];
+  const vars = {};
+  for (const [flag, name, allowed] of [
+    ["reader-effort", "READER_REASONING_EFFORT", efforts],
+    ["planner-effort", "PLANNER_REASONING_EFFORT", efforts],
+    ["cache-retention", "PROMPT_CACHE_RETENTION", ["in_memory", "24h"]],
+  ]) {
+    if (args[flag] === undefined) continue;
+    if (!allowed.includes(args[flag])) {
+      console.error(`--${flag} takes one of: ${allowed.join(", ")}.`);
+      process.exit(1);
+    }
+    vars[name] = args[flag];
+  }
+  return vars;
+}
+
 const aiKey = args.ai === true ? modelKey() : null;
+const modelSettings = modelVars();
 if (args.ai === true && aiKey === null) {
   console.error("--ai needs MODEL_API_KEY: set it in the environment or pass --vars <path to .dev.vars>.");
   process.exit(1);
@@ -53,6 +79,7 @@ writeFileSync(
     ...SIM_VARS,
     ...(args.store === true ? { PRETEND_ENGINE: "1" } : {}),
     CONVERSATION: args.planner === true ? "planner" : "classic",
+    ...modelSettings,
   })
     .map(([name, value]) => `${name}=${value}`)
     .join("\n")}\n`,
@@ -94,5 +121,6 @@ const dev = spawn(
 );
 if (aiKey !== null) console.log("AI mode: customer messages are read by Muse Spark (spends Meta credits).");
 if (args.planner === true) console.log("Planner mode: a second Muse Spark call per message decides the next step.");
+for (const [name, value] of Object.entries(modelSettings)) console.log(`${name}=${value}`);
 dev.on("exit", (code) => process.exit(code ?? 0));
 for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => dev.kill(signal));

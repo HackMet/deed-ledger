@@ -5,6 +5,7 @@
  */
 import { gatedHandler } from "./application/customer-gate";
 import type { Engine } from "./application/engine";
+import type { ModelCallSettings } from "./application/model-settings";
 import { type BurstReader as OrderBurstReader, createOrderHandler } from "./application/order-handler";
 import { type BurstMediaResolver, createOrderReading, readingSourceOf, storedMediaResolver } from "./application/order-reading";
 import { BurstReader } from "./application/perception/reader";
@@ -212,6 +213,8 @@ export function buildBurstReader(
     readonly fetch?: (input: string, init: RequestInit) => Promise<Response>;
     readonly dailyCapMicroUsd?: number;
     readonly provider?: ModelProvider;
+    /** Reasoning effort and cache retention; absent (the console's reader), Meta's defaults. */
+    readonly settings?: ModelCallSettings;
   } = {},
 ): BurstReader {
   return new BurstReader({
@@ -225,6 +228,7 @@ export function buildBurstReader(
     clock: deps.clock,
     log: deps.log,
     ...(overrides.dailyCapMicroUsd === undefined ? {} : { dailyCapMicroUsd: overrides.dailyCapMicroUsd }),
+    ...(overrides.settings === undefined ? {} : { settings: overrides.settings }),
   });
 }
 
@@ -263,9 +267,10 @@ export function buildOrderReading(
     });
   const provider =
     overrides.provider ?? new MuseSparkProvider({ apiKey: env.MODEL_API_KEY ?? "", fetch: (input, init) => fetch(input, init) });
-  const plannerSource = readConfig(env).conversation === "planner" ? plannerSourceOf(engine) : null;
+  const config = readConfig(env);
+  const plannerSource = config.conversation === "planner" ? plannerSourceOf(engine) : null;
   return createOrderReading({
-    reader: buildBurstReader(env, deps, { ...(overrides.db === undefined ? {} : { db: overrides.db }), provider }),
+    reader: buildBurstReader(env, deps, { ...(overrides.db === undefined ? {} : { db: overrides.db }), provider, settings: config.readerModel }),
     source,
     media,
     leases: jobs,
@@ -274,7 +279,13 @@ export function buildOrderReading(
       plannerSource === null
         ? null
         : {
-            model: new PlannerModel({ provider, spend: new D1SpendLedger(overrides.db ?? env.DB), clock: deps.clock, log: deps.log }),
+            model: new PlannerModel({
+              provider,
+              spend: new D1SpendLedger(overrides.db ?? env.DB),
+              clock: deps.clock,
+              log: deps.log,
+              settings: config.plannerModel,
+            }),
             // Lane L1's retrieveCandidates (src/domain/retrieval.ts) replaces this at merge.
             retrieve: interimRetrieveCandidates,
             source: plannerSource,

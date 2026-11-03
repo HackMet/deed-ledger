@@ -3,7 +3,7 @@
 Shared state for every agent: what's true now, what's next, what's open, what bit us. Keep it short. Anything a
 command can tell you (git log, test results, CI) doesn't belong here. Decisions go in [decisions.md](decisions.md).
 
-Last updated: Mon Nov 2, 2026, evening Honduras time, by Claude Code (lane L0, the planner spine).
+Last updated: Mon Nov 2, 2026, night Honduras time, by Claude Code (latency lane).
 
 ## Now
 
@@ -14,6 +14,13 @@ Last updated: Mon Nov 2, 2026, evening Honduras time, by Claude Code (lane L0, t
   adapter until lane L1's lands; the real engine runs classic until it has what contract.md "Proposed (Nov 2):
   planner" lists. The flag flips only when the eval suite (lane L2) says the planner path is at least as good with
   zero truth failures.
+- **Planner-path latency (Nov 2, [handoff](handoffs/2026-11-02-latency.md)):** each call now sends its own reasoning
+  effort and a prompt-cache key per instruction version. Planner-path defaults: reader `low`, planner `minimal`
+  (`READER_REASONING_EFFORT`, `PLANNER_REASONING_EFFORT`; the classic reader keeps the model's own). On the fixed
+  4-input set, a text message went from about 30 s to about 13.6 s from receipt to reply, a short photo list from 37 s
+  to 15–16 s, an 11-item photo list from 90 s to 25–32 s. Not under the 10 s bar: two calls plus the ~4.3 s burst wait
+  can't get there. Next lever: a one-call path for text-only bursts (described in the handoff, not built). L2's
+  eval must rerun at these efforts before the flag flips.
 
 - The product is an order assistant: customers order on WhatsApp, Johan and staff work from a phone console, and
   both end in the same engine. Two-person team (D-37): Angel owns conversations, perception, replies, the console
@@ -133,6 +140,10 @@ Gate: Saturday Oct 31, 8:00 PM Honduras time.
 - Migration numbers: Angel's side uses 0003–0019, kercmari's 0020–0039 (proposed in #6). PR #62 still uses 0003–0005;
   renaming a migration after it ran remotely makes wrangler run it again. Settle before any remote apply.
 - `test/secrets.test.ts` lists every migration by name: every branch that adds one conflicts there.
+- At the model's own reasoning effort, the planner once reasoned past its 6,144-token cap on an 11-item list (59 s, cut
+  off, classic fallback). Keep `PLANNER_REASONING_EFFORT` at `minimal` or `low`. Reader `minimal` misread "5 consome"
+  as a product name; `low` is the floor.
+- A photo's caption never reaches the reader: `resolveBurst` (`order-reading.ts`) sends only the image for photo jobs.
 
 - Claude Code skips `AGENTS.md` in this folder unless `CLAUDE.md` imports it (`~/angel/CLAUDE.md` is above the
   repo). Keep the import.

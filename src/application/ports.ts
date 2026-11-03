@@ -7,6 +7,7 @@ import type { ProviderStatus } from "../domain/outbox";
 import type { Pin, SavedPlace } from "../domain/place";
 import type { MessageKind } from "../domain/processing";
 import type { ClaimCheck, ReplyButton } from "../domain/replies";
+import type { PromptCacheRetention, ReasoningEffort } from "./model-settings";
 
 // ---------------------------------------------------------------------------------------------
 // Context
@@ -96,7 +97,13 @@ export type LogFields = {
     | "reason"
     | "outcome"
     | "status"
-    | "latencyMs"]?: string | number | boolean;
+    | "latencyMs"
+    // A model call's usage and settings: counts and a setting name, never content.
+    | "effort"
+    | "inputTokens"
+    | "cachedTokens"
+    | "outputTokens"
+    | "reasoningTokens"]?: string | number | boolean;
 };
 
 export interface Logger {
@@ -993,14 +1000,27 @@ export interface ModelRequest {
   readonly schema: { readonly [key: string]: unknown };
   /** Caps reasoning plus visible output tokens; the spend reservation counts on it. */
   readonly maxOutputTokens: number;
+  /** Absent: the model's own effort. Lower effort means fewer reasoning tokens, never more than the cap. */
+  readonly reasoningEffort?: ReasoningEffort;
+  /**
+   * Groups requests that start with the same fixed instructions, for prompt-cache hits. Names an
+   * instruction version, never a store, a customer or a message.
+   */
+  readonly promptCacheKey?: string;
+  readonly promptCacheRetention?: PromptCacheRetention;
 }
 
 /**
  * rejected: the provider refused the request (4xx other than 429), so nothing was spent.
  * unavailable: rate limited, server error, timeout or network failure; spend unknown.
  * invalid_json: the call succeeded but the content wasn't JSON.
+ * reasoningTokens (part of outputTokens) and cachedTokens (part of inputTokens): for the logs only,
+ * absent when the provider doesn't report them.
  */
-export type ModelResult =
+export type ModelResult = {
+  readonly reasoningTokens?: number | null;
+  readonly cachedTokens?: number | null;
+} & (
   | {
       readonly ok: true;
       readonly json: unknown;
@@ -1015,7 +1035,8 @@ export type ModelResult =
       readonly latencyMs: number;
       readonly inputTokens: number | null;
       readonly outputTokens: number | null;
-    };
+    }
+);
 
 export interface ModelProvider {
   /** A standard model ID; `*-contributor` IDs are refused when the provider is built. */

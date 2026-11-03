@@ -25,6 +25,15 @@
     // "planner" lets the planner (a second Muse Spark call per burst) decide each conversation step
     // (D-45); "classic" (the default) keeps the engine's own questions. The simulator's --planner sets it.
     "CONVERSATION": "classic",
+    // Muse Spark's reasoning effort for the reader's call and the planner's: "minimal", "low", "medium",
+    // "high", "xhigh", "max", or "default" (the model picks). Blank: the measured defaults in
+    // src/infrastructure/config.ts (planner path: reader "low", planner "minimal"; the classic reader
+    // keeps the model's own). The simulator's --reader-effort and --planner-effort set them.
+    "READER_REASONING_EFFORT": "",
+    "PLANNER_REASONING_EFFORT": "",
+    // How long Meta keeps a prompt-cache entry: "in_memory" or "24h". Blank sends none (Meta's
+    // default). A cached prefix can hold a customer's messages, so "24h" needs the privacy check first.
+    "PROMPT_CACHE_RETENTION": "",
     // The Worker's public origin (https://…, no trailing slash), for the privacy link in the first
     // message. Blank: the link is left out. Set it before customers write.
     "PUBLIC_BASE_URL": ""

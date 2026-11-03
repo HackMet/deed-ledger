@@ -11,8 +11,8 @@ import { isSupportedImage, type BurstMessage } from "../../domain/perception/bur
 import { validateReading } from "../../domain/perception/validate";
 import { READING_SCHEMA_NAME, readingSchema, type Audience } from "../../domain/perception/wire";
 import type { LineMatch } from "../engine";
-import { meteredCall } from "../metered-call";
-import type { Clock, Logger, ModelProvider, ModelRequest, SpendLedger, Tenant } from "../ports";
+import { meteredCall, type MeteredCallDeps } from "../metered-call";
+import type { ModelRequest, Tenant } from "../ports";
 import { labelCatalog, matchLines, resolvePicks, type CatalogProduct, type LabelMatch } from "./matching";
 import { PLANNER_MODE_PROMPT, PROMPT_VERSION, SYSTEM_PROMPT, userContent } from "./prompt";
 
@@ -59,15 +59,7 @@ export interface ReadRequest {
 }
 
 export class BurstReader {
-  constructor(
-    private readonly deps: {
-      readonly provider: ModelProvider;
-      readonly spend: SpendLedger;
-      readonly clock: Clock;
-      readonly log: Logger;
-      readonly dailyCapMicroUsd?: number;
-    },
-  ) {}
+  constructor(private readonly deps: MeteredCallDeps) {}
 
   async read(tenant: Tenant, request: ReadRequest): Promise<ReadOutcome> {
     const { log } = this.deps;
@@ -80,14 +72,15 @@ export class BurstReader {
       return { ok: true, reading: { observations: [{ kind: "other", issues: [] }], calls: [] }, matches: [], labelMatches: [] };
     }
 
+    const promptVersion = plannerMode ? PLANNER_MODE_PROMPT.version : PROMPT_VERSION[request.audience];
     const modelRequest: ModelRequest = {
       system: plannerMode ? PLANNER_MODE_PROMPT.text : SYSTEM_PROMPT[request.audience],
       user: userContent(messages, context, { catalogSection: !plannerMode }),
       schemaName: READING_SCHEMA_NAME,
       schema: readingSchema(request.audience),
       maxOutputTokens: MAX_OUTPUT_TOKENS,
+      promptCacheKey: readerCacheKey(promptVersion),
     };
-    const promptVersion = plannerMode ? PLANNER_MODE_PROMPT.version : PROMPT_VERSION[request.audience];
     const called = await meteredCall(this.deps, tenant, modelRequest, { promptVersion, logPrefix: "perception" });
     if (!called.ok) return { ok: false, reason: called.reason, calls: called.calls };
 
@@ -103,6 +96,11 @@ export class BurstReader {
     log.info("perception.read", { businessId: tenant.businessId, count: validated.observations.length, outcome: "ok" });
     return { ok: true, reading: { observations: validated.observations, calls: [called.call] }, matches, labelMatches };
   }
+}
+
+/** One cache group per fixed prompt: the system prompt and schema are the same bytes for every store. */
+export function readerCacheKey(promptVersion: string): string {
+  return `reader:${promptVersion}`;
 }
 
 /** Photos Meta can't read keep their place in the burst but aren't sent. */

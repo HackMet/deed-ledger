@@ -1,10 +1,16 @@
 /**
  * One Muse Spark call behind the store's daily spend cap, shared by the reader and the planner:
- * reserve the most the call can cost, call, settle what it really cost. Logs carry IDs, codes and
- * latency only, under the caller's prefix ("perception", "planner"). Nothing here reads the output.
+ * reserve the most the call can cost, call, settle what it really cost. Logs carry IDs, codes,
+ * latency and token counts only, under the caller's prefix ("perception", "planner"). Nothing here
+ * reads the output.
+ *
+ * The call site's settings (reasoning effort, cache retention) go on the request as sent. They
+ * never change the reservation: `max_tokens` caps reasoning plus output at every effort, so the
+ * bound below holds whatever the effort, and a lower effort only settles lower.
  */
 import type { ModelCall } from "../domain/contract/observation";
-import type { Clock, Logger, ModelProvider, ModelRequest, SpendLedger, Tenant } from "./ports";
+import type { ModelCallSettings } from "./model-settings";
+import type { Clock, LogFields, Logger, ModelProvider, ModelRequest, ModelResult, SpendLedger, Tenant } from "./ports";
 
 /** Muse Spark 1.3 list prices in micro-dollars per token ($1.25 and $4.25 per million). */
 const INPUT_MICRO_USD_PER_TOKEN = 1.25;
@@ -30,6 +36,8 @@ export interface MeteredCallDeps {
   readonly clock: Clock;
   readonly log: Logger;
   readonly dailyCapMicroUsd?: number;
+  /** This call site's reasoning effort and cache retention; absent, Meta's defaults. */
+  readonly settings?: ModelCallSettings;
 }
 
 export type MeteredOutcome =
@@ -52,15 +60,16 @@ export async function meteredCall(
 ): Promise<MeteredOutcome> {
   const { provider, spend, clock, log } = deps;
   const prefix = meta.logPrefix;
+  const sent: ModelRequest = { ...request, ...deps.settings };
   // The reservation is the most this call can cost, so a call admitted near the cap can't pass it.
-  const bound = boundMicroUsd(request);
+  const bound = boundMicroUsd(sent);
   const reservation = await spend.reserve(tenant, clock.now(), bound, deps.dailyCapMicroUsd ?? DEFAULT_DAILY_CAP_MICRO_USD);
   if (!reservation) {
     log.warn(`${prefix}.spend_cap`, { businessId: tenant.businessId, reason: "spend_cap" });
     return { ok: false, reason: "spend_cap", calls: [] };
   }
 
-  const result = await provider.complete(request);
+  const result = await provider.complete(sent);
   const call: ModelCall = {
     model: provider.model,
     promptVersion: meta.promptVersion,
@@ -68,7 +77,13 @@ export async function meteredCall(
     inputTokens: result.inputTokens,
     outputTokens: result.outputTokens,
   };
-  log.info(`${prefix}.model_call`, { businessId: tenant.businessId, outcome: result.ok ? "ok" : result.error, latencyMs: result.latencyMs });
+  log.info(`${prefix}.model_call`, {
+    businessId: tenant.businessId,
+    outcome: result.ok ? "ok" : result.error,
+    latencyMs: result.latencyMs,
+    effort: sent.reasoningEffort ?? "default",
+    ...usageFields(result),
+  });
 
   // A refused request costs nothing; an unknown outcome keeps the bound; otherwise the usage.
   const actual = !result.ok && result.error === "rejected" ? 0 : (actualMicroUsd(result.inputTokens, result.outputTokens) ?? bound);
@@ -96,6 +111,16 @@ export function inputTokenBound(request: ModelRequest): number {
   let tokens = REQUEST_OVERHEAD_TOKENS + utf8Bytes(request.system) + utf8Bytes(request.schemaName) + utf8Bytes(JSON.stringify(request.schema));
   for (const part of request.user) tokens += part.type === "text" ? utf8Bytes(part.text) : TOKENS_PER_IMAGE;
   return tokens;
+}
+
+/** Token counts for the log line; a count the provider didn't report is left out. */
+function usageFields(result: ModelResult): LogFields {
+  const fields: { [K in "inputTokens" | "cachedTokens" | "outputTokens" | "reasoningTokens"]?: number } = {};
+  if (result.inputTokens !== null) fields.inputTokens = result.inputTokens;
+  if (typeof result.cachedTokens === "number") fields.cachedTokens = result.cachedTokens;
+  if (result.outputTokens !== null) fields.outputTokens = result.outputTokens;
+  if (typeof result.reasoningTokens === "number") fields.reasoningTokens = result.reasoningTokens;
+  return fields;
 }
 
 const encoder = new TextEncoder();
