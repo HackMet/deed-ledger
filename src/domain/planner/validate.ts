@@ -208,13 +208,21 @@ export interface StepInput {
   readonly withOptions: ReadonlySet<string>;
   /** The reading flagged something illegible: an unreadable question may name no line. */
   readonly illegible: boolean;
+  /**
+   * Lines whose "which one" (or unreadable) question was already asked MAX_WHICH_ASKS times: never
+   * asked again; the store confirms them, and the order moves on (eval E19, Nov 3).
+   */
+  readonly exhausted?: ReadonlySet<string>;
 }
+
+/** A "which one" or unreadable question is asked at most this many times about a line. */
+export const MAX_WHICH_ASKS = 2;
 
 /**
  * The question the order really needs, or the readback. A readback while something blocks it, or a
  * question whose lines don't need it, becomes the first missing question (or the readback).
  */
-export function settleStep({ order, missing, proposed, withOptions, illegible }: StepInput): Step {
+export function settleStep({ order, missing, proposed, withOptions, illegible, exhausted = new Set() }: StepInput): Step {
   const first = (): Step => {
     const need = missing[0];
     if (need === undefined) return { type: "readback" };
@@ -231,12 +239,12 @@ export function settleStep({ order, missing, proposed, withOptions, illegible }:
       return kept.length > 0 ? ask(kept) : first();
     }
     case "options": {
-      const kept = proposed.lineIds.filter((id) => line(id)?.productId === null && withOptions.has(id));
+      const kept = proposed.lineIds.filter((id) => line(id)?.productId === null && withOptions.has(id) && !exhausted.has(id));
       return kept.length > 0 ? ask(kept) : first();
     }
     case "unreadable": {
-      const kept = proposed.lineIds.filter((id) => line(id)?.productId === null);
-      return kept.length > 0 || illegible ? ask(kept) : first();
+      const kept = proposed.lineIds.filter((id) => line(id)?.productId === null && !exhausted.has(id));
+      return kept.length > 0 || (illegible && proposed.lineIds.length === 0) ? ask(kept) : first();
     }
     case "fulfillment":
     case "delivery_place":

@@ -154,6 +154,7 @@ export function contextTurn(
   return {
     store: { address_form: "vos", hours_set: context.store.hoursSet, delivery: context.store.delivery },
     customer: { name_known: customer.nameKnown, saved_place: customer.savedPlace },
+    ...(context.lastAnswered.length === 0 ? {} : { last_answer: context.lastAnswered }),
     order:
       order === null
         ? null

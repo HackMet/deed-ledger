@@ -19,7 +19,13 @@ Last updated: Mon Nov 2, 2026, night Honduras time, by Claude Code (latency lane
   (`test/planner-review.test.ts`, and the alias batch in `planner-flow.test.ts`); the planner's sentence is now one
   of a fixed list of phrases (`SAY_PHRASES`), never its own text. A text-only burst is read and planned in one call
   (D-52, on by default in planner mode): 10–15 s receipt→reply live, same outcomes as two calls; the 10 s bar is
-  still not met. Photo captions now reach the reader.
+  still not met. Photo captions now reach the reader. After the head-to-head eval (Nov 3): a "which one" answer
+  (number, price, brand) is read by code and the same list is never asked a third time (E19, E09b); a voice note
+  takes the same one call as typed words (E21); "me manda una" after a product question orders that product
+  (E11); the eval runner writes all.md and results.json again, keeps a failed scenario's transcript and retries a
+  dropped socket once (E22 passes). Re-run of E09b, E11, E19, E21, E22 on the planner path: 4 of 5 pass; E21's
+  recording is a store owner's sales report ("Vendí tres refrescos…"), read as no order whether spoken or typed,
+  so its expectation needs another recording or a decision.
 - **Planner-path latency (Nov 2, [handoff](handoffs/2026-11-02-latency.md)):** each call now sends its own reasoning
   effort and a prompt-cache key per instruction version. Planner-path defaults: reader `low`, planner `minimal`
   (`READER_REASONING_EFFORT`, `PLANNER_REASONING_EFFORT`; the classic reader keeps the model's own). On the fixed

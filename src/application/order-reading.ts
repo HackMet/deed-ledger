@@ -24,6 +24,7 @@ import {
 import type { BurstRead, BurstReader, BurstReaderInput } from "./order-handler";
 import type { MeteredCallDeps } from "./metered-call";
 import { readAndPlanText } from "./planner/one-call";
+import { answeredOption, withAnsweredOption } from "./planner/option-answers";
 import { needsPlanner, planTurn, type TurnPlannerDeps } from "./planner/plan-turn";
 import type { CatalogProduct } from "./perception/matching";
 import type { BurstReader as ModelBurstReader } from "./perception/reader";
@@ -122,13 +123,26 @@ async function readBurst(deps: OrderReadingDeps, { lease, messages, context }: B
   }
   const [perception, catalog] = await Promise.all([deps.source.perceptionContext(context), deps.source.catalog(tenant)]);
   const planner = deps.planner ?? null;
-  if (planner !== null && deps.oneCall != null && burst.every((message) => message.type === "text")) {
-    // One call reads and plans; a second only when the reader's other names find more.
+  // The planner path reads the engine's planner context once, for the planner and the option answer.
+  const plannerContext = planner === null ? null : await planner.source.plannerContext(context);
+  const settled = (read: BurstRead): BurstRead => {
+    // "2", "esa de 34", "mazola" answering the options last shown: picked by code whatever the model
+    // made of it, so the same list is never asked again over an answer (eval E19).
+    const pick = plannerContext === null ? null : answeredOption(plannerContext, burst);
+    if (pick === null || plannerContext === null) return read;
+    deps.log.info("planner.option_answered", { businessId: tenant.businessId, conversationId: lease.conversationId });
+    return { ...read, plan: withAnsweredOption(read.plan ?? null, pick, plannerContext) };
+  };
+  if (planner !== null && deps.oneCall != null && burst.every((message) => message.type === "text" || message.type === "transcript")) {
+    // Words only, typed or spoken: one call reads and plans; a second only when other names find more.
     await holdLeaseFor(deps, lease, 2 * READING_MAX_MS);
-    const fast = await readAndPlanText({ call: deps.oneCall, planner }, { context, messages: burst, perception, catalog });
+    const fast = await readAndPlanText(
+      { call: deps.oneCall, planner },
+      { context, messages: burst, perception, catalog, ...(plannerContext === null ? {} : { plannerContext }) },
+    );
     if (fast !== null) {
       const read: BurstRead = { reading: fast.reading, matches: [...fast.matches, ...(fast.planned?.matches ?? [])], pendingQuestion: perception.pendingQuestion };
-      return fast.planned === null ? read : { ...read, plan: fast.planned.plan };
+      return settled(fast.planned === null ? read : { ...read, plan: fast.planned.plan });
     }
   }
   await holdLeaseFor(deps, lease, READING_MAX_MS);
@@ -145,10 +159,11 @@ async function readBurst(deps: OrderReadingDeps, { lease, messages, context }: B
   if (picks.length > 0) deps.log.info("perception.label_picks_used", { businessId: tenant.businessId, count: picks.length });
   const reading = withSharedPin(outcome.reading, burst);
   const read: BurstRead = { reading, matches: [...outcome.matches, ...picks], pendingQuestion: perception.pendingQuestion };
-  if (planner === null || !needsPlanner(reading)) return read;
+  if (planner === null) return read;
+  if (!needsPlanner(reading)) return settled(read);
   await holdLeaseFor(deps, lease, READING_MAX_MS);
-  const planned = await planTurn(planner, { context, reading, matches: read.matches, messages: burst });
-  return planned === null ? read : { ...read, matches: [...read.matches, ...planned.matches], plan: planned.plan };
+  const planned = await planTurn(planner, { context, reading, matches: read.matches, messages: burst, ...(plannerContext === null ? {} : { plannerContext }) });
+  return settled(planned === null ? read : { ...read, matches: [...read.matches, ...planned.matches], plan: planned.plan });
 }
 
 /**
