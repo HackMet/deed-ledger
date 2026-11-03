@@ -10,12 +10,14 @@ import { createHmac, randomUUID } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { parseArgs, SIM, SIM_SECRETS, simChildEnv, wrangler } from "../scripts/lib/sim.mjs";
 import { readbackQuantity, refusedForTheOrder } from "./checks.mjs";
 
 const args = parseArgs(process.argv.slice(2));
 const CONFIG = "demo/wrangler.demo.jsonc";
-const STATE = ".wrangler/demo-state";
+// DEMO_STATE lets the adversary run (scripts/adversary.mjs) keep its own D1; ./demo.sh never sets it.
+const STATE = process.env.DEMO_STATE ?? ".wrangler/demo-state";
 const ENV_FILE = ".wrangler/demo/demo.env";
 const LOG_FILE = ".wrangler/demo/worker.log";
 const PORT = Number(process.env.DEMO_PORT ?? 8790);
@@ -292,8 +294,10 @@ async function say(phone, text) {
   return { reply: null, detail: `no reply within ${REPLY_TIMEOUT_MS / 1000}s` };
 }
 
-async function postWebhook(phone, text) {
-  const message = { from: phone, id: `wamid.DEMO-${randomUUID()}`, timestamp: String(Math.floor(Date.now() / 1000)), type: "text", text: { body: text } };
+/** `content` is a text, or a message body such as `{ type: "interactive", ... }` (the adversary's button taps). */
+export async function postWebhook(phone, content, phoneNumberId = SIM.phoneNumberId) {
+  const typed = typeof content === "string" ? { type: "text", text: { body: content } } : content;
+  const message = { from: phone, id: `wamid.DEMO-${randomUUID()}`, timestamp: String(Math.floor(Date.now() / 1000)), ...typed };
   const body = JSON.stringify({
     object: "whatsapp_business_account",
     entry: [
@@ -304,7 +308,7 @@ async function postWebhook(phone, text) {
             field: "messages",
             value: {
               messaging_product: "whatsapp",
-              metadata: { display_phone_number: "15550000000", phone_number_id: SIM.phoneNumberId },
+              metadata: { display_phone_number: "15550000000", phone_number_id: phoneNumberId },
               contacts: [{ profile: { name: "Cliente demo" }, wa_id: phone }],
               messages: [message],
             },
@@ -319,16 +323,16 @@ async function postWebhook(phone, text) {
 }
 
 const byPhone = (phone) => `o.conversation_id IN (SELECT c.id FROM conversations c JOIN customers u ON u.id = c.customer_id WHERE u.phone = '${phone}')`;
-const lastSeq = (phone) => query(`SELECT coalesce(max(o.seq), 0) AS seq FROM outbound_messages o WHERE ${byPhone(phone)}`)[0]?.seq ?? 0;
-const outboxSince = (phone, seq) => query(`SELECT o.seq, o.body_text FROM outbound_messages o WHERE ${byPhone(phone)} AND o.seq > ${Number(seq)} ORDER BY o.seq`);
+export const lastSeq = (phone) => query(`SELECT coalesce(max(o.seq), 0) AS seq FROM outbound_messages o WHERE ${byPhone(phone)}`)[0]?.seq ?? 0;
+export const outboxSince = (phone, seq) => query(`SELECT o.seq, o.body_text FROM outbound_messages o WHERE ${byPhone(phone)} AND o.seq > ${Number(seq)} ORDER BY o.seq`);
 
 /** What the customer was sent after a staff tap: waits a little, since a notice may follow the tap. */
-async function heardSince(phone, seq) {
+export async function heardSince(phone, seq) {
   await sleep(NOTICE_WAIT_MS);
   return outboxSince(phone, seq).map((r) => r.body_text);
 }
 
-function orderOf(phone) {
+export function orderOf(phone) {
   return query(`SELECT o.id, o.state, o.current_version FROM orders o WHERE o.customer_id IN
     (SELECT u.id FROM customers u WHERE u.phone = '${phone}') ORDER BY o.created_at_ms DESC LIMIT 1`)[0];
 }
@@ -336,7 +340,7 @@ function orderOf(phone) {
 // --- Staff: the console, like a person with a phone ----------------------------------------------
 
 /** Follows the owner's invite link with a cookie jar: GET shows the invite, POST uses it. */
-async function login() {
+export async function login() {
   const out = node("scripts/admin-invite.mjs", ["--phone-number-id", SIM.phoneNumberId, "--phone", OWNER.phone, "--role", "owner", "--base-url", BASE, "--persist-to", STATE]);
   const link = out.match(/https?:\/\/\S+\/console\/entrar\?codigo=\S+/)?.[0];
   if (link === undefined) throw new Error(`admin-invite printed no link:\n${out}`);
@@ -349,7 +353,7 @@ async function login() {
   return cookie;
 }
 
-function staffConsole(cookie) {
+export function staffConsole(cookie) {
   const get = async (path) => {
     const response = await fetch(`${BASE}${path}`, { headers: { cookie }, redirect: "manual" });
     if (response.status !== 200) throw new Error(`GET ${path} answered ${response.status}`);
@@ -369,6 +373,8 @@ function staffConsole(cookie) {
   };
   return {
     get,
+    /** A raw console post (the adversary's forged taps); returns the redirect location or the status. */
+    post,
     /** The version the order's Preparación page showed, or null if it wasn't on the list. */
     async version(orderId) {
       const version = (await orderPage(orderId))?.match(/name="version" value="(\d+)"/)?.[1];
@@ -376,7 +382,7 @@ function staffConsole(cookie) {
     },
     /** A tap on Preparación: the card's own button if it is on screen, else the tap a stale screen would send. */
     async tap(who, type, staleVersion) {
-      const phone = CUSTOMERS[who];
+      const phone = CUSTOMERS[who] ?? who;
       const order = orderOf(phone);
       const card = await orderPage(order?.id);
       const forms = card === null ? [] : [...card.matchAll(/<form[^>]*action="\/console\/acciones">([\s\S]*?)<\/form>/g)].map((m) => m[1]);
@@ -396,13 +402,13 @@ function staffConsole(cookie) {
       return { redirect, heard: await heardSince(phone, seq), detail: `${onScreen} → ${redirect}` };
     },
     /** A dispatch or delivered tap on the order's Pedidos page. */
-    async step(who, paso) {
-      const phone = CUSTOMERS[who];
+    async step(who, paso, courierPhone = COURIER.phone) {
+      const phone = CUSTOMERS[who] ?? who;
       const order = orderOf(phone);
       const page = await get(`/console/pedidos/${encodeURIComponent(order.id)}`);
       const formHtml = page.match(new RegExp(`<form[^>]*>(?:(?!</form>)[\\s\\S])*name="paso" value="${paso}"[\\s\\S]*?</form>`))?.[0];
       const version = formHtml?.match(/name="version" value="(\d+)"/)?.[1] ?? String(order.current_version);
-      const courier = query(`SELECT u.id FROM users u WHERE u.phone = '${COURIER.phone}'`)[0]?.id;
+      const courier = query(`SELECT u.id FROM users u WHERE u.phone = '${courierPhone}'`)[0]?.id;
       // The session's CSRF value is on every page with a form; a trail with no buttons has none.
       const csrf = csrfOf(page) || csrfOf(await get("/console/anotar"));
       const fields = { csrf, paso, version, ...(paso === "despachar" ? { repartidor: courier } : {}) };
@@ -412,7 +418,7 @@ function staffConsole(cookie) {
     },
     /** The owner answers the open change request on the order's Pedidos page, with a reason. */
     async review(who, decision, motivo) {
-      const phone = CUSTOMERS[who];
+      const phone = CUSTOMERS[who] ?? who;
       const order = orderOf(phone);
       const page = await get(`/console/pedidos/${encodeURIComponent(order.id)}`);
       const cambio = page.match(/name="cambio" value="([^"]+)"/)?.[1];
@@ -428,11 +434,11 @@ const form = () => ({ "content-type": "application/x-www-form-urlencoded", origi
 
 // --- Records ----------------------------------------------------------------------------------
 
-function factCounts() {
+export function factCounts() {
   return Object.fromEntries(query(`SELECT kind, count(*) AS n FROM facts GROUP BY kind ORDER BY kind`).map((r) => [r.kind, r.n]));
 }
 
-function diff(before, after) {
+export function diff(before, after) {
   const out = {};
   for (const kind of new Set([...Object.keys(before), ...Object.keys(after)])) {
     const n = (after[kind] ?? 0) - (before[kind] ?? 0);
@@ -442,12 +448,12 @@ function diff(before, after) {
 }
 
 /** The deltas are exactly these: no other kind moved. */
-function sameDelta(delta, expected) {
+export function sameDelta(delta, expected) {
   const kinds = new Set([...Object.keys(delta), ...Object.keys(expected)]);
   return [...kinds].every((k) => (delta[k] ?? 0) === (expected[k] ?? 0));
 }
 
-function query(sql) {
+export function query(sql) {
   // The Worker writes the same SQLite file: a busy read waits and tries again, a few times.
   for (let attempt = 1; ; attempt++) {
     try {
@@ -560,7 +566,8 @@ function portFree(port) {
   });
 }
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const oneLine = (text) => text.replace(/\s*\n\s*/g, " / ");
 
-await main();
+// Imported by scripts/adversary.mjs, which uses the helpers above and never runs main().
+if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) await main();
