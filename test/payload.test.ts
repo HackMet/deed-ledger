@@ -101,4 +101,17 @@ describe("WhatsApp webhook payloads", () => {
     delete (noMetadata.entry[0]!.changes[0]!.value as { metadata?: unknown }).metadata;
     expect(parseWebhookPayload(noMetadata)).toEqual({ events: [], skipped: 1 });
   });
+
+  it("keeps the store's display number from the metadata, digits only, and nothing that isn't one", () => {
+    const shown = (value: unknown) => {
+      const body = webhook(PNID, { messages: [textMessage({ ...base, body: "Hola" })] });
+      (body.entry[0]!.changes[0]!.value.metadata as Record<string, unknown>).display_phone_number = value;
+      return parseWebhookPayload(body)!.events[0];
+    };
+    expect(shown("15550783881")).toMatchObject({ displayPhoneNumber: "15550783881" });
+    expect(shown("+1 555-078-3881")).toMatchObject({ displayPhoneNumber: "15550783881" });
+    expect(shown("llamanos")).toMatchObject({ displayPhoneNumber: null });
+    expect(shown("123")).toMatchObject({ displayPhoneNumber: null });
+    expect(shown(undefined)).toMatchObject({ displayPhoneNumber: null });
+  });
 });

@@ -47,6 +47,7 @@ export async function acceptEvents(deps: Deps, events: readonly ChannelEvent[]):
       // Anyone writing to the store's number is its customer: there is no unknown-sender path.
       const ring = await recordCustomerMessage(deps, tenant, channel, event);
       if (ring !== null) conversations.set(ring.conversationId, ring);
+      channels.set(event.phoneNumberId, await rememberDisplayNumber(deps, channel, event));
     } catch (error) {
       if (!(error instanceof PermanentWriteError)) throw error;
       deps.log.error("intake_rejected_permanently", {
@@ -58,6 +59,23 @@ export async function acceptEvents(deps: Deps, events: readonly ChannelEvent[]):
   }
 
   return { conversations: [...conversations.values()], notices };
+}
+
+/**
+ * Keeps the number customers see (from the signed webhook) on the channel account, so the console
+ * can offer "Probar como cliente" without anyone typing it in. Written only when it changes; best
+ * effort: a failure is logged and never holds up the message, which is already saved.
+ */
+async function rememberDisplayNumber(deps: Deps, channel: ChannelAccount, event: InboundMessageEvent): Promise<ChannelAccount> {
+  const shown = event.displayPhoneNumber ?? null;
+  if (shown === null || shown === (channel.displayPhoneNumber ?? null)) return channel;
+  try {
+    await deps.tenancy.rememberDisplayNumber(channel, shown);
+    return { ...channel, displayPhoneNumber: shown };
+  } catch (error) {
+    deps.log.warn("display_number_not_saved", { businessId: channel.businessId, channelAccountId: channel.id, reason: describeError(error) });
+    return channel;
+  }
 }
 
 /** Returns the conversation to ring, only when the message is new (the sweep recovers lost rings). */
