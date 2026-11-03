@@ -971,6 +971,14 @@ export interface CustomerControlRepository {
    * Only for a customer whose deletion was requested and not finished. False when there was none.
    */
   purge(tenant: Tenant, customerId: string, senderHash: string | null, nowMs: number): Promise<boolean>;
+  /** Test commands' lock: the customer's phone is an active member's (owner or staff) of this store. */
+  isStoreMember(tenant: Tenant, customerId: string): Promise<boolean>;
+  /**
+   * Test command /new: the purge's erasure for this customer's messages up to `uptoReceivedAtMs`,
+   * and the customer's own marks (name, introduced, ALTO, deletion request) cleared. The phone
+   * stays, so the reply reaches them and their next message is a first message.
+   */
+  resetCommit(tenant: Tenant, customerId: string, uptoReceivedAtMs: number, nowMs: number): Commit;
   /**
    * Customers purged at or after `sinceMs`, across stores: the sweep erases their media prefixes
    * again, for an upload that was in flight during the purge.

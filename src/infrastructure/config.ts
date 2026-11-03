@@ -69,6 +69,11 @@ export interface Config {
   readonly fastTextModel: ModelCallSettings;
   /** The Worker's public origin (https://…), for links customers get. Blank: links are left out. */
   readonly publicBaseUrl: string;
+  /**
+   * WhatsApp test commands (/new, /help) for the store's own members: TEST_COMMANDS "1". Only for
+   * testing on a number whose store has no real customers, unless the owner wants it.
+   */
+  readonly testCommands: boolean;
 }
 
 export function readConfig(env: Env): Config {
@@ -90,6 +95,7 @@ export function readConfig(env: Env): Config {
     fastText: conversation === "planner" && fastText(env.PLANNER_FAST_TEXT),
     fastTextModel: modelSettings(env.FAST_TEXT_REASONING_EFFORT, DEFAULT_FAST_TEXT_EFFORT, env.PROMPT_CACHE_RETENTION),
     publicBaseUrl: String(env.PUBLIC_BASE_URL ?? "").replace(/\/+$/u, ""),
+    testCommands: String(env.TEST_COMMANDS ?? "") === "1",
   };
 }
 
