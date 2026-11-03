@@ -36,9 +36,11 @@ export interface TrailEntry {
   readonly factId: string;
   readonly kind: TrailKind;
   readonly recordedAtMs: number;
+  /** The operation key the fact was recorded under: one action on one version, so the Deed can name it. */
+  readonly operationKey: string;
   readonly actor: string;
   readonly evidence: readonly { readonly kind: string; readonly refId: string }[];
-  readonly closedBy: { readonly factId: string; readonly reason: "cancelled" | "superseded" } | null;
+  readonly closedBy: { readonly factId: string; readonly reason: "cancelled" | "superseded"; readonly atMs: number } | null;
   readonly dependsOn: readonly string[];
   readonly blocks: readonly string[];
   /** change_review only: the answer and its reason, as the member wrote it. */
@@ -75,6 +77,7 @@ interface FactRow {
   id: string;
   order_id: string;
   kind: TrailKind;
+  operation_key: string;
   body_json: string;
   recorded_at_ms: number;
   depends_json: string;
@@ -93,7 +96,7 @@ const isOrderFact = (row: FactRow): row is FactRow & { kind: OrderFact["kind"] }
  */
 const FACTS_SQL = `WITH RECURSIVE
   mine AS (
-    SELECT id, kind, body_json, recorded_at_ms, json_extract(body_json, '$.orderId') AS order_id, rowid AS seq FROM facts
+    SELECT id, kind, body_json, recorded_at_ms, operation_key, json_extract(body_json, '$.orderId') AS order_id, rowid AS seq FROM facts
     WHERE business_id = ?1 AND kind IN ${ORDER_KINDS} AND (?2 IS NULL OR json_extract(body_json, '$.orderId') = ?2)
   ),
   anc(root, id) AS (
@@ -101,7 +104,7 @@ const FACTS_SQL = `WITH RECURSIVE
     UNION
     SELECT a.root, d.depends_on_fact_id FROM fact_dependencies d JOIN anc a ON d.fact_id = a.id WHERE d.business_id = ?1
   )
-SELECT m.id, m.order_id, m.kind, m.body_json, m.recorded_at_ms,
+SELECT m.id, m.order_id, m.kind, m.body_json, m.recorded_at_ms, m.operation_key,
   (SELECT json_group_array(d.depends_on_fact_id) FROM fact_dependencies d WHERE d.business_id = ?1 AND d.fact_id = m.id) AS depends_json,
   NOT EXISTS (
     SELECT 1 FROM fact_closures c JOIN anc a ON c.fact_id = a.id AND a.root = m.id
@@ -263,9 +266,9 @@ export class D1OrderTrail {
         .bind(tenant.businessId)
         .all<{ fact_id: string; kind: string; ref_id: string }>(),
       this.db
-        .prepare(`SELECT fact_id, closed_by_fact_id, reason FROM fact_closures WHERE business_id = ?1`)
+        .prepare(`SELECT fact_id, closed_by_fact_id, reason, closed_at_ms FROM fact_closures WHERE business_id = ?1`)
         .bind(tenant.businessId)
-        .all<{ fact_id: string; closed_by_fact_id: string; reason: "cancelled" | "superseded" }>(),
+        .all<{ fact_id: string; closed_by_fact_id: string; reason: "cancelled" | "superseded"; closed_at_ms: number }>(),
       this.db
         .prepare(`SELECT fact_id, depends_on_fact_id FROM fact_dependencies WHERE business_id = ?1`)
         .bind(tenant.businessId)
@@ -283,9 +286,10 @@ export class D1OrderTrail {
         factId: row.id,
         kind: row.kind,
         recordedAtMs: row.recorded_at_ms,
+        operationKey: row.operation_key,
         actor: proof.some((e) => e.kind === "member") ? "Personal" : "Cliente",
         evidence: proof,
-        closedBy: closure === undefined ? null : { factId: closure.closed_by_fact_id, reason: closure.reason },
+        closedBy: closure === undefined ? null : { factId: closure.closed_by_fact_id, reason: closure.reason, atMs: closure.closed_at_ms },
         dependsOn: ids.filter((id) => edges.results.some((e) => e.fact_id === row.id && e.depends_on_fact_id === id)),
         blocks: ids.filter((id) => edges.results.some((e) => e.depends_on_fact_id === row.id && e.fact_id === id)),
         review: row.kind === "change_review" ? reviewOf(row) : null,

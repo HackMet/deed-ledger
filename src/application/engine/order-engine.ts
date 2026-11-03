@@ -32,7 +32,8 @@ import { isPrice, priceKey } from "../../domain/price";
 import type { EvidenceRef, FactCommit } from "../../domain/facts";
 import type { CustomerContext, Engine, EngineResult, LineMatch, MemberContext } from "../engine";
 import type { CatalogProduct } from "../perception/matching";
-import type { Commit, IdSource, Tenant } from "../ports";
+import { DEED_CLAIM_KINDS, type DeedCheckSource, type DeedChecks } from "./deed-checks";
+import type { Clock, Commit, IdSource, Logger, Tenant } from "../ports";
 
 export interface StoredOrder {
   /** The current version, as the customer would read it back. */
@@ -244,6 +245,13 @@ export function staffKey(action: StaffAction & OrderRef): string {
   return action.type === "mark_line" ? `${base}:${action.lineId}` : base;
 }
 
+/** The key a console action must carry as the engine derives it; null for an action that derives none. */
+const consoleKeyOf = (member: MemberContext, action: ConsoleAction): string | null => {
+  if (action.type === "review_change") return typeof action.changeRequestId === "string" ? reviewKey(action.changeRequestId) : null;
+  if (action.type === "propose_price" || action.type === "confirm_price") return priceKey(action.productId, member.nowMs, action.type);
+  return isStaffAction(action) ? staffKey(action) : null;
+};
+
 /** 1500 -> "1.5": the canonical decimal for a quantity in thousandths. */
 export function fromThousandths(milli: number): string {
   const whole = Math.floor(milli / 1000);
@@ -259,10 +267,60 @@ function canonicalQuantity(quantity: string | null): string | null {
 
 const result = (outcome: EngineOutcome, commits: readonly Commit[] = []): EngineResult => ({ outcome, notices: [], commits });
 
+/** The Deed's row for a refusal's reason (K20): the table's `source`, and the reason the screen names. */
+const DEED_SOURCE: Readonly<Record<"duplicate" | "stale_version" | "invalid_state" | "not_allowed" | "not_found", DeedCheckSource>> = {
+  duplicate: "duplicate_key",
+  stale_version: "stale_version",
+  invalid_state: "gate",
+  not_allowed: "not_allowed",
+  not_found: "not_found",
+};
+
+/** The claim's type when the contract names it, `other` otherwise; never the claim's text. */
+const claimKindOf = (claim: Claim): string =>
+  (typeof claim === "object" && claim !== null ? DEED_CLAIM_KINDS.find((kind) => kind === claim.type) : undefined) ?? "other";
+
+/** The order a claim names, when it names one of a sane length. Whether it resolves is checked where it is written. */
+const orderIdOfClaim = (claim: Claim): string | null =>
+  typeof claim === "object" && claim !== null && "orderId" in claim && typeof claim.orderId === "string" && claim.orderId.length <= 64
+    ? claim.orderId
+    : null;
+
+/** A key as the caller sent it, kept only when it is the key the engine derives for that action (K20). */
+const derivedOnly = (key: string, derived: string | null): string | null => (key === derived ? key : null);
+
+/** Whether a version a key embeds is one this order has had, so a typed number never reaches a row (B2). */
+const versionResolves = (version: number, current: number): boolean => Number.isSafeInteger(version) && version >= 1 && version <= current;
+
 export class OrderEngine implements Engine {
-  constructor(private readonly deps: { readonly store: OrderStore; readonly ids: IdSource; readonly ledger: OrderFactLedger }) {}
+  /**
+   * `checks` is the Deed's record (K20): optional, written after each decision and never in its batch.
+   * `clock` stamps the claim checks, which carry no time of their own; `log` gets a failed record's IDs.
+   */
+  constructor(
+    private readonly deps: {
+      readonly store: OrderStore;
+      readonly ids: IdSource;
+      readonly ledger: OrderFactLedger;
+      readonly checks?: DeedChecks;
+      readonly clock?: Clock;
+      readonly log?: Logger;
+    },
+  ) {}
 
   async onBurst(context: CustomerContext, reading: BurstReading, matches: readonly LineMatch[]): Promise<EngineResult> {
+    const decided = await this.decideBurst(context, reading, matches);
+    // The burst's key holds the job's own id, set by the queue and never typed, so it resolves by construction.
+    await this.recordRefusal(context, decided.outcome, {
+      operationKey: burstKey(context.jobId),
+      orderId: null,
+      atMs: context.nowMs,
+      resolved: async () => true,
+    });
+    return decided;
+  }
+
+  private async decideBurst(context: CustomerContext, reading: BurstReading, matches: readonly LineMatch[]): Promise<EngineResult> {
     const { store } = this.deps;
     const operationKey = burstKey(context.jobId);
     const first = await store.firstOutcome(context, operationKey);
@@ -355,6 +413,26 @@ export class OrderEngine implements Engine {
   }
 
   async onCustomerAction(context: CustomerContext, envelope: ActionEnvelope<CustomerAction>): Promise<EngineResult> {
+    const decided = await this.decideCustomerAction(context, envelope);
+    await this.recordRefusal(context, decided.outcome, {
+      operationKey: derivedOnly(envelope.operationKey, actionKey(envelope.action)),
+      orderId: "orderId" in envelope.action ? envelope.action.orderId : null,
+      atMs: context.nowMs,
+      resolved: () => this.customerKeyResolves(context, envelope.action),
+    });
+    return decided;
+  }
+
+  /** Whether the order, the version and the line label a customer's key embeds all resolve here (B1). */
+  private async customerKeyResolves(context: CustomerContext, action: CustomerAction): Promise<boolean> {
+    if (action.type !== "confirm_order" && action.type !== "cancel_order" && action.type !== "remove_line") return false;
+    const stored = await this.deps.store.customerOrder(context, context.customerId, action.orderId);
+    if (stored === null || !versionResolves(action.version, stored.view.version)) return false;
+    // A label points into the change waiting for review when there is one, as the removal does.
+    return action.type !== "remove_line" || indexOfLabel((stored.openRequest ?? stored.view).lines.length, action.lineId) !== null;
+  }
+
+  private async decideCustomerAction(context: CustomerContext, envelope: ActionEnvelope<CustomerAction>): Promise<EngineResult> {
     const { store } = this.deps;
     // The actor comes from the conversation; an envelope for anyone else is refused.
     if (envelope.actor.type !== "customer" || envelope.actor.customerId !== context.customerId) {
@@ -417,6 +495,32 @@ export class OrderEngine implements Engine {
   }
 
   async onConsoleAction(member: MemberContext, envelope: ActionEnvelope<ConsoleAction>): Promise<EngineResult> {
+    const decided = await this.decideConsoleAction(member, envelope);
+    await this.recordRefusal(member, decided.outcome, {
+      operationKey: derivedOnly(envelope.operationKey, consoleKeyOf(member, envelope.action)),
+      orderId: "orderId" in envelope.action ? envelope.action.orderId : null,
+      atMs: member.nowMs,
+      resolved: () => this.consoleKeyResolves(member, envelope.action),
+    });
+    return decided;
+  }
+
+  /** Whether the request, product, order, version or line label a staff key embeds all resolve here (B1). */
+  private async consoleKeyResolves(member: MemberContext, action: ConsoleAction): Promise<boolean> {
+    const { store } = this.deps;
+    if (action.type === "review_change") {
+      return typeof action.changeRequestId === "string" && (await store.changeRequest(member, action.changeRequestId)) !== null;
+    }
+    if (action.type === "propose_price" || action.type === "confirm_price") {
+      return typeof action.productId === "string" && (await store.productNames(member, [action.productId])).size > 0;
+    }
+    if (!isStaffAction(action)) return false;
+    const stored = await store.order(member, action.orderId);
+    if (stored === null || !versionResolves(action.version, stored.view.version)) return false;
+    return action.type !== "mark_line" || indexOfLabel(stored.view.lines.length, action.lineId) !== null;
+  }
+
+  private async decideConsoleAction(member: MemberContext, envelope: ActionEnvelope<ConsoleAction>): Promise<EngineResult> {
     const { store } = this.deps;
     const refused = (reason: "not_allowed" | "not_found" | "stale_version" | "invalid_state", order: OrderView | null) =>
       result({ type: "rejected", reason, order });
@@ -548,7 +652,105 @@ export class OrderEngine implements Engine {
   }
 
   async verifyClaims(tenant: Tenant, claims: readonly Claim[]): Promise<readonly boolean[]> {
-    return Promise.all(claims.map((claim) => this.verifyClaim(tenant, claim)));
+    const answers = await Promise.all(claims.map((claim) => this.verifyClaim(tenant, claim)));
+    await this.recordClaims(tenant, claims, answers);
+    return answers;
+  }
+
+  /**
+   * The Deed's record of a refusal or a duplicate (K20), best effort: after the decision, never in its
+   * batch, and a failed write is logged by IDs and changes nothing. The cancel that decided a refusal
+   * on a cancelled order is read only here, and only for that case.
+   */
+  private async recordRefusal(
+    tenant: Tenant,
+    outcome: EngineOutcome,
+    meta: {
+      readonly operationKey: string | null;
+      readonly orderId: string | null;
+      readonly atMs: number;
+      /** Whether every id and version the key embeds resolved in this store (B1). */
+      readonly resolved: () => Promise<boolean>;
+    },
+  ): Promise<void> {
+    const { checks, ids, log } = this.deps;
+    if (checks === undefined || (outcome.type !== "rejected" && outcome.type !== "duplicate")) return;
+    const reason = outcome.type === "rejected" ? outcome.reason : "duplicate";
+    // A refusal names the order it read, and none when the id didn't resolve (not_found: the order shown
+    // there is the customer's own open one, not the id they sent). A duplicate's order was resolved first.
+    const orderId =
+      outcome.type === "duplicate" ? meta.orderId : outcome.reason === "not_found" ? null : (outcome.order?.orderId ?? null);
+    try {
+      // A key is written only with the order it names when that order resolved here, and only when every id
+      // it embeds (a request, a product, a line label, the order) and its version resolve too. Otherwise a
+      // typed name would reach the append-only row (B1). A duplicate's key was saved, so its ids did resolve.
+      const operationKey =
+        meta.operationKey !== null &&
+        (meta.orderId === null || orderId !== null) &&
+        (outcome.type === "duplicate" || (await meta.resolved()))
+          ? meta.operationKey
+          : null;
+      const decidingFactId =
+        outcome.type === "rejected" && outcome.reason === "invalid_state" && outcome.order?.state === "cancelado" && orderId !== null
+          ? await this.cancelFactOf(tenant, orderId)
+          : null;
+      await checks.record(tenant, [
+        {
+          id: ids.newId(),
+          atMs: meta.atMs,
+          source: DEED_SOURCE[reason],
+          subjectFactId: null,
+          orderId,
+          claimKind: null,
+          result: "fail",
+          reasonCode: reason,
+          decidingFactId,
+          operationKey,
+        },
+      ]);
+    } catch {
+      log?.warn("deed_check_not_recorded", { businessId: tenant.businessId, reason, count: 1 });
+    }
+  }
+
+  /** The order id when it names an order of this store; null otherwise (K20). */
+  private async resolvedOrderId(tenant: Tenant, orderId: string | null): Promise<string | null> {
+    if (orderId === null) return null;
+    return (await this.deps.store.order(tenant, orderId)) === null ? null : orderId;
+  }
+
+  /** The live cancel of an order, the fact that closed its confirm; null when the order has none. */
+  private async cancelFactOf(tenant: Tenant, orderId: string): Promise<string | null> {
+    const facts = await this.deps.store.orderFacts(tenant, orderId);
+    return facts.find((fact) => fact.kind === "order_cancel" && fact.live)?.id ?? null;
+  }
+
+  /** One row per claim, pass or fail, recorded after the answers are known (K20); best effort like the refusals. */
+  private async recordClaims(tenant: Tenant, claims: readonly Claim[], answers: readonly boolean[]): Promise<void> {
+    const { checks, ids, clock, log } = this.deps;
+    if (checks === undefined || claims.length === 0) return;
+    try {
+      const atMs = clock?.now() ?? Date.now();
+      // A claim's order is written only when it resolves in this store; its text never reaches the row as an id.
+      const orderIds = await Promise.all(claims.map((claim) => this.resolvedOrderId(tenant, orderIdOfClaim(claim))));
+      await checks.record(
+        tenant,
+        claims.map((claim, index) => ({
+          id: ids.newId(),
+          atMs,
+          source: "verify_claims",
+          subjectFactId: null,
+          orderId: orderIds[index] ?? null,
+          claimKind: claimKindOf(claim),
+          result: answers[index] === true ? "pass" : "fail",
+          reasonCode: answers[index] === true ? null : "not_backed",
+          decidingFactId: null,
+          operationKey: null,
+        })),
+      );
+    } catch {
+      log?.warn("deed_check_not_recorded", { businessId: tenant.businessId, reason: "verify_claims", count: claims.length });
+    }
   }
 
   async preparationList(tenant: Tenant): Promise<readonly PreparationCard[]> {

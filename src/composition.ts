@@ -41,6 +41,8 @@ import { D1ConsoleReceipts } from "./infrastructure/d1/console-receipts";
 import { D1CustomerControlRepository } from "./infrastructure/d1/customer-control-repository";
 import { D1CustomerPlaceRepository } from "./infrastructure/d1/customer-place-repository";
 import { D1CustomerRepository } from "./infrastructure/d1/customer-repository";
+import type { DeedChecks } from "./application/engine/deed-checks";
+import { D1DeedChecks } from "./infrastructure/d1/deed-checks";
 import { D1FactLedger, D1FactPrecheck } from "./infrastructure/d1/fact-ledger";
 import { D1IntakeRepository } from "./infrastructure/d1/intake-repository";
 import { D1JobRepository } from "./infrastructure/d1/job-repository";
@@ -70,6 +72,8 @@ import { WhatsAppMediaSource } from "./integrations/whatsapp/media";
 import { receiptRecordings } from "../test/fixtures/receipts";
 
 export interface Runtime {
+  /** The Deed's record of checks (K20): the engine that writes it is wired where it runs (demo/worker.ts). */
+  readonly deedChecks: DeedChecks;
   readonly config: Config;
   /** The simulator's media uploads (dev console with no WhatsApp token only); null everywhere else. */
   readonly simMedia: SimMediaSource | null;
@@ -122,6 +126,10 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
   // the dev console on and no WhatsApp token, so a deployed Worker never serves uploads.
   const simMedia = config.devConsole && config.whatsappToken === "" ? new SimMediaSource(env.MEDIA) : null;
   const ids = overrides.ids ?? randomIds;
+  const clock = overrides.clock ?? systemClock;
+  const log = overrides.log ?? consoleLogger;
+  // The Deed's record of checks (K20): the order engine writes every claim check and refusal to it.
+  const deedChecks = new D1DeedChecks(db);
   // DEED_ENGINE: the real order engine on D1 (OrderEngine), which Angel's reader reads through. DEV_CONSOLE:
   // in memory, demo catalog, no login, local simulator only. PRETEND_ENGINE: state in D1, shared by every
   // isolate, each store's own products and hours (#40), console behind login. Both (the simulator's
@@ -129,14 +137,12 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
   const engine =
     overrides.engine ??
     (config.deedEngine
-      ? new OrderEngine({ store: new D1OrderStore(db), ids, ledger: new D1FactLedger(db) })
+      ? new OrderEngine({ store: new D1OrderStore(db), ids, ledger: new D1FactLedger(db), checks: deedChecks, clock, log })
       : config.pretendEngine
         ? new D1PretendEngine(db, { setup: storeSetup })
         : config.devConsole
           ? devEngine
           : null);
-  const clock = overrides.clock ?? systemClock;
-  const log = overrides.log ?? consoleLogger;
   const jobs = new D1JobRepository(db);
   const customers = new D1CustomerRepository(db);
   const customerControls = new D1CustomerControlRepository(db);
@@ -196,6 +202,7 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
     config,
     simMedia,
     engine,
+    deedChecks,
     catalog: new CatalogService({ catalog: new D1CatalogStore(db), ledger, runner, ids, engine }),
     business: { service: new BusinessService({ store: businessInfo, ledger, runner, ids }), context: businessInfo },
     receipts: new ReceiptService({
