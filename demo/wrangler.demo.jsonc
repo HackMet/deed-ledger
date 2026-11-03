@@ -1,0 +1,33 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  // The demo Worker (K10): the same bindings as wrangler.jsonc, with the real engine and recorded
+  // perception (demo/worker.ts). Local only: `./demo.sh` runs it; never deployed.
+  "name": "store-assistant-demo",
+  "main": "worker.ts",
+  "compatibility_date": "2026-10-23",
+
+  "vars": {
+    "WHATSAPP_GRAPH_API_VERSION": "v26.0",
+    // Blank: the console needs a real login and runs the engine in runtime.engine, not the pretend one.
+    "DEV_CONSOLE": "",
+    // The runner fills this from demo/recordings/*.json (base64 of a JSON array).
+    "DEMO_RECORDINGS": ""
+  },
+
+  "secrets": {
+    "required": ["WHATSAPP_APP_SECRET", "WHATSAPP_VERIFY_TOKEN", "WHATSAPP_TOKEN", "SENDER_HASH_SALT", "LINK_SIGNING_SECRET"]
+  },
+
+  // Same database name as wrangler.jsonc, so the admin scripts and this Worker share one local D1
+  // under the same --persist-to.
+  "d1_databases": [{ "binding": "DB", "database_name": "store-assistant", "migrations_dir": "../migrations" }],
+
+  "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "store-assistant-media" }],
+
+  "queues": {
+    "producers": [{ "binding": "JOBS", "queue": "store-assistant-jobs" }],
+    "consumers": [{ "queue": "store-assistant-jobs", "max_batch_size": 10, "max_batch_timeout": 1, "max_retries": 5 }]
+  },
+
+  "triggers": { "crons": ["* * * * *"] }
+}
