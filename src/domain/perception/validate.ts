@@ -246,7 +246,10 @@ class ObservationReader {
 
   private itemLine(wire: WireLine): { line: ItemLine; bad: boolean } | null {
     const evidence = this.evidence(wire.evidence);
-    if (!evidence) return null;
+    // A named line on a photo whose box is unusable (cut by the photo's edge, off by a hair) is
+    // kept, pointed at the whole photo, and asked about: a written item is never dropped silently.
+    const placed = evidence ?? this.wholePhoto(wire);
+    if (!placed) return null;
     const quantity = decimal(wire.quantity);
     return {
       line: {
@@ -255,10 +258,19 @@ class ObservationReader {
         quantity: quantity.value,
         unit: text(wire.unit),
         restrictedCategory: wire.restricted,
-        evidence,
+        evidence: placed,
       },
-      bad: quantity.bad,
+      bad: quantity.bad || evidence === null,
     };
+  }
+
+  private wholePhoto(wire: WireLine): Evidence | null {
+    const index = wire.evidence.message;
+    const message = index === null || !Number.isInteger(index) ? undefined : this.messages[index];
+    const named = wire.name.trim() !== "" && wire.text.trim() !== "";
+    return named && message?.type === "image" && message.bytes !== null && index !== null
+      ? { source: "image", message: index, box: [0, 0, 1, 1] }
+      : null;
   }
 
   private pricedLine(wire: WirePricedLine): { line: PricedLine; bad: boolean } | null {
