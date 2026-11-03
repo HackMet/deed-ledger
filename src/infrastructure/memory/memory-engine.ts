@@ -64,7 +64,8 @@ import { MAX_OPTIONS, type ProductOption } from "../../domain/contract/outcomes"
 import type { DecimalString } from "../../domain/contract/numbers";
 import type { AskKind, SoldBy, TurnPlan } from "../../domain/planner/types";
 import { orderBasis } from "../../domain/planner/frame";
-import { isWeightUnit, settleStep } from "../../domain/planner/validate";
+import type { ShownOption } from "../../domain/planner/option-answer";
+import { isWeightUnit, MAX_WHICH_ASKS, settleStep } from "../../domain/planner/validate";
 import { missingFor } from "../../domain/readiness";
 import type { LastAsk, PlannerContext, PlannerSource } from "../../application/planner/source";
 
@@ -124,6 +125,8 @@ interface PlannedDraft {
   picked?: string[];
   /** Line ID → other names the reader proposed for the item, for retrieval only. */
   otherNames?: Record<string, readonly string[]>;
+  /** Line ID → how many times its "which one" (or unreadable) question was asked. */
+  whichAsks?: Record<string, number>;
 }
 
 /**
@@ -153,6 +156,8 @@ interface StoreState {
   readonly held: Map<string, HeldConfirmation>;
   /** The next order's number in this store (its code). */
   readonly counter: { next: number };
+  /** Customer -> the products the last answer was about, until their next burst ("me manda una"). */
+  readonly lastAnswer: Map<string, readonly string[]>;
 }
 
 /** A store's first order number: three digits read well out loud. */
@@ -171,6 +176,8 @@ export interface PretendStoreSnapshot {
   readonly held?: readonly (readonly [string, HeldConfirmation])[];
   /** Absent in snapshots saved before order numbers (Nov 2). */
   readonly nextOrderNumber?: number;
+  /** Absent unless a customer's last burst got an answer (Nov 3). */
+  readonly lastAnswer?: readonly (readonly [string, readonly string[]])[];
 }
 
 interface PendingQuestion {
@@ -241,6 +248,10 @@ export class MemoryEngine implements Engine, OrderReadingSource, PlannerSource {
     state.operations.set(key, outcome);
     if (outcome.type === "ask") state.lastQuestion.set(context.customerId, outcome.question);
     else state.lastQuestion.delete(context.customerId);
+    // What this burst's answer was about, so "me manda una" next can point at it (eval E11).
+    const asked = [outcome, answered].flatMap((said) => (said?.type === "answer" ? said.facts.map((fact) => fact.asked) : []));
+    if (asked.length > 0) state.lastAnswer.set(context.customerId, asked);
+    else state.lastAnswer.delete(context.customerId);
     return answered === null ? result(outcome) : { ...result(outcome), answered };
   }
 
@@ -254,6 +265,7 @@ export class MemoryEngine implements Engine, OrderReadingSource, PlannerSource {
           : { lines: open.order.lines.map((line, n) => ({ ref: `L${n + 1}`, text: `${line.productName ?? line.text}: ${line.quantity ?? "?"}` })) },
       pendingQuestion: state.lastQuestion.get(context.customerId) ?? null,
       ...this.pendingOptionsOf(state, open),
+      ...(state.lastAnswer.has(context.customerId) ? { lastAnswered: state.lastAnswer.get(context.customerId)! } : {}),
     };
   }
 
@@ -273,6 +285,21 @@ export class MemoryEngine implements Engine, OrderReadingSource, PlannerSource {
     return options.length > 1 ? { pendingOptions: options } : {};
   }
 
+  /** The options last shown, numbered on from line to line as the reply showed them, with their prices. */
+  private shownOptions(last: LastAsk | null): ShownOption[] {
+    if (last?.kind !== "options") return [];
+    const catalog = this.options.catalog ?? [];
+    let number = 0;
+    return last.lineIds.flatMap((lineId) =>
+      (last.options?.[lineId] ?? []).flatMap((productId): ShownOption[] => {
+        const product = catalog.find((p) => p.productId === productId);
+        if (product === undefined) return [];
+        number += 1;
+        return [{ number, lineId, productId, name: product.names[0] ?? productId, price: product.restricted === true ? null : product.price }];
+      }),
+    );
+  }
+
   async catalog(): Promise<readonly CatalogProduct[]> {
     return this.options.catalog ?? [];
   }
@@ -288,6 +315,8 @@ export class MemoryEngine implements Engine, OrderReadingSource, PlannerSource {
       otherNames: { ...(draft?.planned?.otherNames ?? {}) },
       picked: [...(draft?.planned?.picked ?? [])],
       lastAsk: draft?.planned?.last ?? null,
+      shownOptions: this.shownOptions(draft?.planned?.last ?? null),
+      lastAnswered: state.lastAnswer.get(context.customerId) ?? [],
       store: { hoursSet: (this.options.storeHours ?? null) !== null, delivery: (this.options.deliveryFee ?? null) !== null ? "yes" : "unknown" },
     };
   }
@@ -423,6 +452,7 @@ export class MemoryEngine implements Engine, OrderReadingSource, PlannerSource {
       ]),
       lastQuestion: [...state.lastQuestion],
       held: [...state.held],
+      ...(state.lastAnswer.size === 0 ? {} : { lastAnswer: [...state.lastAnswer] }),
       nextOrderNumber: state.counter.next,
     };
   }
@@ -447,6 +477,7 @@ export class MemoryEngine implements Engine, OrderReadingSource, PlannerSource {
       lastQuestion: new Map(snapshot.lastQuestion),
       held: new Map(snapshot.held ?? []),
       counter: { next: snapshot.nextOrderNumber ?? FIRST_ORDER_NUMBER },
+      lastAnswer: new Map(snapshot.lastAnswer ?? []),
     });
   }
 
@@ -460,6 +491,7 @@ export class MemoryEngine implements Engine, OrderReadingSource, PlannerSource {
         lastQuestion: new Map(),
         held: new Map(),
         counter: { next: FIRST_ORDER_NUMBER },
+        lastAnswer: new Map(),
       };
       this.stores.set(tenant.businessId, state);
     }
@@ -779,6 +811,7 @@ class BurstApplier {
       proposed,
       withOptions: new Set([...options].filter(([, found]) => found.length > 1).map(([lineId]) => lineId)),
       illegible: this.illegible,
+      exhausted: new Set(Object.entries(planned.whichAsks ?? {}).filter(([, asks]) => asks >= MAX_WHICH_ASKS).map(([lineId]) => lineId)),
     });
     return step.type === "readback" ? this.readbackStep() : this.plannedAsk(step.kind, step.lineIds, options);
   }
@@ -814,6 +847,10 @@ class BurstApplier {
     const shown = kind === "options" ? Object.fromEntries(lineIds.map((id) => [id, (options.get(id) ?? []).map((o) => o.productId)])) : undefined;
     planned.last = { kind, lineIds: [...lineIds], ...(shown === undefined ? {} : { options: shown }), times: same ? planned.last!.times + 1 : 1 };
     if (kind === "quantities") for (const id of lineIds) planned.quantityAsks[id] = (planned.quantityAsks[id] ?? 0) + 1;
+    if (kind === "options" || kind === "unreadable") {
+      const asks = (planned.whichAsks ??= {});
+      for (const id of lineIds) asks[id] = (asks[id] ?? 0) + 1;
+    }
     if (kind === "delivery_place" && savedPlaceOf(this.context) !== null && !this.draft.declinedSavedPlace) {
       // A saved place is offered as a question, once per order; never applied without a yes.
       return this.ask("same_place", null, "armando");

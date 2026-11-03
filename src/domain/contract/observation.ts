@@ -262,6 +262,11 @@ export interface PerceptionContext {
    * the customer saw them, so perception can say which one an answer chose. Absent means none.
    */
   readonly pendingOptions?: readonly { readonly label: string; readonly text: string }[];
+  /**
+   * Proposed (Nov 3, planner mode): the products the last answer was about, as named in it, so "me
+   * manda una" right after "¿tiene miel?" can be read as that product. Absent means none.
+   */
+  readonly lastAnswered?: readonly string[];
 }
 
 export function isCustomerKind(kind: ObservationKind): boolean {

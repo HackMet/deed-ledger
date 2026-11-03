@@ -202,7 +202,7 @@ describe("cache-friendly instructions", () => {
     await reader.read({ businessId: "store-b" }, { audience: "customer", messages: [text("frijoles")], context: noContext, catalog, withoutLabels: true });
     await reader.read({ businessId: "store-a" }, { audience: "customer", messages: [text("arroz")], context: noContext, catalog });
     await reader.read({ businessId: "store-a" }, { audience: "console", messages: [text("vendi 2 arroz")], context: contract.packingContext, catalog });
-    expect(provider.requests.map((r) => r.promptCacheKey)).toEqual(["reader:order-v2-nopick-names", "reader:order-v2-nopick-names", "reader:order-v2", "reader:console-v1"]);
+    expect(provider.requests.map((r) => r.promptCacheKey)).toEqual(["reader:order-v2-nopick-names-ref", "reader:order-v2-nopick-names-ref", "reader:order-v2", "reader:console-v1"]);
     expect(provider.requests[1]!.system).toBe(provider.requests[0]!.system);
   });
 });
@@ -230,7 +230,7 @@ describe("the order path, from the Worker's variables", () => {
     await h.deliver(h.takeRingsFor(store.businessId));
 
     expect(provider.requests.map((r) => [r.schemaName, r.reasoningEffort, r.promptCacheRetention, r.promptCacheKey])).toEqual([
-      ["BurstReading", "low", "in_memory", "reader:order-v2-nopick-names"],
+      ["BurstReading", "low", "in_memory", "reader:order-v2-nopick-names-ref"],
       ["TurnProposal", "minimal", "in_memory", plannerInstructions().version],
     ]);
     expect(h.log.fields("planner.model_call")).toEqual([expect.objectContaining({ effort: "minimal", inputTokens: 100, outputTokens: 50 })]);

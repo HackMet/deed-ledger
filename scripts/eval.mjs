@@ -17,6 +17,7 @@ import { randomUUID } from "node:crypto";
 import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { allReport, retriedOnce } from "./lib/eval-report.mjs";
 import { mediaMessage, parseArgs, postWebhook, queryLocal, SIM, uploadSimMedia } from "./lib/sim.mjs";
 import {
   allowedAmountsFor,
@@ -65,13 +66,17 @@ async function storeId() {
 }
 
 async function consolePost(path, fields) {
-  const body = new URLSearchParams({ csrf: "dev", ...fields });
-  const response = await fetch(`${url}/console${path}`, {
-    method: "POST",
-    redirect: "manual",
-    headers: { "content-type": "application/x-www-form-urlencoded", origin: url },
-    body,
-  });
+  // Console actions carry their own operation key: a second try after a dropped socket can't count twice.
+  const response = await retriedOnce(() =>
+    fetch(`${url}/console${path}`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { "content-type": "application/x-www-form-urlencoded", origin: url },
+      body: new URLSearchParams({ csrf: "dev", ...fields }),
+    }),
+  );
+  // Read to the end, so the connection is free for the next request.
+  await response.arrayBuffer();
   return { status: response.status, location: response.headers.get("location") ?? "" };
 }
 
@@ -149,7 +154,10 @@ class Customer {
   }
 
   async send(message) {
-    const response = await postWebhook(url, { from: this.phone, id: `wamid.EVAL-${randomUUID()}`, timestamp: String(Math.floor(Date.now() / 1000)), ...message }, { from: this.phone });
+    // One message ID for both tries: the Worker records a message once, so a retry can't double it.
+    const payload = { from: this.phone, id: `wamid.EVAL-${randomUUID()}`, timestamp: String(Math.floor(Date.now() / 1000)), ...message };
+    const response = await retriedOnce(() => postWebhook(url, payload, { from: this.phone }));
+    await response.arrayBuffer();
     if (!response.ok) throw new Error(`the Worker answered ${response.status}`);
   }
 
@@ -315,16 +323,24 @@ async function run(scenario, phones, facts) {
   const botTurns = [];
   const signatures = [];
   const orderSnapshots = [];
+  let runnerError = null;
   for (const [stepIndex, step] of scenario.steps.entries()) {
     const seen = customer.botTexts.length;
-    if (step.say !== undefined) await customer.say(step.say);
-    else if (step.tap !== undefined) await customer.tap(step.tap);
-    else if (step.tapStale !== undefined) await customer.tapStale(step.tapStale, stale);
-    else if (step.photo !== undefined) await customer.media(step.photo, step.caption);
-    else if (step.voice !== undefined) await customer.media(step.voice);
-    else if (step.staff !== undefined) await customer.staff(step.staff);
-    else if (step.ownerReply !== undefined) await customer.ownerReply(step.ownerReply);
-    else if (step.wait !== undefined) await sleep(step.wait * 1000);
+    try {
+      if (step.say !== undefined) await customer.say(step.say);
+      else if (step.tap !== undefined) await customer.tap(step.tap);
+      else if (step.tapStale !== undefined) await customer.tapStale(step.tapStale, stale);
+      else if (step.photo !== undefined) await customer.media(step.photo, step.caption);
+      else if (step.voice !== undefined) await customer.media(step.voice);
+      else if (step.staff !== undefined) await customer.staff(step.staff);
+      else if (step.ownerReply !== undefined) await customer.ownerReply(step.ownerReply);
+      else if (step.wait !== undefined) await sleep(step.wait * 1000);
+    } catch (error) {
+      // The transcript so far is kept, with the step that failed and why.
+      runnerError = `step ${stepIndex + 1} (${JSON.stringify(step)}): ${error}`;
+      customer.log.push({ who: "note", text: `(runner error at ${runnerError})` });
+      break;
+    }
     const order = await latestOrder(phone);
     orderSnapshots.push(order);
     signatures.push(orderSignature(order));
@@ -372,6 +388,7 @@ async function run(scenario, phones, facts) {
     turnsToConfirm,
     sentMessages: customer.sentMessages,
     ...verdict,
+    ...(runnerError === null ? {} : { pass: false, problems: [`runner error at ${runnerError}`, ...verdict.problems] }),
   };
 }
 
@@ -564,7 +581,7 @@ if (args.compare !== undefined && args.compare !== true) {
     scenarios: results.map(({ log, botTexts, order, pendientes, ...rest }) => ({ ...rest, state: order?.state ?? null, total: order?.total ?? null })),
     summary,
   };
-  writeFileSync(join(outDir, "all.md"), [`# Eval run ${payload.meta.at} (path: ${PATH_LABEL})`, "", ...results.map((r) => transcript(r, chosen.find((s) => s.id === r.id))).join("\n")]);
+  writeFileSync(join(outDir, "all.md"), allReport(payload.meta.at, PATH_LABEL, results.map((r) => transcript(r, chosen.find((s) => s.id === r.id)))));
   writeFileSync(join(outDir, "results.json"), JSON.stringify(payload, null, 2));
   console.log("");
   printReport(results, summary);

@@ -4,6 +4,7 @@
  * it gets the planner in composition (`CONVERSATION=planner`).
  */
 import type { OrderView } from "../../domain/contract/outcomes";
+import type { ShownOption } from "../../domain/planner/option-answer";
 import type { AskKind } from "../../domain/planner/types";
 import type { CustomerContext, Engine } from "../engine";
 
@@ -26,6 +27,10 @@ export interface PlannerContext {
   /** Lines whose product the planner picked: once the order is confirmed, their words may teach the store. */
   readonly picked: readonly string[];
   readonly lastAsk: LastAsk | null;
+  /** When the question last shown was "which one": its options as the customer saw them, numbered, priced. */
+  readonly shownOptions: readonly ShownOption[];
+  /** The products the last answer was about ("Miel de abeja…: te confirmo si hay"), until the next burst. */
+  readonly lastAnswered: readonly string[];
   /** The store layer the planner sees: only whether things are set, never amounts. */
   readonly store: { readonly hoursSet: boolean; readonly delivery: "yes" | "no" | "unknown" };
 }
