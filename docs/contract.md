@@ -237,7 +237,9 @@ the engine a `TurnPlan`. Code still renders every fact, and the claim check is u
 1. **`Engine.onBurst(context, reading, matches, plan?: TurnPlan)`** (`src/domain/planner/types.ts`). `TurnPlan`:
    `move` (`ask | readback | answer_only | handoff | restate`), `ask` (`{ kind, lineRefs }` or null: one kind per
    message, several lines), `assumed` (`{ lineRef, quantity, source: "suggested" | "store_usual" }[]`), `say` (one
-   checked sentence, rendered by our side, ignored by the engine), and two optional fields added while building:
+   of the fixed phrases in `SAY_PHRASES`, `src/domain/planner/wire.ts`, or empty: the schema makes it an enum, so
+   no text the planner writes reaches a customer; rendered by our side, ignored by the engine), `basis` (the open
+   order as the plan was checked against it, `orderBasis` in `frame.ts`, or null), and two optional fields:
    `changes` (`{ lineRef, productId?, quantity?, remove? }[]`: a product picked for an order line, a quantity the
    burst said, a removal; the reading has no observation for these) and `options` (`{ lineRef, productIds }[]`: the
    products retrieval offered for an `options` question, so the engine never searches the catalog itself). Labels
@@ -247,7 +249,11 @@ the engine a `TurnPlan`. Code still renders every fact, and the claim check is u
    applies `changes` and `assumed`, then asks or reads back. **The engine keeps the last word on readiness**
    (`settleStep` in `validate.ts`): a readback it can't allow comes back as `ask` with the first missing kind, and a
    question about lines that don't need it is narrowed or replaced. A draft the planner shaped stays on that path:
-   a later burst with no plan (small talk, a planner failure) asks what the readiness gate says is missing.
+   a later burst with no plan (small talk, a planner failure) asks what the readiness gate says is missing. **A
+   stale plan is refused:** when `basis` no longer matches the open order (another write landed between the
+   planner's read and the engine's), the engine ignores the plan and its picks and asks what the readiness gate
+   says is missing; never silent. Every assumed quantity is checked again against the product as it is then (never
+   1 of something sold by weight or restricted; a store-usual amount only while the store still says it).
 2. **`LineMatch.how: "planner_pick"`**: a candidate the planner chose for a new item, mapped to a product by code,
    like `label_pick`.
 3. **`OrderLineView.quantitySource?: "said" | "suggested" | "store_usual"`**; absent means said. The readback marks
@@ -286,15 +292,37 @@ the engine a `TurnPlan`. Code still renders every fact, and the claim check is u
    `CandidateHow` **`"other_name"`**, ranked below the customer's own words and above near spelling; never a match
    by itself, never shown to the customer. The classic reader's schema and prompt are unchanged.
 9. **Learned aliases from confirmed orders** (D-49): once an order is confirmed, each line whose product the
-   planner picked proposes the customer's words for it (`proposeAliasesFromConfirmedOrder`), unless those words
-   already find the product on their own. Called by our side outside the job's completion batch, just before it:
-   it never throws, never holds up the confirmation, and a retried job proposes nothing new. The engine only has to
-   remember, per line, the words retrieval looked up and that the planner picked it (`plannerContext`).
+   planner picked proposes the customer's words for it, unless those words already find the product on their own.
+   The proposals are statements in the job's completion batch, after the confirmation's (`aliasProposalCommits`,
+   `D1RetrievalRepository.proposalCommit`): they land only if the confirmation saves. The INSERT itself refuses
+   unless the product is the store's, the order is the store's confirmed order of that customer (the engine's
+   `orders` or the pretend engine's snapshot), and the customer hasn't asked to delete their data; so a job still
+   running when the purge runs adds nothing. Words the store rejected for one product, proposed again for another,
+   get a **new alias ID**, so a "Sí" tapped on an old Pendientes page finds nothing. It never throws, and a
+   retried job proposes nothing new. The engine only has to remember, per line, the words retrieval looked up and
+   that the planner picked it (`plannerContext`).
 10. **Customer data deletion** also deletes the learned aliases still `proposed` from that customer's orders (the
    engine's `orders` and the pretend engine's snapshot); approved or rejected ones are the store's decision and stay,
    unlinked from the order. They keep `source = 'order'` (where they came from doesn't change) and the person in
    `decided_by_user_id`; migration 0011 requires the order link only while an alias is still proposed. In the purge
    batch (`D1CustomerControlRepository.purge`).
+11. **What code refuses in a plan, after the Nov 2 review** (`validate.ts`; each with a test in
+   `test/planner-review.test.ts`):
+   - **A quantity** counts for a line only when (a) the reader itself gave it for that line or its ref, (b) a part
+     of the customer's words that names the line says it ("6 platanos" backs platanos, never arroz), or (c) the
+     question last asked was that one line's quantity and the burst holds exactly one number. Never a price
+     ("a L 18"), an address or phone number ("casa 5"), or a number in the product's own name ("paquete de 10").
+   - **A removal** stands only when the reader heard one: on its own line, or, when the reader couldn't place it,
+     on a line the removal's words name. Mentioning a product ("dejá el arroz como estaba") removes nothing.
+   - **A suggested 1** is refused for an item the reader found unclear, and for one offered two or more products
+     unless the customer named the one picked (exact name, the store's own name or an approved alias).
+   - **Options** never list a product marked "No hay" (the planner input still says it's out).
+   - **A photo line kept only through the whole-photo fallback** (its box unusable) keeps no quantity: it's asked.
+12. **Rollback policy.** A draft the planner already shaped finishes on the readiness gate's questions even if
+   `CONVERSATION` flips back to `classic`: it never switches to the classic question queue halfway, which would ask
+   things twice or skip them. New conversations go classic at once. The list-photo fixes from Nov 2 (one line per
+   written item in the reader prompt, the whole-photo fallback for a line whose box is unusable, and its
+   quantity-free rule above) intentionally apply to the classic path too: they are bug fixes, not planner policy.
 
 **What the real engine (`OrderEngine`, kercmari) would need** before the planner can run on it. Nothing here breaks
 its current types; it runs the classic path until then, since it has no `plannerContext`.

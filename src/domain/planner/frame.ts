@@ -5,6 +5,7 @@
  */
 import type { DecimalString } from "../contract/numbers";
 import type { BurstReading, ItemLine, ObservationIssue } from "../contract/observation";
+import type { OrderView } from "../contract/outcomes";
 import type { CandidateTable, RetrievableProduct } from "./types";
 
 export interface FrameLine {
@@ -33,6 +34,15 @@ export interface PlannerFrame {
   readonly readerQuantities: ReadonlyMap<string, DecimalString>;
   /** Order lines the reader itself removed in this burst, by L label. */
   readonly readerRemoved: ReadonlySet<string>;
+  /**
+   * Removals the reader heard but couldn't place on a line (its ref was null): the words that name
+   * what to remove. The planner may resolve these, only among the lines they name.
+   */
+  readonly unplacedRemovals: readonly string[];
+  /** The L label whose quantity, alone, was the question last asked; null otherwise. */
+  readonly askedQuantityOf: string | null;
+  /** The open order as the plan is checked against it (`orderBasis`); null when there is none. */
+  readonly basis: string | null;
   /** The reading flagged something it couldn't read. */
   readonly illegible: boolean;
   /** The store's products by ID: how each is sold, its usual amount, whether it's restricted. */
@@ -69,4 +79,15 @@ export function newItemsOf(reading: BurstReading): NewItem[] {
     }
   });
   return items;
+}
+
+/**
+ * The open order as a plan was checked against it: its ID, version, state and every line's product
+ * and quantity. The engine applies a plan only while the order still reads the same (finding 6 of
+ * the Nov 2 review): labels like "L2" and every check made against the order hold only for it.
+ */
+export function orderBasis(order: OrderView | null): string | null {
+  if (order === null) return null;
+  const lines = order.lines.map((line) => `${line.lineId}=${line.productId ?? ""}/${line.quantity ?? ""}/${line.quantitySource ?? ""}`);
+  return `${order.orderId}:v${order.version}:${order.state}:${lines.join(",")}`;
 }

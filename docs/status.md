@@ -15,7 +15,9 @@ Last updated: Mon Nov 2, 2026, evening Honduras time, by Claude Code (lane L0, t
   confirmed order proposes learned aliases for its planner picks, approved in Pendientes; weighed items read back in
   pounds. The real engine runs classic until it has what contract.md "Proposed (Nov 2): planner" lists. The flag
   flips only when the eval suite (lane L2) says the planner path is at least as good with zero truth failures.
-  Latency is the open risk (another lane is on it).
+  Latency is the open risk (another lane is on it). The independent review's nine findings (Nov 2) are fixed with a
+  failing-then-passing test each (`test/planner-review.test.ts`, and the alias batch in `planner-flow.test.ts`); the
+  planner's sentence is now one of a fixed list of phrases (`SAY_PHRASES`), never its own text.
 
 - The product is an order assistant: customers order on WhatsApp, Johan and staff work from a phone console, and
   both end in the same engine. Two-person team (D-37): Angel owns conversations, perception, replies, the console

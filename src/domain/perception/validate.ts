@@ -256,7 +256,9 @@ class ObservationReader {
     // kept, pointed at the whole photo, and asked about: a written item is never dropped silently.
     const placed = evidence ?? this.wholePhoto(wire);
     if (!placed) return null;
-    const quantity = decimal(wire.quantity);
+    // Kept only through the whole-photo fallback: a quantity read from an area it couldn't place
+    // isn't trusted, so it's asked (review finding 9, Nov 2).
+    const quantity = evidence === null ? { value: null, bad: false } : decimal(wire.quantity);
     return {
       line: {
         text: wire.text.trim(),

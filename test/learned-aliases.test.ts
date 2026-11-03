@@ -31,6 +31,24 @@ async function storeWithCatalog() {
 
 const said = (words: string) => [{ label: "N1", said: words, unit: null }];
 
+/**
+ * A customer of the store whose orders are confirmed (in the pretend engine's snapshot): a proposal
+ * stands only on a confirmed order of a customer who hasn't asked to delete their data.
+ */
+async function confirmedOrders(store: Tenant, orderIds: readonly string[], db: D1Database = env.DB): Promise<string> {
+  const customerId = crypto.randomUUID();
+  await db.prepare(`INSERT INTO customers (id, business_id, phone, created_at_ms) VALUES (?, ?, ?, 0)`).bind(customerId, store.businessId, `5040${String(Math.floor(Math.random() * 1e8)).padStart(8, "0")}`).run();
+  const orders = orderIds.map((orderId) => [orderId, { customerId, order: { orderId, state: "confirmado" } }]);
+  await db
+    .prepare(
+      `INSERT INTO pretend_engine_state (business_id, version, state_json, updated_at_ms) VALUES (?, 1, ?, 0)
+       ON CONFLICT (business_id) DO UPDATE SET state_json = excluded.state_json`,
+    )
+    .bind(store.businessId, JSON.stringify({ orders }))
+    .run();
+  return customerId;
+}
+
 /** What retrieval offers one line, with how. */
 async function offered(tenant: Tenant, words: string) {
   const table = await retrieveForStore(repo(), tenant, said(words));
@@ -104,7 +122,8 @@ describe("learned aliases", () => {
     const before = await offered(store, "salsa roja");
     expect(before.map((c) => c.how)).not.toContain("learned_alias");
 
-    expect(await repo().proposeAlias(store, { said: "Salsa  roja", productId: salsa, orderId: "order-1" }, NOW)).toBe(true);
+    const customerId = await confirmedOrders(store, ["order-1"]);
+    expect(await repo().proposeAlias(store, { said: "Salsa  roja", productId: salsa, orderId: "order-1", customerId }, NOW)).toBe(true);
     expect(await repo().listApprovedAliases(store)).toEqual([]);
     expect(await offered(store, "salsa roja")).toEqual(before);
 
@@ -119,7 +138,8 @@ describe("learned aliases", () => {
 
   it("proposing again adds nothing; a No isn't asked again for the same product, only for another", async () => {
     const { store, owner, salsa, inglesa } = await storeWithCatalog();
-    const propose = (productId: string, orderId: string) => repo().proposeAlias(store, { said: "salsa roja", productId, orderId }, NOW);
+    const customerId = await confirmedOrders(store, ["order-1", "order-2", "order-3", "order-4"]);
+    const propose = (productId: string, orderId: string) => repo().proposeAlias(store, { said: "salsa roja", productId, orderId, customerId }, NOW);
     expect(await propose(salsa, "order-1")).toBe(true);
     expect(await propose(salsa, "order-1")).toBe(false);
     expect(await propose(inglesa, "order-2")).toBe(false);
@@ -130,17 +150,18 @@ describe("learned aliases", () => {
     expect(await propose(salsa, "order-3")).toBe(false);
     expect(await repo().listProposed(store)).toEqual([]);
 
+    // Proposed again for another product: under a new ID, so an old page's Sí can't approve it.
     expect(await propose(inglesa, "order-4")).toBe(true);
-    expect(await aliasRows(store.businessId)).toEqual([
-      expect.objectContaining({ id: proposal!.id, product_id: inglesa, state: "proposed", source_order_id: "order-4", decided_by_user_id: null, decided_at_ms: null }),
-    ]);
-    expect(await repo().listProposed(store)).toEqual([{ id: proposal!.id, said: "salsa roja", productName: "Salsa inglesa", proposedAtMs: NOW }]);
+    const [renewed] = await aliasRows(store.businessId);
+    expect(renewed).toEqual(expect.objectContaining({ product_id: inglesa, state: "proposed", source_order_id: "order-4", decided_by_user_id: null, decided_at_ms: null }));
+    expect(renewed!.id).not.toBe(proposal!.id);
+    expect(await repo().listProposed(store)).toEqual([{ id: renewed!.id, said: "salsa roja", productName: "Salsa inglesa", proposedAtMs: NOW }]);
   });
 
   it("another store never sees, uses or approves it", async () => {
     const a = await storeWithCatalog();
     const b = await storeWithCatalog();
-    await repo().proposeAlias(a.store, { said: "salsa roja", productId: a.salsa, orderId: "order-a" }, NOW);
+    await repo().proposeAlias(a.store, { said: "salsa roja", productId: a.salsa, orderId: "order-a", customerId: await confirmedOrders(a.store, ["order-a"]) }, NOW);
     const [proposal] = await aliasRows(a.store.businessId);
 
     expect(await repo().listProposed(b.store)).toEqual([]);
@@ -148,7 +169,8 @@ describe("learned aliases", () => {
     expect(await repo().approveAlias(b.store, proposal!.id, b.owner, NOW)).toBe(false);
     expect(await repo().rejectAlias(b.store, proposal!.id, b.owner, NOW)).toBe(false);
     // Store B can't raise one for store A's product either.
-    expect(await repo().proposeAlias(b.store, { said: "salsa verde", productId: a.salsa, orderId: "order-b" }, NOW)).toBe(false);
+    const bCustomer = await confirmedOrders(b.store, ["order-b"]);
+    expect(await repo().proposeAlias(b.store, { said: "salsa verde", productId: a.salsa, orderId: "order-b", customerId: bCustomer }, NOW)).toBe(false);
     expect(await aliasRows(b.store.businessId)).toEqual([]);
 
     expect(await repo().approveAlias(a.store, proposal!.id, a.owner, NOW)).toBe(true);
@@ -194,6 +216,7 @@ describe("after a confirmed order (the spine's call)", () => {
     const { log, events } = recordingLog();
     const order = {
       orderId: "order-1",
+      customerId: await confirmedOrders(store, ["order-1"]),
       lines: [
         { said: "salsa roja", productId: salsa, how: "planner_pick" },
         // "Ketchup" already finds the product through its other name: nothing to learn. ("Catsup" no
@@ -219,13 +242,14 @@ describe("after a confirmed order (the spine's call)", () => {
       listProducts: () => Promise.reject(new Error("D1 is down: salsa roja")),
       listApprovedAliases: () => Promise.resolve([]),
       proposeAlias: () => Promise.resolve(true),
+      proposalCommit: () => null,
     };
-    const order = { orderId: "order-1", lines: [{ said: "salsa roja", productId: "p", how: "planner_pick" }] };
+    const order = { orderId: "order-1", customerId: "c", lines: [{ said: "salsa roja", productId: "p", how: "planner_pick" }] };
     expect(await proposeAliasesFromConfirmedOrder(broken, log, store, order, NOW)).toBe(0);
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({ level: "error", event: "alias_proposal_failed", fields: { businessId: store.businessId } });
     // Nothing else reads a planner-free order.
-    expect(await proposeAliasesFromConfirmedOrder(broken, log, store, { orderId: "o", lines: [] }, NOW)).toBe(0);
+    expect(await proposeAliasesFromConfirmedOrder(broken, log, store, { orderId: "o", customerId: "c", lines: [] }, NOW)).toBe(0);
   });
 });
 
@@ -246,7 +270,7 @@ describe("Pendientes: the owner says if the words are the product, with one tap"
   it("shows the question in plain words, counts it on the tab, and Sí makes it match", async () => {
     const h = harness();
     const { store, owner, salsa } = await storeWithCatalog();
-    await repo().proposeAlias(store, { said: "salsa roja", productId: salsa, orderId: "order-1" }, NOW);
+    await repo().proposeAlias(store, { said: "salsa roja", productId: salsa, orderId: "order-1", customerId: await confirmedOrders(store, ["order-1"]) }, NOW);
     const s = await owners(h, store);
 
     const page = await s.get("/console/pendientes");
@@ -271,7 +295,7 @@ describe("Pendientes: the owner says if the words are the product, with one tap"
   it("No drops it; a second tap or a made-up answer changes nothing", async () => {
     const h = harness();
     const { store, salsa } = await storeWithCatalog();
-    await repo().proposeAlias(store, { said: "salsa roja", productId: salsa, orderId: "order-1" }, NOW);
+    await repo().proposeAlias(store, { said: "salsa roja", productId: salsa, orderId: "order-1", customerId: await confirmedOrders(store, ["order-1"]) }, NOW);
     const [proposal] = await aliasRows(store.businessId);
     const s = await owners(h, store);
     expect((await s.post("/console/pendientes/nombre", { nombre: proposal!.id, respuesta: "talvez" })).headers.get("location")).toBe(
@@ -291,7 +315,7 @@ describe("Pendientes: the owner says if the words are the product, with one tap"
     const h = harness();
     const a = await storeWithCatalog();
     const b = await storeWithCatalog();
-    await repo().proposeAlias(a.store, { said: "salsa roja", productId: a.salsa, orderId: "order-1" }, NOW);
+    await repo().proposeAlias(a.store, { said: "salsa roja", productId: a.salsa, orderId: "order-1", customerId: await confirmedOrders(a.store, ["order-1"]) }, NOW);
     const [proposal] = await aliasRows(a.store.businessId);
 
     const staff = await login(h, a.store.businessId, a.store.members[1]!.userId);
@@ -356,7 +380,8 @@ describe("migration 0011 on a database that already has the store's products", (
 
     const retrieval = new D1RetrievalRepository(db);
     const store = { businessId: "store-a" };
-    expect(await retrieval.proposeAlias(store, { said: "catsup", productId: "p-1", orderId: "o-1" }, 1)).toBe(true);
+    const customerId = await confirmedOrders(store, ["o-1"], db);
+    expect(await retrieval.proposeAlias(store, { said: "catsup", productId: "p-1", orderId: "o-1", customerId }, 1)).toBe(true);
     expect(await new D1StoreSetupRepository(db).updateProduct(store, "p-1", { name: "Salsa de tomate", otherNames: [], price: null }, 2, { soldBy: "unit", usualQuantity: "1" })).toBe(
       "saved",
     );

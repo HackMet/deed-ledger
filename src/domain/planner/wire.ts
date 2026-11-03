@@ -9,7 +9,27 @@ import type { JsonSchema } from "../perception/wire";
 export const TURN_SCHEMA_NAME = "TurnProposal";
 export const MAX_OPS = 40;
 export const MAX_ASK_LINES = 12;
-export const MAX_SAY_CHARS = 140;
+
+/**
+ * The connecting phrases the planner may choose from (review finding 3, Nov 2): fact-free, in
+ * Honduran Spanish, defined only here. The planner picks one, or the empty one; no text it writes
+ * itself ever reaches a customer. Adding a phrase is a reviewed change: it must state no fact (no
+ * number, price, stock, state, time or promise) and ask nothing.
+ */
+export const SAY_PHRASES = [
+  "",
+  "Va 👍",
+  "Con gusto.",
+  "Perfecto.",
+  "Ya vi tu lista 👍",
+  "Ya escuché tu nota de voz 👍",
+  "Va, le agrego eso.",
+  "Dale, ya lo cambio.",
+  "Con gusto te ayudo con tu pedido 🙂",
+  "Yo te ayudo con tu pedido 🙂",
+] as const;
+
+export type SayPhrase = (typeof SAY_PHRASES)[number];
 
 const nstr = (description: string): JsonSchema => ({ type: ["string", "null"], description });
 
@@ -49,8 +69,8 @@ export const turnSchema: JsonSchema = {
     },
     say: {
       type: "string",
-      maxLength: MAX_SAY_CHARS,
-      description: "one short connecting sentence, no numbers, no prices, no promises; may be empty",
+      enum: SAY_PHRASES,
+      description: "one connecting phrase from the list, or the empty one",
     },
   },
 };

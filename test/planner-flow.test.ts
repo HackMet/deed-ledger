@@ -12,6 +12,7 @@ import { planTurn } from "../src/application/planner/plan-turn";
 import type { ModelProvider, ModelRequest } from "../src/application/ports";
 import type { BurstReading, ItemLine, Observation } from "../src/domain/contract/observation";
 import type { EngineOutcome, OrderLineView, OrderView } from "../src/domain/contract/outcomes";
+import { orderBasis } from "../src/domain/planner/frame";
 import type { TurnPlan } from "../src/domain/planner/types";
 import { echoBlock, firstCheck, renderOutcome } from "../src/domain/replies";
 import { D1RetrievalRepository } from "../src/infrastructure/d1/retrieval-repository";
@@ -46,16 +47,19 @@ const item = (name: string, quantity: string | null = null, unit: string | null 
 const order = (...lines: ItemLine[]): Observation => ({ kind: "customer_order", lines, issues: [] });
 const pickup: Observation = { kind: "fulfillment", mode: "pickup", pin: null, placeText: null, sameAsBefore: false, issues: [] };
 const answer = (said: string): Observation => ({ kind: "clarification", answer: said, evidence, issues: [] });
-const plan = (more: Partial<TurnPlan>): TurnPlan => ({ move: "ask", ask: null, assumed: [], say: "", ...more });
+/** A plan for the customer's next burst; `basis` is filled with the open order as it is then. */
+const plan = (more: Partial<TurnPlan>): Omit<TurnPlan, "basis"> & { basis?: string | null } => ({ move: "ask", ask: null, assumed: [], say: "", ...more });
 
 function customer(engine = new MemoryEngine(() => [], { catalog: CATALOG })) {
   let job = 0;
   const context = (): CustomerContext => ({ businessId: "store-1", conversationId: "conv-1", customerId: "cust-1", jobId: `job-${++job}`, nowMs: 1_000 * job });
   return {
     engine,
-    burst: async (observations: Observation[], turn?: TurnPlan): Promise<EngineOutcome> => {
+    burst: async (observations: Observation[], turn?: ReturnType<typeof plan>): Promise<EngineOutcome> => {
       const reading: BurstReading = { observations, calls: [] };
-      return (await (turn === undefined ? engine.onBurst(context(), reading, []) : engine.onBurst(context(), reading, [], turn))).outcome;
+      if (turn === undefined) return (await engine.onBurst(context(), reading, [])).outcome;
+      const basis = turn.basis !== undefined ? turn.basis : orderBasis((await engine.plannerContext(context())).order);
+      return (await engine.onBurst(context(), reading, [], { ...turn, basis })).outcome;
     },
     confirm: async (orderId: string, version: number) =>
       (
@@ -87,7 +91,7 @@ describe("the pretend engine with a plan", () => {
       { businessId: "store-1", conversationId: "conv-1", customerId: "cust-1", jobId: "j1", nowMs: 1 },
       reading,
       [{ observation: 0, line: 0, productId: "p-tomate", how: "planner_pick" }],
-      plan({ move: "readback" }),
+      { ...plan({ move: "readback" }), basis: null },
     );
     expect(result.outcome).toMatchObject({ type: "readback", order: { state: "por_confirmar", lines: [{ productId: "p-tomate", unitPrice: 500 }], total: 2000 } });
   });
@@ -276,7 +280,7 @@ const READINGS = {
           wireLine("tomates", "tomates", null, null, said(2), NONE),
           wireLine("1 lb arroz", "arroz", "1", "libra", said(3), NONE),
           wireLine("piña", "piña", null, null, said(4), NONE),
-          wireLine("salsa de tomate", "salsa de tomate", null, null, said(5), NONE),
+          wireLine("salsa", "salsa", null, null, said(5), NONE),
         ],
         issues: [],
       },
@@ -295,7 +299,7 @@ const op = (kind: string, line: string, product: string | null = null, quantity:
   suggested_quantity: suggested,
 });
 // L1's retrieval offers, in order: N2 pollo → P1 Pollo entero (all words); N3 tomates → P2 Tomate (its name,
-// standing alone); N4 arroz → P3 Arroz 1 lb; N6 salsa de tomate → P4 Salsa (all words), P2 Tomate (some words).
+// standing alone); N4 arroz → P3 Arroz 1 lb; N6 salsa → P4 Salsa (all words, the only one, so 1 may be suggested).
 // Platanos and piña find nothing.
 const PLANS = {
   list: {
@@ -458,7 +462,7 @@ describe("the planner path on local D1, from a photo of a list to one confirmed 
     expect(await aliasesOf(t.store.businessId)).toEqual([
       { said: "arroz", name: "Arroz 1 lb", state: "proposed", source: "order", source_order_id: orderId },
       { said: "pollo", name: "Pollo entero", state: "proposed", source: "order", source_order_id: orderId },
-      { said: "salsa de tomate", name: "Salsa de tomate Naturas 400 g", state: "proposed", source: "order", source_order_id: orderId },
+      { said: "salsa", name: "Salsa de tomate Naturas 400 g", state: "proposed", source: "order", source_order_id: orderId },
     ]);
 
     // The customer asks to delete their data: proposals from their orders go; one the owner already
@@ -470,6 +474,42 @@ describe("the planner path on local D1, from a photo of a list to one confirmed 
     expect(await t.h.deps.customerControls.purge(t.tenant, t.customerId, null, t.h.clock.now())).toBe(true);
     expect(await aliasesOf(t.store.businessId)).toEqual([{ said: "pollo", name: "Pollo entero", state: "approved", source: "order", source_order_id: null }]);
     expect(await book.listApprovedAliases(t.tenant)).toEqual([{ words: "pollo", productId: expect.any(String) }]);
+  }, 30_000);
+
+  /** The trip up to the readback: the list, then the quantities. Returns the Confirmar button. */
+  async function toReadback() {
+    const t = await plannerTrip([READINGS.list, READINGS.quantities], [PLANS.list, PLANS.quantities]);
+    await t.burst(imageMessage({ ...t.at(), mediaId: LIST_PHOTO }), textMessage({ ...t.at(), body: "lo paso a traer" }));
+    await t.burst(textMessage({ ...t.at(), body: "6 platanos, 2 libras de pollo y 4 tomates" }));
+    const readback = t.h.channel.sent.filter((sent) => sent.toPhone === t.phone).at(-1)!;
+    return { t, confirm: readback.buttons!.find((button) => button.title === "Confirmar")! };
+  }
+
+  it("finding 5: a confirmation that doesn't save leaves no alias proposal", async () => {
+    const { t, confirm } = await toReadback();
+    // Another write lands between the engine's read and the job's batch, every time: the
+    // confirmation's guard fails and nothing of the batch is saved.
+    const onCustomerAction = t.engine.onCustomerAction.bind(t.engine);
+    t.engine.onCustomerAction = async (context, envelope) => {
+      const result = await onCustomerAction(context, envelope);
+      await env.DB.prepare(`UPDATE pretend_engine_state SET version = version + 1 WHERE business_id = ?`).bind(t.store.businessId).run();
+      return result;
+    };
+    await t.burst(buttonReply({ ...t.at(), replyId: confirm.id, title: "Confirmar" }));
+    expect(await t.engine.preparationList(t.tenant)).toEqual([]);
+    expect(await aliasesOf(t.store.businessId)).toEqual([]);
+  }, 30_000);
+
+  it("finding 5: a deletion requested while the confirmation runs leaves no alias proposal", async () => {
+    const { t, confirm } = await toReadback();
+    const onCustomerAction = t.engine.onCustomerAction.bind(t.engine);
+    t.engine.onCustomerAction = async (context, envelope) => {
+      const result = await onCustomerAction(context, envelope);
+      await env.DB.prepare(`UPDATE customers SET deletion_requested_at_ms = ? WHERE id = ?`).bind(t.h.clock.now(), t.customerId).run();
+      return result;
+    };
+    await t.burst(buttonReply({ ...t.at(), replyId: confirm.id, title: "Confirmar" }));
+    expect(await aliasesOf(t.store.businessId)).toEqual([]);
   }, 30_000);
 
   it("a planner answer that isn't the schema leaves the burst to the classic path, and the logs say so", async () => {

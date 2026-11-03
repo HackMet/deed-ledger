@@ -7,7 +7,7 @@
  */
 import type { BurstReading, Observation } from "../../domain/contract/observation";
 import type { BurstMessage } from "../../domain/perception/burst";
-import { type FrameLine, type NewItem, newItemsOf, type PlannerFrame } from "../../domain/planner/frame";
+import { type FrameLine, type NewItem, newItemsOf, orderBasis, type PlannerFrame } from "../../domain/planner/frame";
 import type { Candidate, CandidateTable, RetrievableProduct, RetrievalLine } from "../../domain/planner/types";
 import type { LineMatch } from "../engine";
 import type { ModelContentPart } from "../ports";
@@ -88,6 +88,7 @@ export async function buildPlannerInput(request: PlannerRequest, retrieve: Retri
   const saidTexts: string[] = messages.flatMap((message) => (message.type === "text" || message.type === "transcript" ? [message.text] : []));
   const readerQuantities = new Map<string, string>();
   const readerRemoved = new Set<string>();
+  const unplacedRemovals: string[] = [];
   for (const observation of reading.observations) {
     if (observation.kind === "clarification") saidTexts.push(observation.answer);
     if (observation.kind !== "order_change") continue;
@@ -95,6 +96,7 @@ export async function buildPlannerInput(request: PlannerRequest, retrieve: Retri
       if (edit.op === "add") continue;
       const ref = edit.target.ref !== null && orderLines.some((line) => line.label === edit.target.ref) ? edit.target.ref : null;
       if (edit.op === "remove" && ref !== null) readerRemoved.add(ref);
+      if (edit.op === "remove" && ref === null && edit.target.said !== "") unplacedRemovals.push(edit.target.said);
       if (edit.op === "set_quantity" && ref !== null) readerQuantities.set(ref, edit.quantity);
       // "que sean 6 de los platanos" with no line the reader could name: the words still back it.
       if (edit.op === "set_quantity" && ref === null) saidTexts.push(`${edit.quantity} ${edit.target.said}`);
@@ -107,6 +109,11 @@ export async function buildPlannerInput(request: PlannerRequest, retrieve: Retri
     saidTexts,
     readerQuantities,
     readerRemoved,
+    unplacedRemovals,
+    // A question about one line's quantity: a lone number in the answer is that line's.
+    askedQuantityOf:
+      context.lastAsk?.kind === "quantities" && context.lastAsk.lineIds.length === 1 ? (labels.get(context.lastAsk.lineIds[0]!) ?? null) : null,
+    basis: orderBasis(order),
     illegible: reading.observations.some((o) => o.issues.some((issue) => issue.code === "illegible")),
     products,
   };
