@@ -1,0 +1,18 @@
+{
+  "source": "fixture",
+  "description": "Synthetic invoice with a line whose quantity is not legible.",
+  "imageText": "SYNTHETIC INVOICE 003 - missing quantity",
+  "sha256": "44527627d1e38beac938e4fdd226b14541990e64fa2c93b10a10029d45b705a6",
+  "reading": {
+    "supplier": null,
+    "date": null,
+    "lines": [
+      {
+        "name": "Jabón Ejemplo",
+        "qtyMilli": null,
+        "unit": null,
+        "unitCostCentavos": 2500
+      }
+    ]
+  }
+}
