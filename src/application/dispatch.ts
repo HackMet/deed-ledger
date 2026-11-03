@@ -6,8 +6,10 @@ import {
   SEND_CLAIM_MS,
   UNKNOWN_NOTICE_INLINE_RETRY_DELAYS_MS,
 } from "../domain/outbox";
+import { buttonExtras, COPY, flattenClaims, plainTextBody, secondCheckHolds } from "../domain/replies";
+import { isStoppedRecipient } from "./customer-gate";
 import { describeError } from "./errors";
-import type { ConversationRef, Deps, OutboxMessage, SendResult } from "./ports";
+import type { ConversationRef, Deps, OutboxMessage, SendResult, Tenant } from "./ports";
 
 export type SendOutcome =
   | "sent"
@@ -98,11 +100,20 @@ async function sendOne(
   if (message === null) return "skipped";
   const fields = { businessId: tenant.businessId, outboxId: message.id };
 
+  // A customer who typed ALTO gets only the direct answers to their control words (#30).
+  if (await isStoppedRecipient(deps, tenant, message)) {
+    if (!(await deps.outbox.release(tenant, message.id, claimId, "customer_stopped", true, deps.clock.now()))) {
+      return claimLost(deps, fields, "not_sent");
+    }
+    deps.log.info("outbox_skipped_stopped", fields);
+    return "failed";
+  }
+
   // Every read first.
   const lastInboundAtMs = await deps.outbox.lastInboundAtMs(message);
   const toPhone =
     inlinePhone ??
-    (message.conversationId === null ? null : await deps.outbox.memberPhone(tenant, message.conversationId));
+    (message.conversationId === null ? null : await deps.outbox.customerPhone(tenant, message.conversationId));
   const channel = await deps.tenancy.findChannelAccountOf(tenant, message.channelAccountId);
 
   // Then confirm the claim is still ours and extend it past the send's timeout, by the database's
@@ -141,9 +152,54 @@ async function sendOne(
     return lastChance ? "failed" : "retry_later";
   }
 
+  // The claim check's second pass, the last read before the send: against the records, after the
+  // claim is confirmed and the row is otherwise ready, so a cancel has the least time to slip in.
+  const check = await secondCheck(deps, tenant, message);
+  const checkedAt = deps.clock.now();
+  const checkProblem =
+    check === "unavailable"
+      ? "claim_check_unavailable"
+      : check !== "none" && checkedAt - confirmFrom > CLAIM_CONFIRM_MAX_MS
+        ? "claim_check_slow"
+        : null;
+  if (checkProblem !== null) {
+    // Unknown is not "holds", and a check that ate into the claim may not leave time for the send:
+    // try again later, never sending the claims unchecked.
+    const final = lastChance || message.attempts >= MAX_SEND_ATTEMPTS;
+    if (!(await deps.outbox.release(tenant, message.id, claimId, checkProblem, final, checkedAt))) {
+      return claimLost(deps, fields, "not_sent");
+    }
+    deps.log.warn(final ? "outbox_failed" : "outbox_send_retry", { ...fields, reason: checkProblem });
+    return final ? "failed" : "retry_later";
+  }
+  let body = message.body;
+  let buttons = message.buttons ?? [];
+  let extras = buttonExtras(message);
+  if (check === "blocked") {
+    if (!(await deps.outbox.markClaimsBlocked(tenant, message.id, claimId, checkedAt))) {
+      return claimLost(deps, fields, "not_sent");
+    }
+    deps.log.warn("reply_claim_blocked", fields);
+    await deps.pendientes.raise(tenant, {
+      kind: "claim_blocked",
+      stage: "before_send",
+      conversationId: message.conversationId,
+      outboxId: message.id,
+      template: null,
+    });
+    body = COPY.safeReply;
+    buttons = [];
+    extras = {};
+  }
+
   let result: SendResult;
   try {
-    result = await deps.channel.sendText({ fromPhoneNumberId: channel.phoneNumberId, toPhone, body: message.body });
+    const outgoing = { fromPhoneNumberId: channel.phoneNumberId, toPhone, body };
+    // Without its buttons, the body goes as plain text with its typed fallback under it.
+    result =
+      buttons.length > 0 && deps.channel.sendButtons !== undefined
+        ? await deps.channel.sendButtons({ ...outgoing, buttons, ...extras })
+        : await deps.channel.sendText({ ...outgoing, body: plainTextBody(body, extras.textFallback) });
   } catch (error) {
     // The channel failed in an unknown way; the message may have gone out.
     result = { ok: false, disposition: "unknown", errorCode: describeError(error) };
@@ -173,6 +229,29 @@ async function sendOne(
   }
   deps.log.warn(final ? "outbox_failed" : "outbox_send_retry", { ...fields, reason: result.errorCode });
   return final ? "failed" : "retry_later";
+}
+
+/**
+ * none: the row claims nothing. holds: every claim still holds. blocked: one doesn't, or no engine
+ * can say (then the safe reply goes instead). unavailable: the engine failed to answer.
+ */
+async function secondCheck(
+  deps: Deps,
+  tenant: Tenant,
+  message: OutboxMessage,
+): Promise<"none" | "holds" | "blocked" | "unavailable"> {
+  const claims = message.claims ?? [];
+  if (claims.length === 0) return "none";
+  if (deps.claimVerifier === null) return "blocked";
+  const flat = flattenClaims(claims);
+  if (flat.length === 0) return "blocked";
+  try {
+    const verified = await deps.claimVerifier.verifyClaims(tenant, flat);
+    return secondCheckHolds(claims, verified) ? "holds" : "blocked";
+  } catch (error) {
+    deps.log.warn("claim_check_failed", { businessId: tenant.businessId, outboxId: message.id, reason: describeError(error) });
+    return "unavailable";
+  }
 }
 
 /**

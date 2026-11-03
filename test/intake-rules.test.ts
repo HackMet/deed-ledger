@@ -1,16 +1,13 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it, vi } from "vitest";
 import type { JobHandler } from "../src/application/ports";
-import { UNKNOWN_SENDER_NOTICE } from "../src/domain/copy";
-import { UNKNOWN_SENDER_MESSAGES_PER_DAY } from "../src/domain/outbox";
 import { MEMBER_MESSAGES_PER_HOUR } from "../src/domain/processing";
-import { constraintFailingDb, gatedDb, hookDb } from "./helpers/fakes";
+import { constraintFailingDb, gatedDb } from "./helpers/fakes";
 import { conversationOf, type Harness, harness, OUTLIVES_TEST_MS, rows } from "./helpers/harness";
 import { newPhone, seedStore } from "./helpers/seed";
 import { imageMessage, textMessage, wamid, webhook } from "./helpers/whatsapp";
 
 const HOUR = 60 * 60 * 1000;
-const DAY = 24 * HOUR;
 const nowS = (h: Harness) => Math.floor(h.clock.now() / 1000);
 
 async function storeWithOwner() {
@@ -64,7 +61,7 @@ describe("intake failures (F8)", () => {
     expect(await rows(`SELECT id FROM inbound_messages WHERE business_id = ?`, store.businessId)).toEqual([]);
   });
 
-  it("can't delete a membership; a deactivated member is treated as unknown", async () => {
+  it("can't delete a membership; a deactivated member writing to the store is still its customer", async () => {
     const { store, phone } = await storeWithOwner();
     await expect(env.DB.prepare(`DELETE FROM memberships WHERE business_id = ?`).bind(store.businessId).run()).rejects.toThrow(
       /deactivated, never deleted/,
@@ -72,27 +69,10 @@ describe("intake failures (F8)", () => {
     await env.DB.prepare(`UPDATE memberships SET active = 0 WHERE business_id = ?`).bind(store.businessId).run();
     const h = harness();
     await say(h, store.phoneNumberId, phone, "Hola");
-    expect(h.sentTo(phone)).toEqual([UNKNOWN_SENDER_NOTICE]);
-    expect(await rows(`SELECT id FROM inbound_messages WHERE business_id = ?`, store.businessId)).toEqual([]);
-  });
-
-  it("treats a member deactivated between the lookup and the write as unknown, storing no message or job (G6)", async () => {
-    const { store, phone } = await storeWithOwner();
-    // The membership lookup says "active"; the membership is deactivated before the intake batch runs.
-    const db = hookDb(env.DB, /FROM memberships m JOIN users u/, async () => {
-      await env.DB.prepare(`UPDATE memberships SET active = 0 WHERE business_id = ?`).bind(store.businessId).run();
-    });
-    const h = harness({ db });
-    expect((await say(h, store.phoneNumberId, phone, "Hola")).status).toBe(200);
-
-    expect(await rows(`SELECT id FROM inbound_messages WHERE business_id = ?`, store.businessId)).toEqual([]);
-    expect(await rows(`SELECT id FROM conversations WHERE business_id = ?`, store.businessId)).toEqual([]);
-    expect(h.doorbell.rings).toEqual([]);
-    expect(h.sentTo(phone)).toEqual([UNKNOWN_SENDER_NOTICE]);
-    expect(await rows(`SELECT 1 FROM unknown_inbound_messages WHERE business_id = ?`, store.businessId)).toHaveLength(1);
-    expect(h.log.fields("member_intake_not_member")).toEqual([
-      { level: "warn", event: "member_intake_not_member", businessId: store.businessId, outcome: "not_member" },
-    ]);
+    // Memberships only matter for the console: the message is stored as a customer's.
+    expect(await rows(`SELECT 1 FROM inbound_messages WHERE business_id = ?`, store.businessId)).toHaveLength(1);
+    expect(await rows(`SELECT 1 FROM customers WHERE business_id = ? AND phone = ?`, store.businessId, phone)).toHaveLength(1);
+    expect(await rows(`SELECT 1 FROM unknown_inbound_messages WHERE business_id = ?`, store.businessId)).toEqual([]);
   });
 });
 
@@ -110,87 +90,8 @@ describe("de-duplication (F9)", () => {
   });
 });
 
-describe("the unknown-sender notice (F10)", () => {
-  it("is retried inline and sent once", async () => {
-    const h = harness();
-    const { store } = await storeWithOwner();
-    const stranger = newPhone();
-    h.channel.nextResults.push({ ok: false, disposition: "retry", errorCode: "http_429" });
-    await say(h, store.phoneNumberId, stranger, "Hola");
-    expect(h.sentTo(stranger)).toEqual([UNKNOWN_SENDER_NOTICE]);
-    expect(h.sleeps).toEqual([250]);
-  });
-
-  it("frees the 24-hour slot when every inline attempt fails, so the next message retries it", async () => {
-    const h = harness();
-    const { store } = await storeWithOwner();
-    const stranger = newPhone();
-    for (let n = 0; n < 3; n++) h.channel.nextResults.push({ ok: false, disposition: "retry", errorCode: "http_429" });
-    await say(h, store.phoneNumberId, stranger, "Hola");
-    expect(h.sentTo(stranger)).toEqual([]);
-    expect(await rows(`SELECT status FROM outbound_messages WHERE business_id = ?`, store.businessId)).toEqual([{ status: "failed" }]);
-
-    h.clock.advance(60_000);
-    await say(h, store.phoneNumberId, stranger, "¿Hola?");
-    expect(h.sentTo(stranger)).toEqual([UNKNOWN_SENDER_NOTICE]);
-    expect(await rows(`SELECT status FROM outbound_messages WHERE business_id = ?`, store.businessId)).toEqual([{ status: "sent" }]);
-  });
-
-  it("measures the 24-hour slot from the successful send", async () => {
-    const h = harness();
-    const { store } = await storeWithOwner();
-    const stranger = newPhone();
-    for (let n = 0; n < 3; n++) h.channel.nextResults.push({ ok: false, disposition: "retry", errorCode: "http_429" });
-    await say(h, store.phoneNumberId, stranger, "1"); // T: not sent
-    h.clock.advance(20 * HOUR);
-    await say(h, store.phoneNumberId, stranger, "2"); // T+20h: sent
-    h.clock.advance(5 * HOUR);
-    await say(h, store.phoneNumberId, stranger, "3"); // T+25h, 5 h after the send: nothing
-    expect(h.sentTo(stranger)).toHaveLength(1);
-    h.clock.advance(19 * HOUR + 1);
-    await say(h, store.phoneNumberId, stranger, "4"); // 24 h after the send: a new notice
-    expect(h.sentTo(stranger)).toHaveLength(2);
-  });
-
-  it("is pruned by its latest activity: one re-opened and sent near day 7 still holds its 24 hours (G10)", async () => {
-    const h = harness();
-    const { store } = await storeWithOwner();
-    const stranger = newPhone();
-    for (let n = 0; n < 3; n++) h.channel.nextResults.push({ ok: false, disposition: "retry", errorCode: "http_429" });
-    await say(h, store.phoneNumberId, stranger, "1"); // day 0: the notice is created, but not sent
-    h.clock.advance(7 * DAY - HOUR);
-    await say(h, store.phoneNumberId, stranger, "2"); // an hour before day 7: re-opened and sent
-    expect(h.sentTo(stranger)).toEqual([UNKNOWN_SENDER_NOTICE]);
-
-    h.clock.advance(2 * HOUR); // created over 7 days ago, sent an hour ago
-    await h.runCron();
-    await say(h, store.phoneNumberId, stranger, "3");
-    expect(h.sentTo(stranger)).toEqual([UNKNOWN_SENDER_NOTICE]); // still inside its 24 hours
-    expect(await rows(`SELECT status FROM outbound_messages WHERE business_id = ?`, store.businessId)).toEqual([{ status: "sent" }]);
-  });
-});
-
 describe("spam bounds (F11)", () => {
-  it(`stores at most ${UNKNOWN_SENDER_MESSAGES_PER_DAY} messages per unknown sender per day, and prunes them after 7 days`, async () => {
-    const h = harness();
-    const { store } = await storeWithOwner();
-    const stranger = newPhone();
-    for (let n = 0; n < UNKNOWN_SENDER_MESSAGES_PER_DAY + 3; n++) {
-      expect((await say(h, store.phoneNumberId, stranger, `spam ${n}`)).status).toBe(200);
-    }
-    expect(await rows(`SELECT 1 FROM unknown_inbound_messages WHERE business_id = ?`, store.businessId)).toHaveLength(
-      UNKNOWN_SENDER_MESSAGES_PER_DAY,
-    );
-    expect(h.log.fields("unknown_sender_recorded").filter((line) => line.outcome === "capped")).toHaveLength(3);
-    expect(h.sentTo(stranger)).toEqual([UNKNOWN_SENDER_NOTICE]);
-
-    h.clock.advance(7 * 24 * HOUR + 1);
-    await h.runCron();
-    expect(await rows(`SELECT 1 FROM unknown_inbound_messages WHERE business_id = ?`, store.businessId)).toEqual([]);
-    expect(await rows(`SELECT 1 FROM outbound_messages WHERE business_id = ?`, store.businessId)).toEqual([]);
-  });
-
-  it(`caps a member conversation at ${MEMBER_MESSAGES_PER_HOUR} messages an hour, logged`, async () => {
+  it(`caps a customer conversation at ${MEMBER_MESSAGES_PER_HOUR} messages an hour, logged`, async () => {
     const h = harness();
     const { store, phone } = await storeWithOwner();
     await say(h, store.phoneNumberId, phone, "primero");
@@ -207,7 +108,7 @@ describe("spam bounds (F11)", () => {
 
     expect((await say(h, store.phoneNumberId, phone, "uno de más")).status).toBe(200);
     expect(await rows(`SELECT 1 FROM inbound_messages WHERE business_id = ?`, store.businessId)).toHaveLength(MEMBER_MESSAGES_PER_HOUR);
-    expect(h.log.fields("member_intake_capped")).toHaveLength(1);
+    expect(h.log.fields("customer_intake_capped")).toHaveLength(1);
     expect(h.doorbell.rings).toEqual([]);
   });
 
@@ -237,7 +138,7 @@ describe("spam bounds (F11)", () => {
     for (let n = 0; n < 3; n++) expect((await photo(wamid(), `m-capped-${n}`)).status).toBe(200);
     expect(await assets()).toBe(1);
     expect(await rows(`SELECT 1 FROM inbound_messages WHERE business_id = ?`, store.businessId)).toHaveLength(MEMBER_MESSAGES_PER_HOUR);
-    expect(h.log.fields("member_intake_capped")).toHaveLength(3);
+    expect(h.log.fields("customer_intake_capped")).toHaveLength(3);
   });
 });
 

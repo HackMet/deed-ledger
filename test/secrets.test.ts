@@ -9,6 +9,7 @@ describe("test environment", () => {
     expect(env.WHATSAPP_TOKEN).toBe("");
     expect(env.SENDER_HASH_SALT).toBe("");
     expect(env.LINK_SIGNING_SECRET).toBe("");
+    expect(env.MODEL_API_KEY).toBe("");
   });
 
   it("builds a WhatsApp channel that can't send", () => {
@@ -22,6 +23,19 @@ describe("test environment", () => {
       "0001_tenancy.sql",
       "0002_messaging.sql",
       "0003_console_auth.sql",
+      "0004_customers.sql",
+      "0005_burst_reads.sql",
+      "0006_reply_claims.sql",
+      "0007_model_spend.sql",
+      "0008_console_staff.sql",
+      "0010_customer_controls.sql",
+      "0011_store_aliases.sql",
+      "0014_console_notices.sql",
+      "0015_member_names.sql",
+      "0016_pretend_engine_state.sql",
+      "0017_customer_places.sql",
+      "0018_pendientes.sql",
+      "0019_store_setup.sql",
       "0020_ledger.sql",
       "0021_orders.sql",
       "0022_order_line_details.sql",

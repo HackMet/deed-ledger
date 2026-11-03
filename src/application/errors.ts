@@ -57,12 +57,111 @@ export class PermanentWriteError extends Error {
   override readonly name = "PermanentWriteError";
 }
 
-/** A short, content-free description of an error for logs: its name, and D1's own error text. */
+/**
+ * An error with a short code of its own (`too_large`, `download_http_404`, `unverified`): a fixed
+ * word chosen by our code, never input, so logs may carry it beside the name.
+ */
+export class CodedError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+/** A short, content-free description of an error for logs: its name, its code, and D1's own error text. */
 export function describeError(error: unknown): string {
   if (!(error instanceof Error)) return "non_error_thrown";
+  if (error instanceof CodedError) return `${error.name}: ${error.code}`;
   // D1 messages name constraints, never bound values. Other messages may echo input, so skip them.
   if (error.message.startsWith("D1_")) return `${error.name}: ${error.message.slice(0, 200)}`;
   return error.name;
+}
+
+/**
+ * A reading's save refused because a message it used was used by another reading already. Nothing
+ * was saved; a retry reads the burst again without that message.
+ */
+export class BurstAlreadyReadError extends Error {
+  override readonly name = "BurstAlreadyReadError";
+
+  constructor() {
+    super("a message of this burst was already read");
+  }
+}
+
+/** A burst with more unread messages than one reading may take. Nothing is read or dropped. */
+export class BurstTooLargeError extends Error {
+  override readonly name = "BurstTooLargeError";
+
+  constructor() {
+    super("too many unread messages for one reading");
+  }
+}
+
+/** A customer commit refused because the customer isn't the store's. Nothing was saved. */
+export class CustomerNotFoundError extends Error {
+  override readonly name = "CustomerNotFoundError";
+
+  constructor() {
+    super("no such customer in this store");
+  }
+}
+
+/**
+ * A burst couldn't be read: the store's daily model budget is spent, the provider refused or failed,
+ * or the output didn't fit the schema. Nothing was read or saved; the processor retries the job and,
+ * after its last attempt, sends the honest failure reply.
+ */
+export class ReadingFailedError extends Error {
+  override readonly name = "ReadingFailedError";
+
+  constructor(readonly reason: "spend_cap" | "rejected" | "unavailable" | "invalid_output") {
+    super(`the burst could not be read: ${reason}`);
+  }
+}
+
+/** A console notice's conversation isn't the store's (or is gone): the action saves nothing. */
+export class NoticeConversationMissingError extends Error {
+  override readonly name = "NoticeConversationMissingError";
+
+  constructor() {
+    super("the notice's conversation is not in this store");
+  }
+}
+
+/**
+ * A photo or voice note that can never be read as sent: audio too long, too large, not Ogg Opus or
+ * cut off; a photo in a format the model doesn't take. Retrying reads the same bytes and fails the
+ * same way. The audio decoder's errors extend this one.
+ */
+export class UnreadableMediaError extends Error {
+  override name = "UnreadableMediaError";
+}
+
+/** One photo or voice note of a burst that couldn't be turned into something the reader can use. */
+export interface UnreadableMedia {
+  /** The burst message (job) it came with. */
+  readonly jobId: string;
+  readonly kind: "image" | "audio";
+  /** A content-free code for logs. */
+  readonly reason: string;
+  /** True when retrying can't help (a broken or over-long voice note, a photo format we can't send). */
+  readonly permanent: boolean;
+}
+
+/**
+ * Some of a burst's photos or voice notes couldn't be read or transcribed. Nothing was read or
+ * saved. The order handler retries it like a failed reading, and gives up early when every failure
+ * is permanent.
+ */
+export class BurstMediaUnreadableError extends Error {
+  override readonly name = "BurstMediaUnreadableError";
+
+  constructor(readonly failures: readonly UnreadableMedia[]) {
+    super(`${failures.length} burst media message(s) could not be read`);
+  }
 }
 
 /**

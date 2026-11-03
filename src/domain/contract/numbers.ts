@@ -23,7 +23,9 @@ export function isCentavos(value: unknown): value is Centavos {
 export function formatLempiras(amount: Centavos): string {
   const lempiras = Math.floor(amount / 100);
   const cents = amount % 100;
-  return cents === 0 ? `L ${lempiras}` : `L ${lempiras}.${String(cents).padStart(2, "0")}`;
+  // Thousands with commas, as Honduran receipts write them: "L 1,782.50".
+  const whole = String(lempiras).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return cents === 0 ? `L ${whole}` : `L ${whole}.${String(cents).padStart(2, "0")}`;
 }
 
 /** Exact conversion, without going through a float. Null for anything that isn't a DecimalString. */

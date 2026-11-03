@@ -7,7 +7,18 @@ import {
 } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import type { Engine } from "../../src/application/engine";
-import type { Deps, JobHandler, MediaSource } from "../../src/application/ports";
+import type { BurstMediaResolver } from "../../src/application/order-reading";
+import type { BurstReader } from "../../src/application/perception/reader";
+import type {
+  AudioDecoder,
+  Deps,
+  JobHandler,
+  MediaSource,
+  ModelProvider,
+  Pendientes,
+  PendientesBoard,
+  Transcriber,
+} from "../../src/application/ports";
 import { buildRuntime } from "../../src/composition";
 import { createWorker } from "../../src/index";
 import type { DoorbellMessage } from "../../src/infrastructure/queue-doorbell";
@@ -44,6 +55,15 @@ export interface HarnessOptions {
   readonly db?: D1Database;
   readonly env?: Env;
   readonly engine?: Engine;
+  /** Recorded readings instead of Muse Spark: with an engine, wires the real reader. */
+  readonly modelProvider?: ModelProvider;
+  readonly burstMedia?: BurstMediaResolver;
+  readonly burstReader?: BurstReader;
+  readonly pendientes?: Pendientes;
+  readonly pendientesBoard?: PendientesBoard;
+  /** A fake transcriber; the default has a blank key and never reaches the network. */
+  readonly transcriber?: Transcriber;
+  readonly audioDecoder?: AudioDecoder;
 }
 
 /** The real Worker (routes, D1 repositories, R2) with fake providers and a controllable clock. */
@@ -69,6 +89,13 @@ export function harness(options: HarnessOptions = {}) {
       ...(options.jobHandler === undefined ? {} : { jobHandler: options.jobHandler }),
       ...(options.db === undefined ? {} : { db: options.db }),
       ...(options.engine === undefined ? {} : { engine: options.engine }),
+      ...(options.modelProvider === undefined ? {} : { modelProvider: options.modelProvider }),
+      ...(options.burstMedia === undefined ? {} : { burstMedia: options.burstMedia }),
+      ...(options.burstReader === undefined ? {} : { burstReader: options.burstReader }),
+      ...(options.pendientes === undefined ? {} : { pendientes: options.pendientes }),
+      ...(options.pendientesBoard === undefined ? {} : { pendientesBoard: options.pendientesBoard }),
+      ...(options.transcriber === undefined ? {} : { transcriber: options.transcriber }),
+      ...(options.audioDecoder === undefined ? {} : { audioDecoder: options.audioDecoder }),
     });
   const worker = createWorker(makeRuntime);
   const deps: Deps = makeRuntime(workerEnv).deps;
@@ -114,14 +141,17 @@ export function harness(options: HarnessOptions = {}) {
       return response;
     },
 
-    /** Hands rung doorbells to the queue handler, as Cloudflare Queues would. */
-    async deliver(rings: readonly Ring[] = doorbell.take()) {
+    /**
+     * Hands rung doorbells to the queue handler, as Cloudflare Queues would. `sentAtMs`: when they
+     * were sent (default: now), for a queue that held them.
+     */
+    async deliver(rings: readonly Ring[] = doorbell.take(), sentAtMs: number = clock.now()) {
       if (rings.length === 0) return null;
       const batch = createMessageBatch<DoorbellMessage>(
         "store-assistant-jobs",
         rings.map((ring, n) => ({
           id: `doorbell-${n}-${crypto.randomUUID()}`,
-          timestamp: new Date(clock.now()),
+          timestamp: new Date(sentAtMs),
           attempts: 1,
           body: { v: 1, businessId: ring.conversation.businessId, conversationId: ring.conversation.conversationId },
         })),

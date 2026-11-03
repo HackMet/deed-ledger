@@ -44,6 +44,17 @@ export function audioMessage(spec: MessageSpec & { readonly mediaId: string }) {
   };
 }
 
+/** A tap on a reply button (Meta's interactive button_reply). */
+export function buttonReply(spec: MessageSpec & { readonly replyId: string; readonly title: string }) {
+  return {
+    from: spec.from,
+    id: spec.id,
+    timestamp: String(spec.timestampS),
+    type: "interactive",
+    interactive: { type: "button_reply", button_reply: { id: spec.replyId, title: spec.title } },
+  };
+}
+
 export function statusUpdate(spec: { readonly id: string; readonly status: string; readonly timestampS: number }) {
   return { id: spec.id, status: spec.status, timestamp: String(spec.timestampS), recipient_id: "50400000999" };
 }
@@ -90,4 +101,25 @@ let counter = 0;
 /** A fresh synthetic provider message ID. */
 export function wamid(label = "IN"): string {
   return `wamid.TEST-${label}-${Date.now().toString(36)}-${++counter}`;
+}
+
+/**
+ * A shared WhatsApp location, as the Cloud API webhook sends it (`type: "location"`). Synthetic:
+ * the shape follows a third-party schema of Meta's webhook; #25 replaces it with a captured payload.
+ */
+export function locationMessage(
+  spec: MessageSpec & { readonly latitude: unknown; readonly longitude: unknown; readonly name?: string; readonly address?: string },
+) {
+  return {
+    from: spec.from,
+    id: spec.id,
+    timestamp: String(spec.timestampS),
+    type: "location",
+    location: {
+      latitude: spec.latitude,
+      longitude: spec.longitude,
+      ...(spec.name === undefined ? {} : { name: spec.name }),
+      ...(spec.address === undefined ? {} : { address: spec.address }),
+    },
+  };
 }

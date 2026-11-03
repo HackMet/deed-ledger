@@ -4,13 +4,13 @@ import { dispatchOutbox, type SendOutcome } from "../src/application/dispatch";
 import { placeholderHandler } from "../src/application/placeholder-handler";
 import type { JobHandler } from "../src/application/ports";
 import { runSweep } from "../src/application/sweep";
-import { couldNotProcess, RECEIVED_PLACEHOLDER, UNKNOWN_SENDER_NOTICE } from "../src/domain/copy";
-import { CLAIM_CONFIRM_MAX_MS, SEND_CLAIM_MS, UNKNOWN_NOTICE_INLINE_RETRY_DELAYS_MS } from "../src/domain/outbox";
+import { couldNotProcess, RECEIVED_PLACEHOLDER } from "../src/domain/copy";
+import { CLAIM_CONFIRM_MAX_MS, SEND_CLAIM_MS } from "../src/domain/outbox";
 import { splitText } from "../src/domain/text";
 import { WhatsAppCloudChannel } from "../src/integrations/whatsapp/client";
 import { FakeClock, failWritesMatching, hookDb } from "./helpers/fakes";
 import { conversationOf, expireClaims, type Harness, harness, OUTLIVES_TEST_MS, rows } from "./helpers/harness";
-import { newPhone, seedStore } from "./helpers/seed";
+import { newPhone, seedIntroducedCustomer, seedStore } from "./helpers/seed";
 import { statusUpdate, textMessage, wamid, webhook } from "./helpers/whatsapp";
 
 const HOUR = 60 * 60 * 1000;
@@ -118,8 +118,8 @@ describe("a dispatcher sends only while it holds the claim (G4)", () => {
   it("doesn't send when maintenance settled the row while the dispatcher was blocked in its reads", async () => {
     let businessId = "";
     let h!: Harness;
-    // The dispatcher is stuck reading the member's phone past its claim; the sweep settles the row meanwhile.
-    const db = hookDb(env.DB, /SELECT u\.phone FROM conversations/, async () => {
+    // The dispatcher is stuck reading the customer's phone past its claim; the sweep settles the row meanwhile.
+    const db = hookDb(env.DB, /SELECT cu\.phone FROM conversations/, async () => {
       await expireClaims(businessId);
       await h.runCron();
     });
@@ -307,8 +307,8 @@ describe("the 24-hour window at send time (F13)", () => {
   it("uses a time sampled after the dispatcher's reads", async () => {
     const clock = new FakeClock();
     let h!: Harness;
-    // While the dispatcher reads the member's phone, time moves past the window.
-    const db = hookDb(env.DB, /SELECT u\.phone FROM conversations/, async () => {
+    // While the dispatcher reads the customer's phone, time moves past the window.
+    const db = hookDb(env.DB, /SELECT cu\.phone FROM conversations/, async () => {
       clock.advance(2 * 60 * 1000);
     });
     h = harness({ clock, db, jobHandler: lasting() });
@@ -372,30 +372,14 @@ describe("the claim's confirmation, right before the send (H4)", () => {
     expect(await dispatchOutbox(h.deps, { limit: 10, conversation })).toEqual(["sent"]);
     expect(h.sentTo(phone)).toEqual(["Respuesta"]);
   });
-
-  it("ends an unknown sender's notice whose last inline attempt confirmed slowly, so the next message retries it", async () => {
-    const clock = new FakeClock();
-    const attempts = UNKNOWN_NOTICE_INLINE_RETRY_DELAYS_MS.length;
-    const h = harness({ clock, db: confirmationTaking(clock, CLAIM_CONFIRM_MAX_MS + 1, attempts) });
-    const { store } = await storeWithOwner();
-    const stranger = newPhone();
-    const say = (body: string) =>
-      h.post(webhook(store.phoneNumberId, { messages: [textMessage({ from: stranger, id: wamid(), timestampS: nowS(h), body })] }));
-
-    await say("Hola"); // every inline attempt confirms too slowly to send on
-    expect(h.sentTo(stranger)).toEqual([]);
-    expect(await outboxOf(store.businessId)).toMatchObject([{ status: "failed", last_error: "claim_confirm_slow" }]);
-
-    clock.advance(60_000);
-    await say("¿Hola?");
-    expect(h.sentTo(stranger)).toEqual([UNKNOWN_SENDER_NOTICE]);
-  });
 });
 
 describe("expiry (F15)", () => {
   it("expires the placeholder after an hour instead of sending it late", async () => {
     const h = harness();
     const { store, phone } = await storeWithOwner();
+    // A returning customer, already introduced (#30): this test counts replies.
+    await seedIntroducedCustomer(store, phone);
     await h.post(webhook(store.phoneNumberId, { messages: [textMessage({ from: phone, id: wamid(), timestampS: nowS(h), body: "Hola" })] }));
     h.clock.advance(4_000);
     h.channel.nextResults.push({ ok: false, disposition: "retry", errorCode: "http_429" });

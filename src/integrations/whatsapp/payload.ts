@@ -3,11 +3,14 @@
  * webhook references (checked October 28, 2026):
  * https://developers.facebook.com/documentation/business-messaging/whatsapp/webhooks/reference/messages/text
  * .../messages/image, .../messages/audio, .../messages/interactive, .../messages/status
+ * Location (#29): `location: { latitude, longitude, name?, address?, url? }`, from a third-party
+ * schema of the same webhook (context7, Oct 31), not yet Meta's page or a captured payload (#25).
  *
  * Anything unexpected is skipped, not guessed. Content stays untrusted data.
  */
 import type { ChannelEvent, InboundMedia, InboundMessageEvent, StatusEvent } from "../../application/ports";
 import { isProviderStatus } from "../../domain/outbox";
+import { type Pin, parsePin } from "../../domain/place";
 import { normalizePhone } from "../../domain/phone";
 import type { MessageKind } from "../../domain/processing";
 
@@ -76,6 +79,7 @@ function parseMessage(phoneNumberId: string, raw: unknown): InboundMessageEvent 
   let textBody: string | null = null;
   let replyId: string | null = null;
   let media: InboundMedia | null = null;
+  let location: Pin | null = null;
 
   // A photo or voice note without a usable media ID keeps its kind with media null: it is stored
   // without an asset, and its job ends with an honest reply instead of "received".
@@ -91,6 +95,10 @@ function parseMessage(phoneNumberId: string, raw: unknown): InboundMessageEvent 
   } else if (type === "audio") {
     kind = "audio";
     if (isRecord(raw.audio)) media = parseMedia(raw.audio);
+  } else if (type === "location" && isRecord(raw.location)) {
+    // Kind stays "other" (the column's CHECK rule); only the coordinates are kept. The pin's name
+    // and address are the map's words, not the customer's, and aren't stored.
+    location = parsePin(raw.location.latitude, raw.location.longitude);
   } else if (type === "interactive" && isRecord(raw.interactive)) {
     const reply = raw.interactive.button_reply ?? raw.interactive.list_reply;
     if (isRecord(reply)) {
@@ -111,6 +119,7 @@ function parseMessage(phoneNumberId: string, raw: unknown): InboundMessageEvent 
     replyId,
     contextMessageId: isRecord(raw.context) ? text(raw.context.id) : null,
     media,
+    location,
   };
 }
 

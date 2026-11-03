@@ -69,6 +69,8 @@ export const firstOrder: BurstReading = one(
 export const sizeAnswer: BurstReading = one({
   kind: "clarification",
   answer: "de litro",
+  pick: null,
+  quantity: null,
   evidence: { source: "text", message: 0, start: 0, end: 8 },
   issues: [],
 });

@@ -3,9 +3,68 @@
 Shared state for every agent: what's true now, what's next, what's open, what bit us. Keep it short. Anything a
 command can tell you (git log, test results, CI) doesn't belong here. Decisions go in [decisions.md](decisions.md).
 
-Last updated: Fri Oct 30, 2026, evening Honduras time, by Claude Code (E7: docs for the order engine chain, no code).
+Last updated: Tue Nov 3, 2026, morning Honduras time, by Claude Code.
 
 ## Now
+
+- **Live (Nov 3):** deployed to Cloudflare Workers on Meta's WhatsApp test number, store "Tienda demo (sintética)"
+  with a synthetic 40-product catalog, `PRETEND_ENGINE=1`, `CONVERSATION=planner`, `TEST_COMMANDS=1`
+  (docs/deploy.md). Tested end to end from a phone: order, readback with buttons and footer, Confirmar, name,
+  staff Listo, the customer notice. Real WhatsApp voice notes have no Ogg end-of-stream page (#27 settled): the
+  reader no longer requires it and downloads are checked against Meta's `sha256` and `file_size` instead.
+- **Planner (D-45 to D-52, `CONVERSATION=planner`; default stays `classic`):** a Muse Spark call decides the next
+  step from two instruction files (`src/application/planner/instructions/`); code validates every proposal
+  (`src/domain/planner/validate.ts`), the readiness gate (`src/domain/readiness.ts`) has the last word, and the
+  pretend engine applies the plan. Text and voice are read and planned in one call (`one-call.ts`); photos take two.
+  Whole-catalog retrieval with reader-proposed other names; learned aliases proposed inside the confirmation batch
+  and approved in Pendientes; the planner's sentence is one of fixed phrases (`SAY_PHRASES`). Effort: reader `low`,
+  planner and one call `minimal`, prompt-cache keys per instruction version. Live: 4–7 s per model call, 9–13 s
+  receipt to reply (3 s of it is the deliberate burst wait).
+- **Evidence:** head-to-head eval (Nov 3, `npm run eval`): planner 27–28/32, classic 12–16/32, zero truth failures
+  on both; the planner failures since fixed (option-list loop, voice like text, "una" after a question, runner
+  crash, E22). Two Codex reviews, every finding fixed with a failing test first. E21's recording is an owner's sales
+  report, not an order: its expectation needs a real customer voice order.
+- **Codex final pass, Nov 3:** six findings fixed, each with a failing test first: a quantity or removal names a
+  line only when the words tell it apart from the other lines; `/new` keeps inbound provider IDs (duplicates) and
+  erases only the media up to its cutoff; only an affirmative answer picks an option, read against the list as shown
+  (stale prices name nothing); a voice note without a usable `sha256` or `file_size` is retried as `unverified`.
+- **Test commands:** `/new` makes a store member's phone a new customer again, `/help` lists the commands; only with
+  `TEST_COMMANDS=1` and only for the store's own members (docs/deploy.md "Testing on the live number").
+- **Next:** push to PR #63 (Angel), Kerly tests with her number, a real
+  WhatsApp number for judging, demo video and submission.
+
+- The product is an order assistant: customers order on WhatsApp, Johan and staff work from a phone console, and
+  both end in the same engine. Two-person team (D-37): Angel owns conversations, perception, replies, the console
+  and deploys; kercmari owns the engine (orders, payments, sales, fiado, stock, prices, fact memory).
+- Built on Angel's side, against the in-memory pretend engine (handoffs `handoffs/2026-10-31-*.md`):
+  - customers (#14–#16), the full order trip (#17), console taps that message the customer (#18);
+  - Spanish replies, the claim check and reply buttons (#19, #20); reading orders with Muse Spark (#21);
+  - console login (#22, PR #61) and shell with Empleados (#23); the Anotar reader (#26);
+  - media download, voice notes decoded and transcribed, both read in orders (#27). Settled Nov 3: real WhatsApp
+    voice notes have no Ogg end-of-stream flag, so the decoder no longer requires it; a cut-off download is caught
+    instead by checking the bytes against the `sha256` and `file_size` Meta declares (retried like a timeout).
+    Both real notes decode locally (about 9.0 s and 7.9 s); not yet tried on the deployed bot;
+  - first message, ALTO, handoff and deletion, a privacy page (#30); the two-minute message (#31);
+  - delivery to a saved place (#29): pins from the webhook, saved places offered with Sí / Otro lugar (migration
+    0017; contract additions proposed in [contract.md](contract.md) "Proposed (#29)");
+  - customer questions: price, availability, store hours (#47); contract additions proposed in contract.md
+    "Proposed (#47)";
+  - console menu and look (worktree `hackathon-claude-menu`, not committed): bottom tabs, Más, Pendientes
+    (migration 0018) with its count on the owner's tab, a top bar with who is logged in, and Pedidos as a list plus
+    a page per order (`handoffs/2026-10-31-console-look.md`);
+  - conversation rules (same worktree, not committed): never silent, name asked at Confirmar, typed yes and typed
+    button numbers, greetings and thanks, question + order in one reply, stop in other words, honest failure and
+    handoff copy (`handoffs/2026-10-31-conversation-fixes.md`; engine side proposed in contract.md "Proposed
+    (conversation rules)").
+- kercmari's engine is PR #62. A local trial ran this branch's full path on it: orders save once under our customer
+  IDs, but no order reply goes out until `verifyClaims` exists (#12); the list and staff taps need #12 too.
+- Contract gaps (a)–(p) and 16 questions from the build have proposed answers in [contract.md](contract.md); not
+  agreed yet. Gap (p) is settled: one model call per burst.
+
+
+## Engine side, as merged on team main (kercmari, PRs #62 and #64)
+
+Kept as written on `main`. In this merge the default `jobHandler` is the order handler with Muse Spark reading (the fixture perception adapter is no longer wired in); `OrderEngine` is in the code and plugs in at the composition root's engine line once it has `preparationList`, `verifyClaims` and the store's prices.
 
 - The product is now an order assistant: customers order on WhatsApp, Johan and staff work from a phone console,
   and both end in the same engine. The team's PRD v1.2 and Tech Spec v3 describe it; they were shared with the
@@ -70,15 +129,13 @@ Last updated: Fri Oct 30, 2026, evening Honduras time, by Claude Code (E7: docs 
 
 | # | Task | Owner | Notes |
 |---|---|---|---|
-| 1 | Spec meeting: agree contract v1 and its open questions | Both | [contract.md](contract.md#open-for-the-meeting) |
-| 2 | PR `claude/base-layer` into `main` on the team repo | Angel | Merge commit, not squash |
-| 3 | Engine on the contract, saving through `JobOutcome.commits` | Teammate | Order engine wired to text jobs through the fixture adapter (T6b); the console still runs the pretend engine |
-| 4 | Console login (invite QR, sessions, roles), then a deploy | Angel (Claude Code) | PR #61; the deploy needs `LINK_SIGNING_SECRET` set first |
-| 5 | Replies and the claim check; perception for customer orders | Angel (Claude Code) | Against the contract fixtures |
-| 6 | The two-minute "te respondemos en un momento" fallback | Angel (Claude Code) | Specified, not built |
+| 1 | Agree the contract answers; settle migration numbers before any remote apply | Both | Call Sat Oct 31, 4 PM Honduras |
+| 2 | `verifyClaims`, `preparationList`, `onConsoleAction` on the real engine (#12) | kercmari | Unblocks every customer reply on her engine |
+| 3 | Swap the pretend engine for the real one (#13) | Angel (Claude Code) | Bridge built in the local trial |
+| 4 | First deploy (#24) | Angel | `docs/deploy.md`; set `LINK_SIGNING_SECRET`, `MODEL_API_KEY`, `PUBLIC_BASE_URL` |
+| 5 | Capture real WhatsApp payloads (#25) | Angel | Needs the deploy |
 
-Gate: Saturday Oct 31, 8:00 PM Honduras time. A customer order runs end to end on fixtures through the engine, and
-staff use the preparation list on their own phones. If the console can't pass, it is cut and the scope replanned.
+Gate: Saturday Oct 31, 8:00 PM Honduras time.
 
 ## Open: waiting on someone
 
@@ -91,16 +148,16 @@ staff use the preparation list on their own phones. If the console can't pass, i
 | Repository license, and when it goes public (right before submitting) | Team | Oct 26 |
 | Decisions made since Oct 28 aren't in [decisions.md](decisions.md) yet | Angel → Claude Code | Oct 28 |
 | Product and team name: "Johan AI" is a working title | Team | Oct 27 |
-| D-41 (fact memory under `Commit`) and D-42 (read before every guard) are Proposed and need Angel's acceptance | Angel | Oct 30 |
-| D-43 (customer cancel refused once preparando; re-confirm returns to the interrupted state) and D-44 (operation keys derived from the customer's own order and action) are Proposed and need Angel's acceptance | Angel | Oct 30 |
-| Issue #12: `preparationList`, `verifyClaims` and the console taps are not built | Teammate | Oct 30 |
-| Order engine is wired only through the fixture perception adapter (T6b); `dev:sim` and `simulate` not run | Teammate | Oct 30 |
-| Perception questions (ambiguous size, missing fulfillment) not asked; unit prices null, so totals null | Teammate, with Angel's perception | Oct 30 |
-| Order tables lack some guards: no FK between order tables, no version-immutability trigger, no partial UNIQUE for one open order, `facts.operation_key` has no FK to `operations` | Teammate | Oct 30 |
-| `operations` rows do not store `customer_id`; ownership is checked through the order instead | Teammate | Oct 30 |
-| Trace shas for T1 to T5 and T7 (e.g. `137ec35`, `6c92127`) are on `claude/fact-memory`, not on `claude/fact-ledger`; the same work is committed here under other shas | Team | Oct 30 |
 
 ## Traps
+
+- Migration numbers: Angel's side uses 0003–0019, kercmari's 0020–0039 (proposed in #6). PR #62 still uses 0003–0005;
+  renaming a migration after it ran remotely makes wrangler run it again. Settle before any remote apply.
+- `test/secrets.test.ts` lists every migration by name: every branch that adds one conflicts there.
+- At the model's own reasoning effort, the planner once reasoned past its 6,144-token cap on an 11-item list (59 s, cut
+  off, classic fallback). Keep `PLANNER_REASONING_EFFORT` at `minimal` or `low`. Reader `minimal` misread "5 consome"
+  as a product name; `low` is the floor.
+- A photo's caption never reaches the reader: `resolveBurst` (`order-reading.ts`) sends only the image for photo jobs.
 
 - Claude Code skips `AGENTS.md` in this folder unless `CLAUDE.md` imports it (`~/angel/CLAUDE.md` is above the
   repo). Keep the import.
@@ -109,9 +166,19 @@ staff use the preparation list on their own phones. If the console can't pass, i
   `MODEL_API_KEY`.
 - Muse's sandbox keeps `.git` read-only: it can't commit, so Angel commits its work.
 - WhatsApp voice notes have to become WAV (mono, 16-bit, 16 or 24 kHz) before Muse Voice Transcribe accepts them.
+- WhatsApp voice notes end without the Ogg end-of-stream flag (#27). Don't make the decoder require it again: a
+  cut-off note is caught at download, against Meta's `sha256` and `file_size`. Meta's `sha256` encoding is
+  undocumented; the download reads hex or base64. If every media download fails after a deploy, that check is the
+  suspect: the log says only `media_not_downloaded` with reason `MediaDownloadError`, not the error's code.
 - Workers Free gives 10 ms of CPU per invocation. Angel's account is on Workers Paid (30 s by default, up to 5 min).
 - In a D1 batch, an `UPDATE` that matches 0 rows doesn't roll anything back. Guards must fail loudly (UNIQUE or
   CHECK).
+- Eval detectors: a readiness claim needs a present-tense predicate on the pedido ("está listo") — the classic
+  confirmation opens with "Listo, \<name\>" and promises "te aviso cuando esté listo" (subjunctive), which is the
+  opposite of a claim. Money mentions must be backed by per-step order snapshots, not just the final order, or
+  mid-run totals read as lies after an unpriced line lands.
+- `npm run eval` must survive a scenario error with a transcript: one crashing scenario once took down the whole
+  run's `all.md`/`results.json` (E22).
 - Inside workerd, timers don't advance during synchronous work, so measure CPU-heavy code elsewhere.
 - This machine restricts unprivileged user namespaces, so bubblewrap sandboxes can fail to start: Codex warns but
   still runs read-only commands; Muse may refuse shell commands. See [workflow.md](workflow.md#muse-code).

@@ -27,11 +27,18 @@ describe("outbox fairness (F14)", () => {
     await env.DB.batch(
       x.members.flatMap((member) => {
         const conversationId = crypto.randomUUID();
+        const customerId = crypto.randomUUID();
         return [
+          env.DB.prepare(`INSERT INTO customers (id, business_id, phone, created_at_ms) VALUES (?, ?, ?, ?)`).bind(
+            customerId,
+            x.businessId,
+            member.phone,
+            twoDaysAgo,
+          ),
           env.DB.prepare(
-            `INSERT INTO conversations (id, business_id, channel_account_id, user_id, last_inbound_at_ms, created_at_ms)
+            `INSERT INTO conversations (id, business_id, channel_account_id, customer_id, last_inbound_at_ms, created_at_ms)
              VALUES (?, ?, ?, ?, ?, ?)`,
-          ).bind(conversationId, x.businessId, x.channelAccountId, member.userId, twoDaysAgo, twoDaysAgo),
+          ).bind(conversationId, x.businessId, x.channelAccountId, customerId, twoDaysAgo, twoDaysAgo),
           env.DB.prepare(
             `INSERT INTO outbound_messages (id, business_id, channel_account_id, conversation_id, seq, kind, body_text,
                dedupe_key, status, expires_at_ms, created_at_ms, updated_at_ms)
