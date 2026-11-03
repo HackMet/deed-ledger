@@ -50,6 +50,7 @@ const input = (textBody: string | null, over: Partial<JobInput["job"]> = {}): Jo
     replyId: null,
     contextMessageId: null,
     mediaAssetId: null,
+    location: null,
     orderTsS: 0,
     receivedAtMs: 0,
     attempts: 0,

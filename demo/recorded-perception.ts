@@ -9,7 +9,7 @@
  * reads exactly those words; any other text goes to the placeholder, never a guess.
  */
 import type { CustomerContext, Engine, LineMatch } from "../src/application/engine";
-import { type OpenOrderReader, fixturePerceptionHandler } from "../src/application/engine/fixture-perception-handler";
+import { type ConversationCustomers, type OpenOrderReader, customerIdOf, fixturePerceptionHandler } from "../src/application/engine/fixture-perception-handler";
 import { placeholderHandler } from "../src/application/placeholder-handler";
 import type { Clock, JobHandler, JobInput, JobOutcome } from "../src/application/ports";
 import type { BurstReading } from "../src/domain/contract/observation";
@@ -109,6 +109,7 @@ export function recordedPerceptionHandler(deps: {
   readonly orders: OpenOrderReader;
   readonly clock: Clock;
   readonly recordings: readonly Recording[];
+  readonly customers?: ConversationCustomers;
 }): JobHandler {
   const index = indexRecordings(deps.recordings);
   const words = fixturePerceptionHandler(deps);
@@ -124,8 +125,8 @@ export function recordedPerceptionHandler(deps: {
       const context: CustomerContext = {
         businessId: lease.businessId,
         conversationId: lease.conversationId,
-        // As in the fixture handler: the conversation is the customer, never an id from the message.
-        customerId: lease.conversationId,
+        // As in the fixture handler: from our records, never an id from the message.
+        customerId: await customerIdOf(deps.customers, lease),
         jobId: job.id,
         nowMs: deps.clock.now(),
       };

@@ -4,6 +4,7 @@
  */
 import { buildRuntime, type Runtime } from "../src/composition";
 import { OrderEngine } from "../src/application/engine/order-engine";
+import { D1CustomerRepository } from "../src/infrastructure/d1/customer-repository";
 import { D1FactLedger } from "../src/infrastructure/d1/fact-ledger";
 import { D1OrderStore } from "../src/infrastructure/d1/order-store";
 import { randomIds, systemClock } from "../src/infrastructure/runtime";
@@ -17,7 +18,7 @@ type DemoEnv = Env & { readonly DEMO_RECORDINGS?: string };
 export function demoRuntime(env: Env, recordings: readonly Recording[] = recordingsFromBase64((env as DemoEnv).DEMO_RECORDINGS)): Runtime {
   const orders = new D1OrderStore(env.DB);
   const engine = new OrderEngine({ store: orders, ids: randomIds, ledger: new D1FactLedger(env.DB) });
-  return buildRuntime(env, { engine, jobHandler: recordedPerceptionHandler({ engine, orders, clock: systemClock, recordings }) });
+  return buildRuntime(env, { engine, jobHandler: recordedPerceptionHandler({ engine, orders, clock: systemClock, recordings, customers: new D1CustomerRepository(env.DB) }) });
 }
 
 export default createWorker((env) => demoRuntime(env));

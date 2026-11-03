@@ -5,6 +5,9 @@
   "name": "store-assistant-demo",
   "main": "worker.ts",
   "compatibility_date": "2026-10-23",
+  "rules": [{ "type": "Text", "globs": ["**/*.md"], "fallthrough": true }],
+  "build": { "command": "node scripts/extract-opus-wasm.mjs" },
+  "alias": { "@eshaz/web-worker": "../src/integrations/audio/no-web-worker.ts" },
 
   "vars": {
     "WHATSAPP_GRAPH_API_VERSION": "v26.0",
@@ -18,9 +21,9 @@
     "required": ["WHATSAPP_APP_SECRET", "WHATSAPP_VERIFY_TOKEN", "WHATSAPP_TOKEN", "SENDER_HASH_SALT", "LINK_SIGNING_SECRET"]
   },
 
-  // Same database name as wrangler.jsonc, so the admin scripts and this Worker share one local D1
+  // Same database name and id as wrangler.jsonc, so the admin scripts and this Worker share one local D1
   // under the same --persist-to.
-  "d1_databases": [{ "binding": "DB", "database_name": "store-assistant", "migrations_dir": "../migrations" }],
+  "d1_databases": [{ "binding": "DB", "database_name": "store-assistant", "database_id": "d5c4de06-0265-41a7-b8db-6ef722e54261", "migrations_dir": "../migrations" }],
 
   "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "store-assistant-media" }],
 

@@ -185,7 +185,7 @@ async function scenario(cookie) {
   console.log("— C: cancels; staff can't start it");
   await placeOrder("C");
   await confirm("C");
-  const cVersion = staff.version(await staff.preparacion(), orderOf(CUSTOMERS.C)?.id);
+  const cVersion = await staff.version(orderOf(CUSTOMERS.C)?.id);
   await cancel("C");
   await refusedTap("C", "start_preparing", cVersion);
 
@@ -217,7 +217,7 @@ async function scenario(cookie) {
   }));
   await confirm("E");
   eOrderId = orderOf(CUSTOMERS.E)?.id ?? null;
-  const eVersion = staff.version(await staff.preparacion(), eOrderId);
+  const eVersion = await staff.version(eOrderId);
   await cancel("E");
   await refusedTap("E", "mark_ready", eVersion);
   await run("E", "check: trail at /console/pedidos/<E>", async () => {
@@ -318,7 +318,7 @@ async function postWebhook(phone, text) {
   if (response.status !== 200) throw new Error(`webhook answered ${response.status}: ${await response.text()}`);
 }
 
-const byPhone = (phone) => `o.conversation_id IN (SELECT c.id FROM conversations c JOIN users u ON u.id = c.user_id WHERE u.phone = '${phone}')`;
+const byPhone = (phone) => `o.conversation_id IN (SELECT c.id FROM conversations c JOIN customers u ON u.id = c.customer_id WHERE u.phone = '${phone}')`;
 const lastSeq = (phone) => query(`SELECT coalesce(max(o.seq), 0) AS seq FROM outbound_messages o WHERE ${byPhone(phone)}`)[0]?.seq ?? 0;
 const outboxSince = (phone, seq) => query(`SELECT o.seq, o.body_text FROM outbound_messages o WHERE ${byPhone(phone)} AND o.seq > ${Number(seq)} ORDER BY o.seq`);
 
@@ -330,7 +330,7 @@ async function heardSince(phone, seq) {
 
 function orderOf(phone) {
   return query(`SELECT o.id, o.state, o.current_version FROM orders o WHERE o.customer_id IN
-    (SELECT c.id FROM conversations c JOIN users u ON u.id = c.user_id WHERE u.phone = '${phone}') ORDER BY o.created_at_ms DESC LIMIT 1`)[0];
+    (SELECT u.id FROM customers u WHERE u.phone = '${phone}') ORDER BY o.created_at_ms DESC LIMIT 1`)[0];
 }
 
 // --- Staff: the console, like a person with a phone ----------------------------------------------
@@ -360,25 +360,25 @@ function staffConsole(cookie) {
     return response.status === 303 ? response.headers.get("location") : `${response.status}`;
   };
   const csrfOf = (page) => page.match(/name="csrf" value="([^"]+)"/)?.[1] ?? "";
-  const cardOf = (page, orderId) => {
-    const start = page.indexOf(`id="${orderId}"`);
-    return start < 0 ? null : page.slice(start, page.indexOf("</section>", start));
+  // Preparación lists cards; each order's buttons are on its own page (#63). Null when the order
+  // isn't on the list (its page answers 404).
+  const orderPage = async (orderId) => {
+    if (orderId === undefined || orderId === null) return null;
+    const response = await fetch(`${BASE}/console/preparacion/${encodeURIComponent(orderId)}`, { headers: { cookie }, redirect: "manual" });
+    return response.status === 200 ? response.text() : null;
   };
   return {
     get,
-    preparacion: () => get("/console/preparacion"),
-    /** The version a staff screen showed for the order, or null if it wasn't on the list. */
-    version(page, orderId) {
-      const card = orderId === undefined || orderId === null ? null : cardOf(page, orderId);
-      const version = card?.match(/name="version" value="(\d+)"/)?.[1];
+    /** The version the order's Preparación page showed, or null if it wasn't on the list. */
+    async version(orderId) {
+      const version = (await orderPage(orderId))?.match(/name="version" value="(\d+)"/)?.[1];
       return version === undefined ? null : Number(version);
     },
     /** A tap on Preparación: the card's own button if it is on screen, else the tap a stale screen would send. */
     async tap(who, type, staleVersion) {
       const phone = CUSTOMERS[who];
       const order = orderOf(phone);
-      const page = await get("/console/preparacion");
-      const card = order === undefined ? null : cardOf(page, order.id);
+      const card = await orderPage(order?.id);
       const forms = card === null ? [] : [...card.matchAll(/<form[^>]*action="\/console\/acciones">([\s\S]*?)<\/form>/g)].map((m) => m[1]);
       const button = forms.find((f) => f.includes(`name="type" value="${type}"`));
       const field = (html, name) => html?.match(new RegExp(`name="${name}" value="([^"]*)"`))?.[1];
@@ -388,8 +388,9 @@ function staffConsole(cookie) {
         type,
         orderId: order?.id ?? "",
         version: String(version),
-        operationKey: field(button, "operationKey") ?? randomUUID(),
-        csrf: csrfOf(page),
+        // A stale screen carries the key the engine derived for the version it showed (D-44).
+        operationKey: field(button, "operationKey") ?? `staff:${order?.id ?? ""}:${version}:${type}`,
+        csrf: csrfOf(card ?? "") || csrfOf(await get("/console/anotar")),
       });
       const onScreen = button === undefined ? "button not on screen" : "button on screen";
       return { redirect, heard: await heardSince(phone, seq), detail: `${onScreen} → ${redirect}` };
@@ -403,7 +404,7 @@ function staffConsole(cookie) {
       const version = formHtml?.match(/name="version" value="(\d+)"/)?.[1] ?? String(order.current_version);
       const courier = query(`SELECT u.id FROM users u WHERE u.phone = '${COURIER.phone}'`)[0]?.id;
       // The session's CSRF value is on every page with a form; a trail with no buttons has none.
-      const csrf = csrfOf(page) || csrfOf(await get("/console/preparacion"));
+      const csrf = csrfOf(page) || csrfOf(await get("/console/anotar"));
       const fields = { csrf, paso, version, ...(paso === "despachar" ? { repartidor: courier } : {}) };
       const seq = lastSeq(phone);
       const redirect = await post(`/console/pedidos/${encodeURIComponent(order.id)}/paso`, fields);
@@ -447,8 +448,16 @@ function sameDelta(delta, expected) {
 }
 
 function query(sql) {
-  const out = wrangler(["d1", "execute", "DB", "--local", "--config", CONFIG, "--persist-to", STATE, "--json", "--command", sql]);
-  return JSON.parse(out)[0]?.results ?? [];
+  // The Worker writes the same SQLite file: a busy read waits and tries again, a few times.
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const out = wrangler(["d1", "execute", "DB", "--local", "--config", CONFIG, "--persist-to", STATE, "--json", "--command", sql]);
+      return JSON.parse(out)[0]?.results ?? [];
+    } catch (error) {
+      if (attempt >= 5 || !/SQLITE_BUSY|database is locked/.test(String(error?.message ?? error))) throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300 * attempt);
+    }
+  }
 }
 
 /** The customers and the courier, as members of the synthetic store: intake processes members only. */
