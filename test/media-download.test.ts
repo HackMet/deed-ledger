@@ -170,10 +170,33 @@ describe("WhatsApp media download completeness (#27)", () => {
     expect(error).not.toBeInstanceOf(UnreadableMediaError);
   });
 
-  it("accepts the bytes as before when Meta declares neither a hash nor a size", async () => {
-    const blanks = [{ sha256: undefined, file_size: undefined }, { sha256: null, file_size: null }, { sha256: "", file_size: "" }];
+  // Codex final pass, finding 6 (Nov 3): a voice note with nothing to check it against was accepted.
+  const blanks = [
+    { sha256: undefined, file_size: undefined },
+    { sha256: null, file_size: null },
+    { sha256: "", file_size: "" },
+    { sha256: "c3ludGhldGlj", file_size: "not a size" },
+  ];
+
+  it("refuses a voice note as unverified, retryable, when Meta declares no usable hash or size", async () => {
     for (const lookup of blanks) {
-      const result = await download(lookup, "any length at all");
+      const error = await download(lookup, "any length at all").catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(MediaDownloadError);
+      expect(error).toMatchObject({ code: "unverified", message: "media download failed: unverified" });
+      expect(error).not.toBeInstanceOf(UnreadableMediaError);
+    }
+  });
+
+  it("takes the download's own type when the lookup gives none: audio without declarations is still refused", async () => {
+    const { media } = source((_call, n) =>
+      n === 1 ? lookupResponse({ mime_type: undefined, sha256: undefined, file_size: undefined }) : new Response(BODY, { headers: { "content-type": "audio/ogg" } }),
+    );
+    await expect(media.fetch(REF)).rejects.toMatchObject({ code: "unverified" });
+  });
+
+  it("accepts a photo as before when Meta declares neither a hash nor a size", async () => {
+    for (const lookup of blanks) {
+      const result = await download({ ...lookup, mime_type: "image/jpeg" }, "any length at all");
       expect(new TextDecoder().decode(result!.bytes)).toBe("any length at all");
     }
   });

@@ -6,7 +6,9 @@
  *   erased the way a deletion request erases it (media, message text, what we sent them, saved
  *   places, Pendientes, readback pointers, proposed aliases), and their name and introduction are
  *   cleared, so their next message gets the first-message welcome. Their phone stays, so the
- *   reply reaches them. Sent again with nothing left to reset, it only replies.
+ *   reply reaches them, and so do the provider IDs of the erased messages, so a re-delivery of
+ *   any of them (the /new itself included) is a duplicate. Sent again with nothing left to reset,
+ *   it only replies.
  * - `/help` (`/ayuda`): the commands, one line each.
  *
  * Two locks, both required, checked here before the gate and before any model call: the Worker's
@@ -88,7 +90,8 @@ export async function handleTestCommand(deps: TestCommandDeps | null | undefined
     }
   }
   // Photos and voice notes first, as the deletion purge does; D1 forgets their references below.
-  const { mediaPrefixes } = await deps.controls.deletionMedia(lease, customer.id);
+  // Only those of the messages the erasure covers: a photo received after the command keeps its bytes.
+  const { mediaPrefixes } = await deps.controls.deletionMedia(lease, customer.id, job.receivedAtMs);
   for (const prefix of mediaPrefixes) await deps.mediaEraser.erasePrefix(lease, prefix);
   commits.push(deps.controls.resetCommit(lease, customer.id, job.receivedAtMs, nowMs));
   deps.log.info("test_command", { ...ids, outcome: "reset" });

@@ -315,6 +315,9 @@ the engine a `TurnPlan`. Code still renders every fact, and the claim check is u
      of the customer's words that names the line says it ("6 platanos" backs platanos, never arroz), or (c) the
      question last asked was that one line's quantity and the burst holds exactly one number. Never a price
      ("a L 18"), an address or phone number ("casa 5"), or a number in the product's own name ("paquete de 10").
+     Words name a line only when they fit it better than every other line of the turn (Codex final pass, Nov 3):
+     "2 arroz blanco" backs arroz blanco, never arroz integral; "2 arroz" backs neither. The same holds for a
+     removal the reader couldn't place.
    - **A removal** stands only when the reader heard one: on its own line, or, when the reader couldn't place it,
      on a line the removal's words name. Mentioning a product ("dejá el arroz como estaba") removes nothing.
    - **A suggested 1** is refused for an item the reader found unclear, and for one offered two or more products
@@ -349,6 +352,11 @@ the engine a `TurnPlan`. Code still renders every fact, and the claim check is u
    missed the answer, or a plan that asked the same list again). The engine never asks a line's "which one" (or
    unreadable) question a third time (`MAX_WHICH_ASKS`): the line is left for the store to confirm and the order
    moves on. `plannerContext` carries the options as shown (`shownOptions`: number, line, product, name, price).
+   After the Codex final pass (Nov 3): only a choice counts; a burst with a "no" ("no quiero Mazola", "la Mazola
+   no") or a question ("¿cuánto trae la Mazola?", "hay mazola") picks nothing, and the model's reading stands. The
+   engine keeps the list exactly as it was shown (number, product, name, price) when it asks, and `shownOptions` is
+   that list, not the catalog read again; if a shown price is no longer the store's, its prices are null, so "la de
+   34" is left to the model and the next reply shows today's price.
 17. **What the last answer was about** (eval E11, Nov 3): **`PerceptionContext.lastAnswered?`** (proposed) lists the
    products the engine's last answer named ("Miel de abeja Don Pancho 500 ml: te confirmo si hay"), until the
    customer's next burst. The planner-mode reader sees it as ULTIMA RESPUESTA and reads "me manda una" as that
@@ -364,9 +372,9 @@ its current types; it runs the classic path until then, since it has no `planner
   `readback`.
 - Store `quantitySource` on order lines, mark it in the readback version, and clear it when the customer confirms
   or says a quantity.
-- Remember the question last shown per open order (kind, line IDs, options shown, times) and quantity asks per
-  line, the words and other names each line was looked up by, and which lines the planner picked, and expose them
-  with the order through `plannerContext`.
+- Remember the question last shown per open order (kind, line IDs, options shown with the names and prices shown,
+  times) and quantity asks per line, the words and other names each line was looked up by, and which lines the
+  planner picked, and expose them with the order through `plannerContext`.
 - Mark lines in pounds (`byWeight`) from its products' `sold_by`.
 - Return `ask` outcomes with `questions` (and `assumed`, `noted`), with the option prices from its own price
   records.

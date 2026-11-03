@@ -118,7 +118,7 @@ interface Draft {
 
 /** What the planner path keeps about a draft between bursts. */
 interface PlannedDraft {
-  last: LastAsk | null;
+  last: StoredAsk | null;
   /** Line ID → how many times its quantity was asked (readiness stops after MAX_QUANTITY_ASKS). */
   readonly quantityAsks: Record<string, number>;
   /** Lines whose product the planner picked: after Confirmar, their words may become an alias. */
@@ -127,6 +127,15 @@ interface PlannedDraft {
   otherNames?: Record<string, readonly string[]>;
   /** Line ID → how many times its "which one" (or unreadable) question was asked. */
   whichAsks?: Record<string, number>;
+}
+
+/** The question last shown, as kept: for options, also the list exactly as the customer saw it. */
+interface StoredAsk extends LastAsk {
+  /**
+   * Numbered, with each name and price as shown (Codex final pass, finding 4, Nov 3). Absent for
+   * other questions, and in snapshots saved before it.
+   */
+  readonly shown?: readonly ShownOption[];
 }
 
 /**
@@ -285,17 +294,30 @@ export class MemoryEngine implements Engine, OrderReadingSource, PlannerSource {
     return options.length > 1 ? { pendingOptions: options } : {};
   }
 
-  /** The options last shown, numbered on from line to line as the reply showed them, with their prices. */
-  private shownOptions(last: LastAsk | null): ShownOption[] {
+  /**
+   * The options last shown, as the customer saw them: numbered on from line to line, with the name
+   * and price each had then (Codex final pass, finding 4, Nov 3). When a shown price is no longer
+   * the store's, prices name nothing in that list ("la de 34" is left to the model), and the
+   * readback shows today's price. A snapshot from before the list was kept has no shown prices.
+   */
+  private shownOptions(last: StoredAsk | null): ShownOption[] {
     if (last?.kind !== "options") return [];
     const catalog = this.options.catalog ?? [];
+    const priceNow = (productId: string) => {
+      const product = catalog.find((p) => p.productId === productId);
+      return product === undefined ? undefined : product.restricted === true ? null : product.price;
+    };
+    if (last.shown !== undefined) {
+      const changed = last.shown.some((option) => priceNow(option.productId) !== option.price);
+      return changed ? last.shown.map((option) => ({ ...option, price: null })) : [...last.shown];
+    }
     let number = 0;
     return last.lineIds.flatMap((lineId) =>
       (last.options?.[lineId] ?? []).flatMap((productId): ShownOption[] => {
         const product = catalog.find((p) => p.productId === productId);
         if (product === undefined) return [];
         number += 1;
-        return [{ number, lineId, productId, name: product.names[0] ?? productId, price: product.restricted === true ? null : product.price }];
+        return [{ number, lineId, productId, name: product.names[0] ?? productId, price: null }];
       }),
     );
   }
@@ -314,7 +336,7 @@ export class MemoryEngine implements Engine, OrderReadingSource, PlannerSource {
       said: Object.fromEntries((open?.order.lines ?? []).map((line) => [line.lineId, draft?.names.get(line.lineId) ?? line.text])),
       otherNames: { ...(draft?.planned?.otherNames ?? {}) },
       picked: [...(draft?.planned?.picked ?? [])],
-      lastAsk: draft?.planned?.last ?? null,
+      lastAsk: lastAskOf(draft?.planned?.last ?? null),
       shownOptions: this.shownOptions(draft?.planned?.last ?? null),
       lastAnswered: state.lastAnswer.get(context.customerId) ?? [],
       store: { hoursSet: (this.options.storeHours ?? null) !== null, delivery: (this.options.deliveryFee ?? null) !== null ? "yes" : "unknown" },
@@ -526,6 +548,21 @@ function holdForName(
   state.held.set(context.customerId, { orderId: stored.order.orderId, version, operationKey, asks });
   state.lastQuestion.set(context.customerId, "customer_name");
   return { type: "ask", question: "customer_name", line: null, order: stored.order };
+}
+
+/** An options question's list as the reply numbers it: on from line to line, each name and price as shown. */
+function shownList(lineIds: readonly string[], options: ReadonlyMap<string, readonly ProductOption[]>): ShownOption[] {
+  let number = 0;
+  return lineIds.flatMap((lineId) =>
+    (options.get(lineId) ?? []).map((option) => ({ number: ++number, lineId, productId: option.productId, name: option.name, price: option.unitPrice })),
+  );
+}
+
+/** The question last shown as the planner reads it (`LastAsk`), without the list kept beside it. */
+function lastAskOf(stored: StoredAsk | null): LastAsk | null {
+  if (stored === null) return null;
+  const { shown: _shown, ...last } = stored;
+  return last;
 }
 
 /** The saved place our side put in the customer's context (proposed CustomerContext.savedPlace). */
@@ -845,7 +882,12 @@ class BurstApplier {
     const planned = this.draft.planned!;
     const same = planned.last?.kind === kind && planned.last.lineIds.join() === lineIds.join();
     const shown = kind === "options" ? Object.fromEntries(lineIds.map((id) => [id, (options.get(id) ?? []).map((o) => o.productId)])) : undefined;
-    planned.last = { kind, lineIds: [...lineIds], ...(shown === undefined ? {} : { options: shown }), times: same ? planned.last!.times + 1 : 1 };
+    planned.last = {
+      kind,
+      lineIds: [...lineIds],
+      ...(shown === undefined ? {} : { options: shown, shown: shownList(lineIds, options) }),
+      times: same ? planned.last!.times + 1 : 1,
+    };
     if (kind === "quantities") for (const id of lineIds) planned.quantityAsks[id] = (planned.quantityAsks[id] ?? 0) + 1;
     if (kind === "options" || kind === "unreadable") {
       const asks = (planned.whichAsks ??= {});

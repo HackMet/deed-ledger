@@ -4,6 +4,7 @@
  * after a product question (E11). Each test failed on the code it was written against. Recorded
  * model answers, no network.
  */
+import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import type { CustomerContext } from "../src/application/engine";
 import { ONE_CALL_SCHEMA_NAME } from "../src/application/planner/one-call";
@@ -12,6 +13,7 @@ import type { EngineOutcome } from "../src/domain/contract/outcomes";
 import { chosenOption, type ShownOption } from "../src/domain/planner/option-answer";
 import type { TurnPlan } from "../src/domain/planner/types";
 import { orderBasis } from "../src/domain/planner/frame";
+import { D1StoreSetupRepository } from "../src/infrastructure/d1/store-setup-repository";
 import { MemoryEngine, type PretendProduct } from "../src/infrastructure/memory/memory-engine";
 import { line as wireLine, quote } from "./fixtures/model/recorded";
 import { plannerStore } from "./helpers/planner-trip";
@@ -160,5 +162,65 @@ describe("E11: 'me manda una' right after a product question orders that product
     expect(t.last()).toContain("Miel de abeja Don Pancho 500 ml: te confirmo si hay.");
     await t.say("me manda una porfa");
     expect(t.last()).toBe("Anotado ✅\n• 1 Miel de abeja Don Pancho 500 ml\n\n¿Lo recogés en la tienda o te lo llevamos?");
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Codex final pass (Nov 3). Each test failed on the code it was written against.
+
+describe("Codex final pass, finding 3: only a choice picks an option, never a 'no' or a question", () => {
+  const shown: ShownOption[] = [
+    { number: 1, lineId: "l1", productId: "clover-1l", name: "Aceite Clover 1 L", price: 6000 },
+    { number: 2, lineId: "l1", productId: "clover-500", name: "Aceite Clover 500 ml", price: 3400 },
+    { number: 3, lineId: "l1", productId: "mazola", name: "Aceite Mazola 1 L", price: 6500 },
+  ];
+  const chosen = (...said: string[]) => chosenOption(said, shown)?.productId ?? null;
+
+  it.each(["no quiero Mazola", "sin la Mazola", "la Mazola no", "no, la de 34 no"])("a 'no' picks nothing: %s", (said) => {
+    expect(chosen(said)).toBeNull();
+  });
+
+  it.each(["¿cuánto trae la Mazola?", "¿la de 34 es de litro?", "la mazola es de litro?", "cuanto trae la mazola", "cuánta trae la de 34", "qué tal la mazola", "cual es la de 34", "hay mazola", "tiene la de 34", "tienen mazola"])(
+    "a question picks nothing: %s",
+    (said) => {
+      expect(chosen(said)).toBeNull();
+    },
+  );
+
+  it("a 'no' anywhere in the burst takes back a choice in another message; a question beside a choice doesn't", () => {
+    expect(chosen("la mazola", "no, mejor no")).toBeNull();
+    expect(chosen("la 2", "¿a qué hora cierran?")).toBe("clover-500");
+  });
+
+  it("an affirmative answer still picks", () => {
+    expect(["la mazola porfa", "la 2", "esa de 34", "mazola, la de marca porfa"].map((said) => chosen(said))).toEqual(["mazola", "clover-500", "clover-500", "mazola"]);
+  });
+
+  it("a word of an option's own name isn't a 'no': 'la sin azúcar' picks it, 'no quiero la sin azúcar' doesn't", () => {
+    const sodas: ShownOption[] = [
+      { number: 1, lineId: "l1", productId: "coca", name: "Coca Cola 600 ml", price: 2500 },
+      { number: 2, lineId: "l1", productId: "coca-zero", name: "Coca Cola sin azúcar 600 ml", price: 2600 },
+    ];
+    expect(chosenOption(["la sin azúcar"], sodas)?.productId).toBe("coca-zero");
+    expect(chosenOption(["no quiero la sin azúcar"], sodas)).toBeNull();
+  });
+});
+
+describe("Codex final pass, finding 4: 'la de 34' is read against the prices the customer saw", () => {
+  it("after the store swaps two prices, 'la de 34' isn't picked by code: the list is asked again with today's prices", async () => {
+    const t = await plannerStore(STORE, { [ONE_CALL_SCHEMA_NAME]: [ACIETE, { observations: [OTHER], ...turn([], "restate") }] });
+    await t.say("deme un aciete y 2 jabones");
+    expect(t.last()).toContain("2. Aceite Clover 500 ml · L 34");
+    // The store swaps the two Clover prices before the customer answers.
+    const setup = new D1StoreSetupRepository(env.DB);
+    const saved = await setup.listProducts(t.tenant);
+    const swap = { "Aceite Clover 1 L": 3400, "Aceite Clover 500 ml": 6000 } as Record<string, number>;
+    for (const product of saved.filter((p) => swap[p.name] !== undefined)) {
+      expect(await setup.updateProduct(t.tenant, product.productId, { name: product.name, otherNames: [], price: swap[product.name]! }, 5)).toBe("saved");
+    }
+    await t.say("la de 34");
+    expect(t.last()).not.toContain("Anotado ✅\n• 1 Aceite Clover 1 L");
+    expect(t.last()).toContain("Para un aciete tengo:");
+    expect(t.last()).toContain("1. Aceite Clover 1 L · L 34");
   });
 });

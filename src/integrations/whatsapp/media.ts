@@ -14,10 +14,14 @@
  * The bytes must match the `file_size` and `sha256` the lookup declares, or the download is
  * `incomplete` and retried like a timeout. This is what keeps a cut-off voice note from being
  * transcribed: WhatsApp voice notes don't end with an Ogg end-of-stream page (#27), so the audio
- * reader can't tell a note cut on a page boundary from a whole one.
+ * reader can't tell a note cut on a page boundary from a whole one. So anything but a photo needs
+ * at least one of the two, usable: without either it is `unverified`, retried the same way, then
+ * answered "No pude descargar la nota de voz…" (Codex final pass, finding 6, Nov 3). A photo
+ * without them is accepted as before.
  *
  * Never called by the default test run: tests pass a fake fetch or a fake MediaSource.
  */
+import { CodedError } from "../../application/errors";
 import type { MediaBytes, MediaSource } from "../../application/ports";
 
 /** Each of the two requests is abandoned after this. */
@@ -36,11 +40,11 @@ export interface WhatsAppMediaOptions {
   readonly fetch: (input: string, init: RequestInit) => Promise<Response>;
 }
 
-export class MediaDownloadError extends Error {
+export class MediaDownloadError extends CodedError {
   override name = "MediaDownloadError";
 
-  constructor(readonly code: string) {
-    super(`media download failed: ${code}`);
+  constructor(code: string) {
+    super(code, `media download failed: ${code}`);
   }
 }
 
@@ -66,7 +70,8 @@ export class WhatsAppMediaSource implements MediaSource {
       throw new MediaDownloadError("too_large");
     }
     const bytes = await readCapped(download, maxBytes);
-    await verifyComplete(bytes, info);
+    const photo = isImage(info.mimeType ?? download.headers.get("content-type"));
+    await verifyComplete(bytes, info, photo);
     const contentType = download.headers.get("content-type") ?? info.mimeType ?? "application/octet-stream";
     return { bytes, contentType };
   }
@@ -114,8 +119,17 @@ function readMediaInfo(body: unknown): MediaInfo {
   };
 }
 
-/** Refuses bytes that differ from the declared size or hash; without either, there is nothing to check. */
-async function verifyComplete(bytes: ArrayBuffer, info: MediaInfo): Promise<void> {
+/** Meta's type for the media (the lookup's, else the download's) is a photo's. */
+function isImage(type: string | null): boolean {
+  return type !== null && type.trim().toLowerCase().startsWith("image/");
+}
+
+/**
+ * Refuses bytes that differ from the declared size or hash. Without either, a photo is taken as
+ * is; anything else (a voice note, or a type nobody named) is `unverified`.
+ */
+async function verifyComplete(bytes: ArrayBuffer, info: MediaInfo, photo: boolean): Promise<void> {
+  if (info.fileSize === null && info.sha256 === null && !photo) throw new MediaDownloadError("unverified");
   if (info.fileSize !== null && bytes.byteLength !== info.fileSize) throw new MediaDownloadError("incomplete");
   if (info.sha256 === null) return;
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
@@ -125,7 +139,7 @@ async function verifyComplete(bytes: ArrayBuffer, info: MediaInfo): Promise<void
 /**
  * Meta's docs don't say how `sha256` is encoded, so a SHA-256 in hex (any case) or base64 is read.
  * Anything else isn't checked: refusing every download over a format we can't read would break all
- * media, and the size check still catches a cut-off body.
+ * media, and the size check still catches a cut-off body (a voice note with neither is unverified).
  */
 function toDigest(value: unknown): Uint8Array | null {
   if (typeof value !== "string") return null;

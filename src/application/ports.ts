@@ -980,7 +980,11 @@ export interface CustomerControlRepository {
    * at or before `readyBeforeMs`, or whose conversations have nothing left to send.
    */
   deletionsDue(readyBeforeMs: number, limit: number): Promise<DeletionDue[]>;
-  deletionMedia(tenant: Tenant, customerId: string): Promise<DeletionMedia>;
+  /**
+   * The customer's phone and the R2 prefixes of their messages' media; with `uptoReceivedAtMs`
+   * (a test reset), only of messages received by then: the same cutoff as `resetCommit`.
+   */
+  deletionMedia(tenant: Tenant, customerId: string, uptoReceivedAtMs?: number): Promise<DeletionMedia>;
   /**
    * One batch: removes the customer's personal data from D1 (phone, name, message text, provider
    * IDs, media references, sent bodies), fails anything still unsent, and writes the tombstone.
@@ -992,7 +996,8 @@ export interface CustomerControlRepository {
   /**
    * Test command /new: the purge's erasure for this customer's messages up to `uptoReceivedAtMs`,
    * and the customer's own marks (name, introduced, ALTO, deletion request) cleared. The phone
-   * stays, so the reply reaches them and their next message is a first message.
+   * stays, so the reply reaches them and their next message is a first message. The inbound
+   * messages keep their provider IDs: intake recognizes a re-delivered message by them.
    */
   resetCommit(tenant: Tenant, customerId: string, uptoReceivedAtMs: number, nowMs: number): Commit;
   /**
