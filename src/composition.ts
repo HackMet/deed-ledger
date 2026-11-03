@@ -32,6 +32,7 @@ import { D1IntakeRepository } from "./infrastructure/d1/intake-repository";
 import { D1JobRepository } from "./infrastructure/d1/job-repository";
 import { D1ButtonsShown, D1OutboxRepository } from "./infrastructure/d1/outbox-repository";
 import { D1Pendientes } from "./infrastructure/d1/pendientes-repository";
+import { D1RetrievalRepository } from "./infrastructure/d1/retrieval-repository";
 import { D1SpendLedger } from "./infrastructure/d1/spend-repository";
 import { D1StoreSetupRepository } from "./infrastructure/d1/store-setup-repository";
 import { D1TenancyRepository } from "./infrastructure/d1/tenancy-repository";
@@ -62,6 +63,8 @@ export interface Runtime {
   readonly burstReader: BurstReader;
   /** The store's own products, hours and delivery fee (#40), edited on the console's Tienda screens. */
   readonly storeSetup: D1StoreSetupRepository;
+  /** Each store's products for retrieval and its learned aliases (D-49), approved in Pendientes. */
+  readonly retrieval: D1RetrievalRepository;
 }
 
 /** One pretend engine per Worker isolate, so the dev console's taps last between requests. */
@@ -144,6 +147,7 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
     simMedia,
     engine,
     storeSetup,
+    retrieval: new D1RetrievalRepository(db),
     burstReader:
       overrides.burstReader ??
       buildBurstReader(env, { clock, log }, { db, ...(overrides.modelProvider === undefined ? {} : { provider: overrides.modelProvider }) }),

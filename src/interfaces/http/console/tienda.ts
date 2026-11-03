@@ -6,6 +6,9 @@
  * The store is always the session's. A product ID from a form or a URL is only ever used together
  * with that store, so another store's ID finds nothing and changes nothing.
  *
+ * Editing a product also says how it's sold (por unidad / por libra) and the amount most customers
+ * take, which the assistant offers openly when a customer doesn't say (D-46).
+ *
  * The paste box never saves on the first tap: it shows what it read and what it couldn't, and
  * "Guardar" reads the same text again and saves only the lines it could read. A price is never
  * guessed.
@@ -26,6 +29,9 @@ import {
   parseLempiras,
   parseOtherNames,
   parsePasteBox,
+  parseSoldBy,
+  parseUsualQuantity,
+  type ProductSelling,
   productNameKey,
   type StoreProduct,
 } from "../../../domain/store-setup";
@@ -44,6 +50,7 @@ const NOTICES = {
   nombre: "Escribí el nombre del producto (máximo 80 letras).",
   precio: "No pude leer el precio. Escribilo así: 18 o 18.50, sin comas. Si no lo sabés, dejalo vacío.",
   otros: "Revisá los otros nombres: máximo 10, uno por línea.",
+  cantidad: "No pude leer la cantidad de siempre. Escribila así: 1 o 0.5, sin comas. Si no sabés, dejala vacía.",
   falta: "Ese producto ya no está en la lista.",
   quitado: "Listo. Producto quitado.",
   no_hay: "Listo. Marcado No hay: el asistente le dice al cliente que se acabó.",
@@ -94,7 +101,10 @@ export function tiendaScreen(app: Hono<ConsoleEnv>) {
     if (productId === null) return c.text("Bad request", 400);
     const fields = productFields(form);
     if (typeof fields === "string") return c.redirect(`${PATH}/editar?producto=${encodeURIComponent(productId)}&aviso=${fields}`, 303);
-    const saved = await setup(c).updateProduct(c.get("member"), productId, fields, now(c));
+    const selling = sellingFields(form);
+    if (selling === "bad") return c.text("Bad request", 400);
+    if (selling === "cantidad") return c.redirect(`${PATH}/editar?producto=${encodeURIComponent(productId)}&aviso=cantidad`, 303);
+    const saved = await setup(c).updateProduct(c.get("member"), productId, fields, now(c), selling);
     if (saved === "name_taken") return c.redirect(`${PATH}/editar?producto=${encodeURIComponent(productId)}&aviso=nombre_usado`, 303);
     return back(c, saved === "saved" ? "guardado" : "falta");
   });
@@ -230,6 +240,22 @@ function productFields(form: Record<string, unknown>) {
   return { name, price, otherNames };
 }
 
+/**
+ * How it's sold, from the edit form. Undefined when the form has neither field (left unchanged);
+ * "cantidad" when the usual amount can't be read; "bad" for a choice the form doesn't offer.
+ */
+function sellingFields(form: Record<string, unknown>): ProductSelling | undefined | "cantidad" | "bad" {
+  const rawSoldBy = form["vende"];
+  const rawUsual = form["usual"];
+  if (rawSoldBy === undefined && rawUsual === undefined) return undefined;
+  if ((rawSoldBy !== undefined && typeof rawSoldBy !== "string") || (rawUsual !== undefined && typeof rawUsual !== "string")) return "bad";
+  const soldBy = parseSoldBy(rawSoldBy ?? "");
+  if (soldBy === null) return "bad";
+  const usual = (rawUsual ?? "").length > 20 ? null : parseUsualQuantity(rawUsual ?? "");
+  if (usual === null) return "cantidad";
+  return { soldBy: soldBy.soldBy, usualQuantity: usual.quantity };
+}
+
 /** Seven days from the hours form: a day is open only when its box is ticked. */
 function daysFromForm(form: Record<string, unknown>): DayHours[] {
   return [1, 2, 3, 4, 5, 6, 7].map((day) => {
@@ -250,6 +276,15 @@ function priceInput(price: Centavos | null): string {
 
 // ---------------------------------------------------------------------------------------------
 // Rendering. `html` escapes every interpolated string.
+
+/** "Se vende por libra · De siempre: 2", or null when the owner set neither. */
+function sellingLine(p: StoreProduct): string | null {
+  const parts = [
+    ...(p.soldBy === null ? [] : [p.soldBy === "weight" ? "Se vende por libra" : "Se vende por unidad"]),
+    ...(p.usualQuantity === null ? [] : [`De siempre: ${p.usualQuantity}${p.soldBy === "weight" ? " lb" : ""}`]),
+  ];
+  return parts.length === 0 ? null : parts.join(" · ");
+}
 
 function subTabs(tab: "products" | "hours") {
   return html`<p class="subtabs"><a href="${PATH}"${tab === "products" ? html` aria-current="page"` : ""}>Productos</a><a href="${PATH}/horario"${tab === "hours" ? html` aria-current="page"` : ""}>Horario y envío</a></p>`;
@@ -279,6 +314,7 @@ function productCard(p: StoreProduct, csrf: string) {
   return html`<section class="card product${p.noHay ? " out" : ""}" id="p-${p.productId}">
 <div class="head"><strong>${p.name}</strong><span class="price">${p.price === null ? "Sin precio" : formatLempiras(p.price)}</span></div>
 ${p.otherNames.length === 0 ? "" : html`<p class="meta">También: ${p.otherNames.join(", ")}</p>`}
+${sellingLine(p) === null ? "" : html`<p class="meta">${sellingLine(p)}</p>`}
 ${p.noHay ? html`<p class="badge">No hay</p>` : ""}
 <div class="buttons">
 <form method="post" action="${PATH}/hay">${csrfField(csrf)}<input type="hidden" name="producto" value="${p.productId}"><input type="hidden" name="no_hay" value="${p.noHay ? "0" : "1"}"><button${p.noHay ? html` class="yes"` : ""}>${p.noHay ? "Sí hay" : "No hay"}</button></form>
@@ -295,6 +331,13 @@ function editForm(p: StoreProduct, csrf: string) {
 <label>Nombre<input name="nombre" maxlength="${MAX_PRODUCT_NAME}" value="${p.name}" required autocomplete="off"></label>
 <label>Precio en lempiras <small>(vacío si no lo sabés)</small><input name="precio" inputmode="decimal" value="${priceInput(p.price)}" autocomplete="off"></label>
 <label>Otros nombres que usan los clientes <small>(uno por línea)</small><textarea name="otros" rows="3">${p.otherNames.join("\n")}</textarea></label>
+<fieldset class="sold"><legend>Cómo se vende</legend>
+<label class="check"><input type="radio" name="vende" value="unidad"${p.soldBy === "unit" ? html` checked` : ""}> Por unidad</label>
+<label class="check"><input type="radio" name="vende" value="libra"${p.soldBy === "weight" ? html` checked` : ""}> Por libra</label>
+<label class="check"><input type="radio" name="vende" value=""${p.soldBy === null ? html` checked` : ""}> No sé</label>
+</fieldset>
+<label>Cantidad de siempre <small>(opcional: lo que casi todos llevan, por ejemplo 1)</small><input name="usual" inputmode="decimal" maxlength="20" value="${p.usualQuantity ?? ""}" autocomplete="off"></label>
+<p class="meta">Si un cliente no dice cuánto, el asistente le propone esa cantidad y el cliente la confirma.</p>
 <button class="primary">Guardar</button>
 </form>
 <p class="cancel"><a href="${PATH}">Cancelar</a></p>
@@ -403,4 +446,5 @@ fieldset.day{border:1px solid #ddd;border-radius:8px;margin:8px 0;padding:6px 10
 fieldset.day legend{font-weight:700}fieldset.day label{flex:1;min-width:120px}fieldset.day label.check{flex-basis:100%}
 fieldset.day.bad{border-color:#b33}
 label.check input{display:inline;width:auto;min-height:0;margin-right:6px}
+fieldset.sold{border:1px solid #ddd;border-radius:8px;margin:8px 0;padding:6px 10px}fieldset.sold legend{font-weight:700}
 `;

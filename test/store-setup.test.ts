@@ -167,7 +167,9 @@ describe("each store's records stay its own", () => {
     expect(await r.updateProduct(b, id, { name: "Robado", otherNames: [], price: 1 }, 2)).toBe("missing");
     expect(await r.setNoHay(b, id, true, 2)).toBe(false);
     expect(await r.removeProduct(b, id)).toBe(false);
-    expect(await r.listProducts(a)).toEqual([{ productId: id, name: "Arroz 1 lb", otherNames: ["arroz"], price: 1800, noHay: false }]);
+    expect(await r.listProducts(a)).toEqual([
+      { productId: id, name: "Arroz 1 lb", otherNames: ["arroz"], price: 1800, noHay: false, soldBy: null, usualQuantity: null },
+    ]);
     expect((await r.listProducts(b)).map((p) => p.price)).toEqual([2000]);
   });
 

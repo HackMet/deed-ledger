@@ -98,12 +98,16 @@ ${screen.body}
 </html>`;
 }
 
-/** The owner's open Pendientes. A hint on the tab: when it can't be read, the page shows without it. */
+/**
+ * The owner's open Pendientes, names to approve included. A hint on the tab: when it can't be read,
+ * the page shows without it.
+ */
 async function openPendientes(c: Context<ConsoleEnv>): Promise<number> {
-  const { deps } = c.get("runtime");
+  const { deps, retrieval } = c.get("runtime");
   const member = c.get("member");
   try {
-    return await deps.pendientesBoard.countOpen(member);
+    const [open, names] = await Promise.all([deps.pendientesBoard.countOpen(member), retrieval.countProposed(member)]);
+    return open + names;
   } catch (error) {
     deps.log.warn("pendientes_count_failed", { businessId: member.businessId, reason: describeError(error) });
     return 0;

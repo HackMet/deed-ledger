@@ -5,6 +5,10 @@
  * claim check stopped). Each card shows what the customer wrote; "Responder" sends the owner's
  * answer to their chat and takes the item off the list, "Listo" only takes it off. The engine's
  * items (prices, payments) join once contract gap (c) is agreed.
+ *
+ * Also the words customers used for a product in a confirmed order (learned aliases, D-49):
+ * "¿«catsup» es Salsa de tomate Naturas 400 g?" Sí makes the assistant recognize them next time;
+ * No drops them. One tap each.
  */
 import type { Context, Hono } from "hono";
 import { html } from "hono/html";
@@ -12,6 +16,7 @@ import { dispatchOutbox } from "../../../application/dispatch";
 import { describeError } from "../../../application/errors";
 import { OWNER_REPLY_MAX_CHARS, replyFromPendientes } from "../../../application/owner-reply";
 import type { OpenPendiente } from "../../../application/ports";
+import type { ProposedAlias } from "../../../infrastructure/d1/retrieval-repository";
 import { formatStoreTime } from "../../../domain/store-time";
 import { type ConsoleEnv, requireOwner } from "./auth";
 import { csrfField, shell } from "./layout";
@@ -25,6 +30,8 @@ const NOTICES = {
   ventana: "Tu respuesta queda lista, pero WhatsApp no deja mandarla hasta que el cliente vuelva a escribir. Llamale si es urgente.",
   vacio: "Escribí la respuesta antes de tocar Responder.",
   largo: `La respuesta es muy larga: máximo ${OWNER_REPLY_MAX_CHARS} letras.`,
+  nombre_si: "Listo. La próxima vez el asistente lo reconoce.",
+  nombre_no: "Listo. El asistente no va a usar ese nombre.",
 } as const;
 type NoticeKey = keyof typeof NOTICES;
 
@@ -39,8 +46,8 @@ const GROUPS: readonly { readonly kind: OpenPendiente["kind"]; readonly title: s
 
 export function pendientesScreen(app: Hono<ConsoleEnv>) {
   app.get("/pendientes", requireOwner, async (c) => {
-    const { deps } = c.get("runtime");
-    const items = await deps.pendientesBoard.listOpen(c.get("member"));
+    const { deps, retrieval } = c.get("runtime");
+    const [items, names] = await Promise.all([deps.pendientesBoard.listOpen(c.get("member")), retrieval.listProposed(c.get("member"))]);
     const notice = c.req.query("aviso");
     const nowMs = deps.clock.now();
     const csrf = c.get("csrf");
@@ -55,13 +62,14 @@ export function pendientesScreen(app: Hono<ConsoleEnv>) {
         notice: notice !== undefined && Object.hasOwn(NOTICES, notice) ? NOTICES[notice as NoticeKey] : null,
         style: STYLE,
         body:
-          groups.length === 0
+          groups.length === 0 && names.length === 0
             ? html`<section class="card"><p class="empty">No hay nada pendiente.</p>
 <p class="hint">Aquí aparecen los clientes que piden hablar con vos, las preguntas que quedaron en «te confirmo» y los mensajes que no salieron.</p></section>`
-            : groups.map(
+            : html`${groups.map(
                 (group) => html`<h2 class="section">${group.title} (${group.items.length})</h2>
 ${group.items.map((item) => card(item, nowMs, csrf))}`,
-              ),
+              )}${names.length === 0 ? "" : html`<h2 class="section">Cómo piden los clientes (${names.length})</h2>
+${names.map((name) => nameCard(name, nowMs, csrf))}`}`,
       }),
     );
   });
@@ -89,6 +97,20 @@ ${group.items.map((item) => card(item, nowMs, csrf))}`,
     return back(c, result.status === "sent" ? "respondido" : "ventana");
   });
 
+  app.post("/pendientes/nombre", requireOwner, async (c) => {
+    const { deps, retrieval } = c.get("runtime");
+    const form = await c.req.parseBody();
+    const id = form["nombre"];
+    const answer = form["respuesta"];
+    if (typeof id !== "string" || id.length === 0 || id.length > 100 || (answer !== "si" && answer !== "no")) return back(c, "falta");
+    const member = c.get("member");
+    const nowMs = deps.clock.now();
+    const decided =
+      answer === "si" ? await retrieval.approveAlias(member, id, member.userId, nowMs) : await retrieval.rejectAlias(member, id, member.userId, nowMs);
+    if (!decided) return back(c, "falta");
+    return back(c, answer === "si" ? "nombre_si" : "nombre_no");
+  });
+
   app.post("/pendientes/listo", requireOwner, async (c) => {
     const { deps } = c.get("runtime");
     const id = (await c.req.parseBody())["pendiente"];
@@ -113,6 +135,16 @@ ${answerable(item) ? html`<form method="post" action="${PATH}/responder" class="
 <label>Tu respuesta <small>(le llega por WhatsApp con tu nombre)</small><textarea name="respuesta" rows="2" maxlength="${OWNER_REPLY_MAX_CHARS}" placeholder="Sí hay, a L 65"></textarea></label>
 <button class="primary">Responder</button></form>` : ""}
 <form method="post" action="${PATH}/listo">${csrfField(csrf)}<input type="hidden" name="pendiente" value="${item.id}"><button>Listo</button></form>
+</article>`;
+}
+
+/** One tap: the customer's words are that product, or they aren't. */
+function nameCard(name: ProposedAlias, nowMs: number, csrf: string) {
+  return html`<article class="card pendiente">
+<p class="ask"><strong>¿«${name.said}» es ${name.productName}?</strong></p>
+<p class="muted">${formatStoreTime(name.proposedAtMs, nowMs)} · Un cliente lo pidió así en un pedido que confirmó. Si es lo mismo, el asistente lo va a reconocer la próxima vez.</p>
+<form method="post" action="${PATH}/nombre" class="yes-no">${csrfField(csrf)}<input type="hidden" name="nombre" value="${name.id}">
+<button class="primary" name="respuesta" value="si">Sí</button><button name="respuesta" value="no">No</button></form>
 </article>`;
 }
 
@@ -161,4 +193,6 @@ const STYLE = `
 .pendiente form.answer button{margin-top:6px;width:100%}
 .pendiente .said{margin:6px 0;padding:6px 10px;border-left:3px solid var(--line,#ddd);color:var(--ink,#222);overflow-wrap:anywhere}
 .hint{font-size:14px;color:var(--mute)}
+.pendiente .ask{overflow-wrap:anywhere}
+.pendiente form.yes-no{gap:8px}.pendiente form.yes-no button{flex:1}
 `;
