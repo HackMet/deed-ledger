@@ -63,6 +63,7 @@ import { fulfillmentWords, optionNumber, quantityFrom } from "../../domain/answe
 import { MAX_OPTIONS, type ProductOption } from "../../domain/contract/outcomes";
 import type { DecimalString } from "../../domain/contract/numbers";
 import type { AskKind, SoldBy, TurnPlan } from "../../domain/planner/types";
+import { orderBasis } from "../../domain/planner/frame";
 import { isWeightUnit, settleStep } from "../../domain/planner/validate";
 import { missingFor } from "../../domain/readiness";
 import type { LastAsk, PlannerContext, PlannerSource } from "../../application/planner/source";
@@ -221,7 +222,19 @@ export class MemoryEngine implements Engine, OrderReadingSource, PlannerSource {
     const first = state.operations.get(key);
     if (first !== undefined) return result(first);
 
-    const burst = new BurstApplier(state, context, this.options.catalog ?? [], matches, this.options.storeHours ?? null, this.options.deliveryFee ?? null, plan ?? null);
+    // A plan checked against another version of the order is refused whole, its picks too: its labels
+    // and checks hold only for the order it saw. The burst then asks what the readiness gate says.
+    const stale = plan !== undefined && plan.basis !== orderBasis(openOrderOf(state, context.customerId)?.order ?? null);
+    const burst = new BurstApplier(
+      state,
+      context,
+      this.options.catalog ?? [],
+      stale ? matches.filter((match) => match.how !== "planner_pick") : matches,
+      this.options.storeHours ?? null,
+      this.options.deliveryFee ?? null,
+      stale ? null : (plan ?? null),
+      stale,
+    );
     reading.observations.forEach((observation, index) => burst.apply(observation, index));
     burst.applyPlan();
     const { outcome, answered } = burst.decide();
@@ -537,6 +550,7 @@ class BurstApplier {
     private readonly storeHours: StoreHours | null,
     private readonly deliveryFee: Centavos | null,
     private readonly plan: TurnPlan | null,
+    stalePlan = false,
   ) {
     this.stored = openOrderOf(state, context.customerId);
     this.before = this.stored?.order ?? null;
@@ -547,7 +561,7 @@ class BurstApplier {
       declinedSavedPlace: false,
     };
     this.named = (context as { customerName?: string | null }).customerName ?? this.stored?.customerName ?? null;
-    this.planning = plan !== null || this.draft.planned !== undefined;
+    this.planning = plan !== null || stalePlan || this.draft.planned !== undefined;
   }
 
   apply(observation: Observation, index: number): void {
@@ -723,6 +737,12 @@ class BurstApplier {
       const lineId = this.lineIdOf(assumed.lineRef);
       const line = this.stored?.order.lines.find((l) => l.lineId === lineId);
       if (line === undefined || line.quantity !== null) continue;
+      // Checked again against the product as it is now: never 1 of something sold by the pound or
+      // restricted, and a usual amount only while the store still says it.
+      const product = line.productId === null ? undefined : this.catalog.find((p) => p.productId === line.productId);
+      if (line.restricted || product?.restricted === true) continue;
+      if (assumed.source === "suggested" && (assumed.quantity !== "1" || weighed(line.unit, product))) continue;
+      if (assumed.source === "store_usual" && (product?.usualQuantity ?? null) !== assumed.quantity) continue;
       this.setLines(this.stored!.order.lines.map((l) => (l.lineId === lineId ? { ...l, quantity: assumed.quantity, quantitySource: assumed.source } : l)));
       this.assumedNow.push(line.lineId);
     }
@@ -779,7 +799,9 @@ class BurstApplier {
         lineId,
         productIds.slice(0, MAX_OPTIONS).flatMap((id): ProductOption[] => {
           const product = this.catalog.find((p) => p.productId === id);
-          return product === undefined ? [] : [{ productId: id, name: product.names[0] ?? id, unitPrice: product.restricted === true ? null : product.price }];
+          // "No hay" is never offered as a choice (the planner may still know it's out).
+          if (product === undefined || product.availability === "se_acabo") return [];
+          return [{ productId: id, name: product.names[0] ?? id, unitPrice: product.restricted === true ? null : product.price }];
         }),
       ]),
     );

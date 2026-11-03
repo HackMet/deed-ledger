@@ -6,7 +6,8 @@ import { describe, expect, it } from "vitest";
 import type { OrderLineView, OrderView } from "../src/domain/contract/outcomes";
 import type { FrameLine, PlannerFrame } from "../src/domain/planner/frame";
 import type { Candidate, PlannerOp, RetrievableProduct, TurnProposal } from "../src/domain/planner/types";
-import { checkedSay, settleStep, validateProposal, type ValidatedTurn } from "../src/domain/planner/validate";
+import { settleStep, validateProposal, type ValidatedTurn } from "../src/domain/planner/validate";
+import { SAY_PHRASES } from "../src/domain/planner/wire";
 import { missingFor } from "../src/domain/readiness";
 
 const product = (productId: string, name: string, more: Partial<RetrievableProduct> = {}): RetrievableProduct => ({
@@ -89,6 +90,9 @@ function frame(more: Partial<PlannerFrame> = {}, offered: Record<string, string[
     saidTexts: [],
     readerQuantities: new Map(),
     readerRemoved: new Set(),
+    unplacedRemovals: [],
+    askedQuantityOf: null,
+    basis: null,
     illegible: false,
     products,
     ...more,
@@ -215,10 +219,12 @@ describe("quantities", () => {
 });
 
 describe("removals", () => {
-  it("removes only an order line the customer named or the reader removed", () => {
+  it("removes only an order line the reader removed, or one a removal it couldn't place names", () => {
     expect(codes(check(proposal([op("remove", "N1")])))).toContain("remove_new_item:N1");
     expect(codes(check(proposal([op("remove", "L2")])))).toContain("remove_not_said:L2");
-    expect(check(proposal([op("remove", "L2")]), frame({ saidTexts: ["quitame el jabon"] })).plan.changes).toEqual([{ lineRef: "L2", remove: true }]);
+    // Named, but the reader heard no removal: nothing goes.
+    expect(codes(check(proposal([op("remove", "L2")]), frame({ saidTexts: ["el jabon dejalo igual"] })))).toContain("remove_not_said:L2");
+    expect(check(proposal([op("remove", "L2")]), frame({ unplacedRemovals: ["el jabon"] })).plan.changes).toEqual([{ lineRef: "L2", remove: true }]);
     expect(check(proposal([op("remove", "L2")]), frame({ readerRemoved: new Set(["L2"]) })).plan.changes).toEqual([{ lineRef: "L2", remove: true }]);
   });
 });
@@ -254,8 +260,11 @@ describe("a suggested quantity (D-46)", () => {
     expect(codes(check(proposal([suggest("N3")])))).toContain("suggestion_unresolved:N3");
     const unclear = frame({ newItems: [line("N1", "aceite", { unclear: true })] }, { N1: [] });
     expect(codes(check(proposal([suggest("N1")]), unclear))).toContain("suggestion_unresolved:N1");
-    // Picked: the size is settled, so 1 can stand.
-    expect(check(proposal([suggest("N3", { product: P("p-tomate") })])).plan.assumed).toEqual([{ lineRef: "N3", quantity: "1", source: "suggested" }]);
+    // Picked among two by weaker evidence: still unsettled. Picked the one the customer named: 1 can stand.
+    expect(codes(check(proposal([suggest("N3", { product: P("p-tomate") })])))).toContain("suggestion_unresolved:N3");
+    const base = frame();
+    const named: PlannerFrame = { ...base, table: { ...base.table, howByLine: new Map([["N3", new Map([[P("p-tomate"), "exact_name" as const]])]]) } };
+    expect(check(proposal([suggest("N3", { product: P("p-tomate") })]), named).plan.assumed).toEqual([{ lineRef: "N3", quantity: "1", source: "suggested" }]);
   });
 
   it("is dropped for alcohol or tobacco", () => {
@@ -295,36 +304,21 @@ describe("the question", () => {
   });
 });
 
-describe("the connecting sentence", () => {
-  it("goes out warm and plain", () => {
-    expect(checkedSay("Ya vi tu lista 👍")).toBe("Ya vi tu lista 👍");
-    expect(checkedSay("  Va, le agrego eso.  ")).toBe("Va, le agrego eso.");
-    expect(checkedSay("")).toBe("");
+describe("the connecting phrase", () => {
+  it("is one of the approved phrases, carried as chosen", () => {
+    for (const say of SAY_PHRASES) expect(check(proposal([], { say })).plan.say).toBe(say);
   });
 
-  it("is dropped when it states a fact, asks, promises a time, links or talks about the system", () => {
-    for (const said of [
-      "Son 3 productos",
-      "¿Algo más?",
-      "Te sale en L 90",
-      "Son cien lempiras",
-      "Listo, ya quedó",
-      "Tu pedido está confirmado",
-      "La leche se acabó",
-      "Sí hay de todo",
-      "Estamos abiertos",
-      "En un rato te lo mando",
-      "Te lo llevo mañana",
-      "Mirá www.tienda.com",
-      "Soy un bot",
-      "Va gratis",
-    ]) {
-      expect(checkedSay(said), said).toBeNull();
+  it("refuses the whole proposal for anything else: no free text reaches a customer", () => {
+    for (const say of ["Listo, son L 90", "Ya vi tu lista 👍 ", "Tu pedido está confirmado"]) {
+      expect(validateProposal(proposal([], { say }), frame()), say).toEqual({ ok: false, reason: "schema" });
     }
-    expect(checkedSay("a".repeat(141))).toBeNull();
-    const turn = check(proposal([], { say: "Listo, son L 90" }));
-    expect(turn.plan.say).toBe("");
-    expect(codes(turn)).toContain("say_dropped:-");
+  });
+
+  it("states no fact and asks nothing, phrase by phrase", () => {
+    for (const say of SAY_PHRASES) {
+      expect(say, say).not.toMatch(/[\p{Nd}?¿]|\b(?:L|lempiras?|listo|confirmad|pagad|entregad|hay|acab|abiert|cerrad|hoy|mañana|minutos?|horas?)\b/iu);
+    }
   });
 });
 

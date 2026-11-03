@@ -129,8 +129,14 @@ export interface TurnPlan {
     readonly quantity: DecimalString;
     readonly source: Exclude<QuantitySource, "said">;
   }[];
-  /** Already checked: no digits, amounts, state words, promises or questions. */
+  /** One of `SAY_PHRASES` (domain/planner/wire.ts), or empty: never text the planner wrote itself. */
   readonly say: string;
+  /**
+   * Added by L0 (Nov 2, review finding 6): the open order as the plan was checked against it
+   * (`orderBasis` in frame.ts), null when there was none. The engine refuses a plan whose basis no
+   * longer matches the order, and asks what the readiness gate says is missing instead.
+   */
+  readonly basis: string | null;
   /**
    * Added by L0 (Nov 2): validated changes to lines that no observation or match carries: a product
    * picked for an order line (L), a quantity the burst said for any line, a removal. Product IDs

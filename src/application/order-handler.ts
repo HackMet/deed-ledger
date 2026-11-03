@@ -54,7 +54,7 @@ import {
 import { type CustomerGateDeps, gateCustomerJob } from "./customer-gate";
 import type { AnsweredQuestion, CustomerContext, Engine, EngineResult, LineMatch } from "./engine";
 import { BurstMediaUnreadableError, describeError } from "./errors";
-import { type AliasBook, proposeAliasesFromConfirmedOrder } from "./learned-aliases";
+import { type AliasBook, aliasProposalCommits } from "./learned-aliases";
 import { readingSourceOf } from "./order-reading";
 import { plannerSourceOf } from "./planner/source";
 import { CUSTOMER_REPLY_TTL_MS, type ReplyContext, replyForOutcome } from "./replies";
@@ -625,7 +625,8 @@ async function complete(
   if (result.answered != null && before.length > 0 && before[0]!.body !== safeReply().body) {
     await raiseUnanswered(deps, lease, job, customer, result.answered);
   }
-  await proposeAliases(deps, lease, job, customer, result.outcome, nowMs);
+  // After the confirmation's own statements, in the same batch: a proposal lands only with it.
+  commits.push(...(await aliasCommits(deps, lease, job, customer, result.outcome, nowMs)));
   // Notices for other customers (staff actions) don't arise from a customer's own message here.
   if (result.notices.length > 0) {
     deps.log.warn("customer_notices_dropped", { businessId: lease.businessId, count: result.notices.length });
@@ -635,31 +636,33 @@ async function complete(
 
 /**
  * A confirmed order teaches the store (D-49): each line the planner matched proposes the customer's
- * words for it as an alias, for the owner to approve in Pendientes. Written outside the job's
- * completion batch, before it: a proposal never holds up or breaks the confirmation, and a retried
- * job proposes the same words again, which adds nothing. Never throws.
+ * words for it as an alias, for the owner to approve in Pendientes. The proposals are commits in the
+ * job's completion batch, after the confirmation's (review finding 5, Nov 2): they land only if the
+ * confirmation saves, and each refuses itself when the customer asked to delete their data. A
+ * retried job proposes the same words again, which adds nothing. Never throws.
  */
-async function proposeAliases(
+async function aliasCommits(
   deps: OrderHandlerDeps,
   lease: Lease,
   job: Job,
   customer: ConversationCustomer,
   outcome: EngineOutcome,
   nowMs: number,
-): Promise<void> {
+): Promise<Commit[]> {
   const source = plannerSourceOf(deps.engine);
-  if (deps.aliases == null || source === null || outcome.type !== "order_confirmed") return;
+  if (deps.aliases == null || source === null || outcome.type !== "order_confirmed") return [];
   try {
     const known = await source.plannerContext({ businessId: lease.businessId, conversationId: lease.conversationId, customerId: customer.id, jobId: job.id, nowMs });
-    if (known.order?.orderId !== outcome.order.orderId) return;
+    if (known.order?.orderId !== outcome.order.orderId) return [];
     const lines = outcome.order.lines.map((line) => ({
       said: known.said[line.lineId] ?? line.text,
       productId: line.productId,
       how: known.picked.includes(line.lineId) ? "planner_pick" : null,
     }));
-    await proposeAliasesFromConfirmedOrder(deps.aliases, deps.log, lease, { orderId: outcome.order.orderId, lines }, nowMs);
+    return await aliasProposalCommits(deps.aliases, deps.log, lease, { orderId: outcome.order.orderId, customerId: customer.id, lines }, nowMs);
   } catch (error) {
     deps.log.error("alias_proposal_failed", { businessId: lease.businessId, conversationId: lease.conversationId, reason: describeError(error) });
+    return [];
   }
 }
 

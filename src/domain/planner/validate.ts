@@ -1,8 +1,9 @@
 /**
  * Code's check of the planner's proposal (contract §2.3). The planner proposes; this decides what
  * survives. Every op names a label of this turn, every product is one code offered for that line,
- * every quantity was said in the burst, a suggestion is only "1" and only where D-46 allows it, and
- * the connecting sentence carries no facts. Pure. Refusals are returned as codes, for logs.
+ * every quantity was said for that line, a removal is one the reader heard, a suggestion is only "1"
+ * and only where D-46 allows it, and the connecting phrase is one of SAY_PHRASES (the schema's enum).
+ * Pure. Refusals are returned as codes, for logs.
  *
  * `settleStep` is the engine's last word, after the plan is applied: a readback the order isn't
  * ready for becomes the first missing question, and a question about lines that don't need it is
@@ -14,9 +15,10 @@ import type { OrderView } from "../contract/outcomes";
 import { quantityFrom } from "../answer-words";
 import type { Missing } from "../readiness";
 import { schemaMismatch } from "../perception/schema-check";
+import { STANDS_ALONE } from "../retrieval";
 import type { FrameLine, PlannerFrame } from "./frame";
 import type { AskKind, LineChange, TurnPlan, TurnProposal } from "./types";
-import { MAX_ASK_LINES, MAX_OPS, MAX_SAY_CHARS, turnSchema } from "./wire";
+import { MAX_ASK_LINES, MAX_OPS, turnSchema } from "./wire";
 
 export type RefusalCode =
   | "unknown_line"
@@ -36,7 +38,6 @@ export type RefusalCode =
   | "suggestion_restricted"
   | "ask_lines_filtered"
   | "ask_without_lines"
-  | "say_dropped"
   | "line_left_out";
 
 export interface Refusal {
@@ -79,8 +80,9 @@ export function validateProposal(raw: unknown, frame: PlannerFrame): ProposalChe
     }
     const isNew = line.label.startsWith("N");
     if (op.op === "remove") {
+      // Only a removal the reader heard: its own line, or one it couldn't place that names this line.
       if (isNew) refuse("remove_new_item", line.label);
-      else if (!frame.readerRemoved.has(line.label) && !namedInBurst(line, frame)) refuse("remove_not_said", line.label);
+      else if (!frame.readerRemoved.has(line.label) && !frame.unplacedRemovals.some((said) => names(said, line))) refuse("remove_not_said", line.label);
       else removed.add(line.label);
       continue;
     }
@@ -145,7 +147,7 @@ export function validateProposal(raw: unknown, frame: PlannerFrame): ProposalChe
     const line = lines.get(label);
     if (line === undefined || removed.has(label)) return false;
     if (kind === "quantities") return !hasQuantity(line) && !assumed.has(label) && !line.restricted;
-    if (kind === "options") return productOf(line) === null && offeredCount(frame, label) >= 2;
+    if (kind === "options") return productOf(line) === null && availableOffered(frame, label).length >= 2;
     if (kind === "unreadable") return productOf(line) === null;
     return false;
   };
@@ -158,9 +160,6 @@ export function validateProposal(raw: unknown, frame: PlannerFrame): ProposalChe
     else ask = { kind, lineRefs };
   }
 
-  const say = checkedSay(proposal.say);
-  if (say === null) refuse("say_dropped", null);
-
   const changes = new Map<string, LineChange>();
   const change = (label: string, part: Omit<LineChange, "lineRef">) => changes.set(label, { ...(changes.get(label) ?? { lineRef: label }), ...part });
   for (const [label, id] of product) if (label.startsWith("L")) change(label, { productId: id });
@@ -169,14 +168,15 @@ export function validateProposal(raw: unknown, frame: PlannerFrame): ProposalChe
 
   const options =
     ask?.kind === "options"
-      ? ask.lineRefs.map((label) => ({ lineRef: label, productIds: (frame.table.offered.get(label) ?? []).flatMap((p) => candidateProduct(frame, p) ?? []) }))
+      ? ask.lineRefs.map((label) => ({ lineRef: label, productIds: availableOffered(frame, label) }))
       : [];
 
   const plan: TurnPlan = {
     move: proposal.move,
     ask,
     assumed: [...assumed].map(([lineRef, a]) => ({ lineRef, ...a })),
-    say: say ?? "",
+    say: proposal.say,
+    basis: frame.basis,
     ...(changes.size === 0 ? {} : { changes: [...changes.values()] }),
     ...(options.length === 0 ? {} : { options }),
   };
@@ -251,14 +251,26 @@ function offeredCount(frame: PlannerFrame, line: string): number {
   return frame.table.offered.get(line)?.length ?? 0;
 }
 
+/** The products offered for a line that the store hasn't marked "No hay": what an options question may list. */
+function availableOffered(frame: PlannerFrame, line: string): string[] {
+  return (frame.table.offered.get(line) ?? []).flatMap((label) => {
+    const id = candidateProduct(frame, label);
+    return id === null || frame.products.get(id)?.availability === "se_acabo" ? [] : [id];
+  });
+}
+
 function sameQuantity(a: DecimalString, b: DecimalString | null): boolean {
   return b !== null && toThousandths(a) === toThousandths(b);
 }
 
 /**
- * A quantity the burst backs: the reader's own for that line, or a number the customer's words say
- * for it (the parts that name the line, or any part when none does). A number that is part of the
- * product's own name ("paquete de 10") never counts. A new item the reader gave a quantity keeps it.
+ * A quantity the burst backs for this line (review finding 1, Nov 2), only:
+ * (a) the reader's own quantity for that line (a new item's, or a set_quantity on its ref);
+ * (b) a number in a part of the customer's words that names the line ("6 platanos" backs platanos,
+ *     never arroz);
+ * (c) the one number in the burst, when the question last asked was this one line's quantity.
+ * Never a price ("a L 18"), an address or phone number ("casa 5"), or a number in the product's own
+ * name ("paquete de 10"). A new item the reader gave a quantity keeps it.
  */
 function saidQuantity(value: DecimalString, line: FrameLine, frame: PlannerFrame): boolean {
   if (!isDecimalString(value) || toThousandths(value) === 0) return false;
@@ -266,23 +278,49 @@ function saidQuantity(value: DecimalString, line: FrameLine, frame: PlannerFrame
   const reader = frame.readerQuantities.get(line.label);
   if (reader !== undefined && sameQuantity(value, reader)) return true;
   const target = toThousandths(value);
-  return [...quantitiesSaidFor(line, frame.saidTexts)].some((said) => toThousandths(said) === target);
+  const parts = partsOf(frame.saidTexts);
+  if (parts.filter((part) => names(part, line)).some((part) => quantitiesIn(part, line).some((q) => toThousandths(q) === target))) return true;
+  if (frame.askedQuantityOf !== line.label) return false;
+  const all = parts.flatMap((part) => quantitiesIn(part, line));
+  return all.length === 1 && toThousandths(all[0]!) === target;
 }
 
-function quantitiesSaidFor(line: FrameLine, texts: readonly string[]): Set<string> {
-  const parts = texts.flatMap((text) => text.split(/[,;\n]|\s+y\s+/u)).map((part) => part.trim()).filter((part) => part !== "");
-  const naming = parts.filter((part) => sharesWord(part, line.said) || (line.productName !== null && sharesWord(part, line.productName)));
-  const found = new Set<string>();
-  for (const part of naming.length > 0 ? naming : parts) {
-    const clean = withoutNameNumbers(part, [line.said, line.productName ?? ""]);
-    const read = quantityFrom(clean);
-    if (read !== null) found.add(read);
-    for (const number of clean.match(/\d+(?:[.,]\d+)?/gu) ?? []) {
-      const value = number.replace(",", ".");
-      if (isDecimalString(value)) found.add(value);
-    }
-  }
-  return found;
+/** Lowercase, no accents. */
+function fold(text: string): string {
+  return text.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+}
+
+const NUMBER = String.raw`\d+(?:[.,]\d+)?`;
+/** Numbers that are never a quantity: prices, addresses, phone numbers. */
+const NOT_QUANTITIES = [
+  new RegExp(String.raw`(?:\bl|\blps?|\blempiras?|\$)\.?\s*${NUMBER}`, "gu"),
+  new RegExp(String.raw`${NUMBER}\s*(?:lempiras?|lps?|pesos?|varas?)\b`, "gu"),
+  new RegExp(String.raw`\ba\s+${NUMBER}\s+(?:cada|c\/u|la libra|el)\b`, "gu"),
+  new RegExp(String.raw`(?:\b(?:casa|calle|avenida|ave|av|colonia|col|bloque|lote|km|kilometro|numero|num|apartamento|apto)\.?|#|n°)\s*#?\s*${NUMBER}\w*`, "gu"),
+  /\d{5,}/gu,
+];
+
+/** The customer's words in parts: by commas, "y", lines, and before each number ("6 platanos 2 arroz"). */
+function partsOf(texts: readonly string[]): string[] {
+  return texts
+    .map((text) => NOT_QUANTITIES.reduce((rest, rule) => rest.replace(rule, " "), fold(text)))
+    .flatMap((text) => text.split(/[,;\n]|\s+y\s+|\s+(?=\d)/u))
+    .map((part) => part.trim())
+    .filter((part) => part !== "");
+}
+
+/** The quantities a part says: its numbers, or else one number in words ("dos", "media docena"). */
+function quantitiesIn(part: string, line: FrameLine): string[] {
+  const clean = withoutNameNumbers(part, [line.said, line.productName ?? ""]);
+  const digits = (clean.match(/\d+(?:[.,]\d+)?/gu) ?? []).map((n) => n.replace(",", ".")).filter(isDecimalString);
+  if (digits.length > 0) return digits;
+  const said = quantityFrom(clean);
+  return said === null ? [] : [said];
+}
+
+/** The part names the line: a product word of its own, or of its product, plurals folded. */
+function names(part: string, line: FrameLine): boolean {
+  return sharesWord(part, line.said) || (line.productName !== null && sharesWord(part, line.productName));
 }
 
 /** "el paquete de 10" said about "Tortillas paquete 10": the 10 is the product, not the quantity. */
@@ -304,10 +342,6 @@ function sharesWord(text: string, name: string): boolean {
   return productWords(text).some((word) => forms(word).some((form) => own.has(form)));
 }
 
-function namedInBurst(line: FrameLine, frame: PlannerFrame): boolean {
-  return frame.saidTexts.some((text) => sharesWord(text, line.said) || (line.productName !== null && sharesWord(text, line.productName)));
-}
-
 const WEIGHT_UNITS = /^(?:lb|lbs|libras?|kg|kgs|kilos?|kilogramos?|onzas?|oz|gramos?|gr|g)$/u;
 
 export function isWeightUnit(unit: string | null): boolean {
@@ -322,28 +356,13 @@ function suggestionRefusal(value: string, line: FrameLine, productId: string | n
   if (isWeightUnit(line.unit)) return "suggestion_weight_unit";
   if (product?.soldBy === "weight") return "suggestion_sold_by_weight";
   if (line.restricted || product?.restricted === true) return "suggestion_restricted";
-  if (productId === null && (offeredCount(frame, line.label) >= 2 || line.unclear)) return "suggestion_unresolved";
+  // An unclear item, or one with several products to choose from, isn't settled by a pick: only by
+  // the customer naming the product (review finding 4, Nov 2).
+  if (line.unclear) return "suggestion_unresolved";
+  if (offeredCount(frame, line.label) >= 2) {
+    const label = productId === null ? undefined : frame.table.offered.get(line.label)?.find((p) => candidateProduct(frame, p) === productId);
+    const how = label === undefined ? undefined : frame.table.howByLine.get(line.label)?.get(label);
+    if (how === undefined || !STANDS_ALONE.has(how)) return "suggestion_unresolved";
+  }
   return null;
-}
-
-/**
- * The connecting sentence, or null when it can't go out: it would state a fact (a number, an
- * amount, a state or stock word, a time), ask a question (code asks), carry a link, or talk about
- * the system. Empty is fine.
- */
-export function checkedSay(say: string): string | null {
-  const text = say.replace(/\s+/gu, " ").trim();
-  if (text === "") return "";
-  if ([...text].length > MAX_SAY_CHARS) return null;
-  const folded = text.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
-  const refused = [
-    /\p{Nd}/u,
-    /[?¿]/u,
-    /https?:|www\.|\.com\b/u,
-    /(?<![\p{L}\p{N}])(?:l|lps?|lempiras?)(?![\p{L}\p{N}])/u,
-    /\b(?:listos?|confirmad\w*|pagad\w*|entregad\w*|anotad\w*|guardad\w*|se acab\w*|no hay|si hay|abiert\w*|cerrad\w*|gratis|descuentos?|rebajas?)\b/u,
-    /\b(?:minutos?|horas?|ahorita|al rato|en un rato|hoy|manana|enseguida|pronto|te aviso)\b/u,
-    /\b(?:ia|inteligencia artificial|bot|sistema|modelo|etiquetas?|codigos?|confianza)\b/u,
-  ];
-  return refused.some((rule) => rule.test(folded)) ? null : text;
 }
