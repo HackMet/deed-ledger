@@ -8,7 +8,7 @@ import type { OrderView } from "../../src/domain/contract/outcomes";
 import { D1OrderStore } from "../../src/infrastructure/d1/order-store";
 import { D1FactLedger } from "../../src/infrastructure/d1/fact-ledger";
 import { guardedBatch } from "../../src/infrastructure/d1/fence";
-import { confirmTap, firstOrder, firstOrderMatches, ids } from "../fixtures/contract";
+import { confirmTap, firstOrder, firstOrderMatches, ids, pickup } from "../fixtures/contract";
 import { newPhone, seedStore } from "./seed";
 
 /** The order engine on local D1, shared by the engine's test files. */
@@ -73,8 +73,20 @@ export const footprint = async (businessId: string) => ({
   audit: await count(`audit_events WHERE business_id = ?`, businessId),
 });
 
-export async function placeFirstOrder(s: Awaited<ReturnType<typeof newStore>>, customerId: string = ids.customer, nowMs = T0) {
-  const result = await engine.onBurst(s.context({ customerId, nowMs }), firstOrder, s.matches);
+/**
+ * The fixture's first order with "lo paso a traer" in the same burst (K13): an order is delivered only
+ * once its fulfillment is known, so tests that take one to entregado place it this way. Appended last,
+ * so the matches' observation indexes still point at the order's lines.
+ */
+export const firstPickupOrder: BurstReading = { ...firstOrder, observations: [...firstOrder.observations, ...pickup.observations] };
+
+export async function placeFirstOrder(
+  s: Awaited<ReturnType<typeof newStore>>,
+  customerId: string = ids.customer,
+  nowMs = T0,
+  reading: BurstReading = firstOrder,
+) {
+  const result = await engine.onBurst(s.context({ customerId, nowMs }), reading, s.matches);
   if (result.outcome.type !== "readback") throw new Error(`expected readback, got ${result.outcome.type}`);
   await save(result);
   return result.outcome.order;

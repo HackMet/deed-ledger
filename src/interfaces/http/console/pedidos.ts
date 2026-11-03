@@ -21,6 +21,7 @@ const STATE_LABELS: Record<OrderState, string> = {
   preparando: "Preparando",
   armando: "Armando",
   listo: "Listo para entregar",
+  en_camino: "En camino",
   entregado: "Entregado",
   cancelado: "Cancelado",
 };

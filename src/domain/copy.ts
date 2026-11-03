@@ -43,3 +43,9 @@ export function couldNotProcess(kind: MessageKind): string {
  * The engine answers `rejected`/`invalid_state` with the order in that state; the reply uses this.
  */
 export const CHANGE_AFTER_READY = "Ya está listo, ¿querés hacer un pedido nuevo?";
+
+/**
+ * K13: a customer's cancel once the order left with a courier. The engine answers
+ * `rejected`/`invalid_state` with the order `en_camino` (or later); the reply uses this.
+ */
+export const CANCEL_AFTER_DISPATCH = "Ya va en camino; hablá con la tienda.";

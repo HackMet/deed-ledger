@@ -162,6 +162,7 @@ function apply(stored: StoredOrder, action: OrderAction): { stored: StoredOrder;
       return order.state === "listo" ? save({ ...order, state: "entregado" }) : null;
 
     case "match_line":
+    case "dispatch":
       return null;
   }
 }

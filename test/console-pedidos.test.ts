@@ -9,7 +9,7 @@ import { orderCode } from "../src/domain/order-code";
 import { hashToken, newToken } from "../src/infrastructure/tokens";
 import { addAndPickup, ids, moreSugar, staleReady } from "./fixtures/contract";
 import { type Harness, harness } from "./helpers/harness";
-import { changeAndApprove, engine, newStore, placeFirstOrder, save, T0, tap } from "./helpers/orders";
+import { changeAndApprove, engine, firstPickupOrder, newStore, placeFirstOrder, save, T0, tap } from "./helpers/orders";
 import { newPhone, seedStore } from "./helpers/seed";
 
 type Store = Awaited<ReturnType<typeof newStore>>;
@@ -93,9 +93,9 @@ const staffTap = (type: "start_preparing" | "mark_ready" | "mark_delivered", ord
   return { ...staleReady, operationKey: staffKey(action), action };
 };
 
-/** An order placed and confirmed through the engine; returns its id. */
+/** A pickup order placed and confirmed through the engine; returns its id. Pickup: K13 delivers only a known fulfillment. */
 async function confirmed(s: Store, customerId: string = ids.customer, at = T0): Promise<string> {
-  const v1 = await placeFirstOrder(s, customerId, at);
+  const v1 = await placeFirstOrder(s, customerId, at, firstPickupOrder);
   await save(await engine.onCustomerAction(s.context({ customerId, nowMs: at + 1000 }), tap(v1.orderId, 1, { actor: { type: "customer", customerId } })));
   return v1.orderId;
 }

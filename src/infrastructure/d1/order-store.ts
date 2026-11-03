@@ -192,6 +192,18 @@ export class D1OrderStore implements OrderStore {
     });
   }
 
+  async courier(tenant: Tenant, memberId: string): Promise<{ readonly memberId: string; readonly name: string | null } | null> {
+    // Memberships are the store's members (0001); a deactivated one can't take an order out.
+    const row = await this.db
+      .prepare(
+        `SELECT m.user_id, u.display_name FROM memberships m JOIN users u ON u.id = m.user_id
+         WHERE m.business_id = ? AND m.user_id = ? AND m.active = 1`,
+      )
+      .bind(tenant.businessId, memberId)
+      .first<{ user_id: string; display_name: string | null }>();
+    return row === null ? null : { memberId: row.user_id, name: row.display_name };
+  }
+
   async changeRequest(tenant: Tenant, changeRequestId: string): Promise<StoredChangeRequest | null> {
     const row = await this.db
       .prepare(`SELECT json_extract(body_json, '$.orderId') AS order_id FROM facts WHERE business_id = ? AND id = ? AND kind = 'change_request'`)

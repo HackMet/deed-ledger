@@ -45,6 +45,11 @@ export type ConsoleAction =
       readonly substituteProductId: string | null;
     } & OrderRef)
   | ({ readonly type: "mark_ready" } & OrderRef)
+  /**
+   * Proposed (K13), pending Angel's OK: a ready delivery order leaves with a courier, an active member
+   * of the same store. Pickup orders go from listo straight to mark_delivered.
+   */
+  | ({ readonly type: "dispatch"; readonly courierMemberId: string } & OrderRef)
   | ({ readonly type: "mark_delivered" } & OrderRef)
   /** Staff decide which catalog product a customer's words meant ("la de marca X"). */
   | ({ readonly type: "match_line"; readonly lineId: string; readonly productId: string } & OrderRef)

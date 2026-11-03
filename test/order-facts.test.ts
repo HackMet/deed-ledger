@@ -9,11 +9,12 @@ import type { FactCommit } from "../src/domain/facts";
 import { deriveOrderState } from "../src/domain/order-state";
 import { D1FactLedger } from "../src/infrastructure/d1/fact-ledger";
 import { guardedBatch } from "../src/infrastructure/d1/fence";
-import { firstOrder, ids, moreSugar, staleReady } from "./fixtures/contract";
+import { ids, moreSugar, staleReady } from "./fixtures/contract";
 import {
   changeAndApprove,
   count,
   engine,
+  firstPickupOrder,
   footprint,
   newStore,
   placeFirstOrder,
@@ -119,7 +120,8 @@ describe("K2b: every order transition is exactly one fact, in the same batch", (
   it("writes the right kind, edge and evidence for each transition, under the operation's own key", async () => {
     const s = await newStore();
     const burstContext = s.context();
-    const burst = await engine.onBurst(burstContext, firstOrder, s.matches);
+    // K13: picked up, so the order can be delivered at the end.
+    const burst = await engine.onBurst(burstContext, firstPickupOrder, s.matches);
     if (burst.outcome.type !== "readback") throw new Error(`expected readback, got ${burst.outcome.type}`);
     await saveTransition(burst);
     const v1 = burst.outcome.order;
@@ -337,7 +339,7 @@ describe("K2b: every order transition is exactly one fact, in the same batch", (
 
   it("D-38: preparando, a change and a re-confirm: the facts derive the cache's state at every step", async () => {
     const s = await newStore();
-    const v1 = await placeFirstOrder(s);
+    const v1 = await placeFirstOrder(s, ids.customer, T0, firstPickupOrder);
     const states: { derived: OrderState; cached: OrderState }[] = [await derivedAndCached(s, v1.orderId)];
     const step = async (result: Promise<EngineResult>, commits = 2) => {
       const saved = await result;

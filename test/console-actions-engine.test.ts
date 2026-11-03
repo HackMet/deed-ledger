@@ -5,7 +5,7 @@ import { staffKey } from "../src/application/engine/order-engine";
 import type { ActionEnvelope, ConsoleAction } from "../src/domain/contract/actions";
 import type { Claim, OrderState } from "../src/domain/contract/outcomes";
 import { addAndPickup, ids, moreSugar, noHayAceite, offerMazola, staleReady } from "./fixtures/contract";
-import { changeAndApprove, count, engine, footprint, newStore, placeFirstOrder, save, store, T0, tap } from "./helpers/orders";
+import { changeAndApprove, count, engine, firstPickupOrder, footprint, newStore, placeFirstOrder, save, store, T0, tap } from "./helpers/orders";
 
 type Store = Awaited<ReturnType<typeof newStore>>;
 
@@ -202,9 +202,9 @@ const lastAudit = (orderId: string) =>
     .first<{ kind: string; actor_id: string; at_ms: number; detail_json: string }>()
     .then((row) => row && { ...row, detail: JSON.parse(row.detail_json) as unknown });
 
-/** A confirmed order of the fixture's customer, as staff see it. */
+/** A confirmed pickup order of the fixture's customer, as staff see it (K13: delivery needs a known fulfillment). */
 async function confirmedOrder(s: Store) {
-  const v1 = await placeFirstOrder(s);
+  const v1 = await placeFirstOrder(s, ids.customer, T0, firstPickupOrder);
   await confirm(s, v1.orderId, 1);
   return (await store.order(s.context(), v1.orderId))!.view;
 }

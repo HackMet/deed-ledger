@@ -98,6 +98,7 @@ export interface OrderWrite {
     | "order_preparing"
     | "order_line_marked"
     | "order_ready"
+    | "order_dispatched"
     | "order_delivered"
     | "change_requested"
     | "change_approved"
@@ -129,6 +130,8 @@ export interface OrderStore {
   productNames(tenant: Tenant, productIds: readonly string[]): Promise<ReadonlyMap<string, string>>;
   /** The current version's number, state and total of an order in this store; null when absent. */
   orderHead(tenant: Tenant, orderId: string): Promise<OrderHead | null>;
+  /** An active member of this store, with the name the store knows them by; null otherwise (K13). */
+  courier(tenant: Tenant, memberId: string): Promise<{ readonly memberId: string; readonly name: string | null } | null>;
   /** A change request of this store, with its liveness; null when no such request exists here. */
   changeRequest(tenant: Tenant, changeRequestId: string): Promise<StoredChangeRequest | null>;
   /** Every order fact of an order in this store (found by body.orderId), with its liveness. */
@@ -172,23 +175,47 @@ export function actionKey(action: CustomerAction): string | null {
   }
 }
 
-/** The console actions on an order this cut saves: staff move it along the preparation list. */
-type StaffAction = Extract<ConsoleAction, { type: "start_preparing" | "mark_line" | "mark_ready" | "mark_delivered" }>;
+/** The console actions on an order this cut saves: staff move it along the preparation list, then out the door. */
+type StaffAction = Extract<ConsoleAction, { type: "start_preparing" | "mark_line" | "mark_ready" | "dispatch" | "mark_delivered" }>;
 
 /** The status an order_status fact records for each staff step; a line mark records the line instead. */
-const STAFF_STATUS: Readonly<Record<Exclude<StaffAction["type"], "mark_line">, "preparing" | "ready" | "delivered">> = {
+const STAFF_STATUS: Readonly<Record<Exclude<StaffAction["type"], "mark_line">, NonNullable<OrderFact["status"]>>> = {
   start_preparing: "preparing",
   mark_ready: "ready",
+  dispatch: "dispatched",
   mark_delivered: "delivered",
 };
 
-/** Each staff action's only pre-state and the state it leaves. mark_line records a mark and keeps preparando. */
+/**
+ * Each staff action's only pre-state and the state it leaves. mark_line records a mark and keeps
+ * preparando. A delivery order is delivered from en_camino instead (K13): see `fromState`.
+ */
 const STAFF_STEPS: Readonly<Record<StaffAction["type"], { from: OrderState; to: OrderState; audit: OrderWrite["auditKind"] }>> = {
   start_preparing: { from: "confirmado", to: "preparando", audit: "order_preparing" },
   mark_line: { from: "preparando", to: "preparando", audit: "order_line_marked" },
   mark_ready: { from: "preparando", to: "listo", audit: "order_ready" },
+  dispatch: { from: "listo", to: "en_camino", audit: "order_dispatched" },
   mark_delivered: { from: "listo", to: "entregado", audit: "order_delivered" },
 };
+
+/**
+ * K13: the state a staff action must find, given how the order leaves the store. Dispatch is for a
+ * delivery order only, and a delivery order is delivered once it is en_camino. A fulfillment nobody
+ * recorded is neither: dispatch and delivery are refused (null), never guessed.
+ */
+function fromState(action: StaffAction, fulfillment: OrderView["fulfillment"]): OrderState | null {
+  if (action.type !== "dispatch" && action.type !== "mark_delivered") return STAFF_STEPS[action.type].from;
+  if (fulfillment === null) return null;
+  if (action.type === "dispatch") return fulfillment.mode === "delivery" ? "listo" : null;
+  return fulfillment.mode === "delivery" ? "en_camino" : "listo";
+}
+
+/** The step a dispatch or a delivery acts on (K13), whose fact it rests on; null for the other steps. */
+function restsOnStatus(action: StaffAction, fulfillment: OrderView["fulfillment"]): "ready" | "dispatched" | null {
+  if (action.type === "dispatch") return "ready";
+  if (action.type === "mark_delivered" && fulfillment?.mode === "delivery") return "dispatched";
+  return null;
+}
 
 const isStaffAction = (action: ConsoleAction): action is StaffAction => Object.hasOwn(STAFF_STEPS, action.type);
 
@@ -397,8 +424,29 @@ export class OrderEngine implements Engine {
     const { view } = stored;
     if (action.version !== view.version) return refused("stale_version", view);
     const step = STAFF_STEPS[action.type];
-    if (view.state !== step.from) return refused("invalid_state", view);
+    if (view.state !== fromState(action, view.fulfillment)) return refused("invalid_state", view);
     if (action.type === "mark_line" && indexOfLabel(view.lines.length, action.lineId) === null) return refused("not_found", view);
+    // The courier id is untrusted: it resolves only to an active member of this store (K13, Q4).
+    const courier =
+      action.type !== "dispatch" ? null : typeof action.courierMemberId === "string" ? await store.courier(member, action.courierMemberId) : null;
+    if (action.type === "dispatch" && courier === null) return refused("not_found", view);
+    // A dispatch rests on the live ready tap, a delivery's arrival on the live dispatch (K13): the
+    // read finds it, and G4 refuses the fact in the batch if a cancel or a supersede killed it since.
+    const restsOn = restsOnStatus(action, view.fulfillment);
+    let prior: string | null = null;
+    if (restsOn !== null) {
+      const facts = await store.orderFacts(member, view.orderId);
+      const found = facts.find(
+        (fact) =>
+          fact.live &&
+          fact.kind === "order_status" &&
+          fact.status === restsOn &&
+          fact.version === view.version &&
+          (stored.confirmFactId === null || fact.dependsOn.includes(stored.confirmFactId)),
+      );
+      if (found === undefined) return refused("invalid_state", view);
+      prior = found.id;
+    }
 
     const packing = step.to === "confirmado" || step.to === "preparando";
     const order: OrderView = { ...view, state: step.to, queuePosition: packing ? view.queuePosition : null };
@@ -406,6 +454,7 @@ export class OrderEngine implements Engine {
     const notice = (n: CustomerNotice["notice"]): CustomerNotice => ({ customerId: stored.customerId, notice: n });
     const notices: CustomerNotice[] = [];
     if (action.type === "mark_ready") notices.push(notice({ type: "order_ready", order }));
+    if (courier !== null) notices.push(notice({ type: "order_dispatched", order, courierName: courier.name }));
     if (action.type === "mark_line" && action.mark === "no_hay") notices.push(notice({ type: "line_unavailable", order, lineId: action.lineId }));
     if (action.type === "mark_line" && action.mark === "ofrecer_otro") {
       notices.push(notice({ type: "substitute_offered", order, lineId: action.lineId }));
@@ -426,7 +475,9 @@ export class OrderEngine implements Engine {
       auditDetail:
         action.type === "mark_line"
           ? { lineId: action.lineId, mark: action.mark, substituteProductId: action.substituteProductId }
-          : undefined,
+          : courier !== null
+            ? { courierMemberId: courier.memberId }
+            : undefined,
       facts: { versionFactId: stored.versionFactId, confirmFactId: stored.confirmFactId },
       nowMs: member.nowMs,
     });
@@ -446,9 +497,11 @@ export class OrderEngine implements Engine {
         ...(action.type === "mark_line"
           ? { line: action.lineId, mark: action.mark, substituteProductId: action.substituteProductId }
           : { status: STAFF_STATUS[action.type] }),
+        // The courier is recorded on the fact: whoever tapped, this member took the order out (Q4).
+        ...(courier === null ? {} : { courierMemberId: courier.memberId }),
       },
       evidence: [{ kind: "member", refId: member.memberId, contentSha256: null }],
-      dependsOn: stored.confirmFactId === null ? [] : [stored.confirmFactId],
+      dependsOn: [...(stored.confirmFactId === null ? [] : [stored.confirmFactId]), ...(prior === null ? [] : [prior])],
       closes: null,
       movements: [],
     };

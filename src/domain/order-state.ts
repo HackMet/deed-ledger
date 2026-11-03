@@ -15,12 +15,13 @@ export interface OrderFact {
   /** order_confirm only: where confirming put the order (D-38, D-43). */
   readonly resumeState: "confirmado" | "preparando" | null;
   /** order_status only, and only for a step (a line mark has none). */
-  readonly status: "preparing" | "ready" | "delivered" | null;
+  readonly status: "preparing" | "ready" | "dispatched" | "delivered" | null;
 }
 
 /** Later steps win: a delivered order stays delivered whatever order the taps were recorded in. */
 const STATUS_STATE = [
   ["delivered", "entregado"],
+  ["dispatched", "en_camino"],
   ["ready", "listo"],
   ["preparing", "preparando"],
 ] as const;

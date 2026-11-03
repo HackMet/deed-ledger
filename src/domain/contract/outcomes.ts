@@ -6,7 +6,16 @@ import type { LineMark } from "./actions";
 import type { Centavos, DecimalString } from "./numbers";
 import type { ObservationIssue } from "./observation";
 
-export type OrderState = "armando" | "por_confirmar" | "confirmado" | "preparando" | "listo" | "entregado" | "cancelado";
+/** `en_camino` is proposed (K13), pending Angel's OK: a delivery order out with a courier of the store. */
+export type OrderState =
+  | "armando"
+  | "por_confirmar"
+  | "confirmado"
+  | "preparando"
+  | "listo"
+  | "en_camino"
+  | "entregado"
+  | "cancelado";
 
 /** From the latest evidence. Customers never hear a count. */
 export type Availability = "hay" | "se_acabo" | "no_se";
@@ -134,7 +143,12 @@ export interface CustomerNotice {
     /** Proposed (K12): "Tu cambio fue aprobado: …", with the new version. */
     | { readonly type: "change_approved"; readonly order: OrderView }
     /** Proposed (K12): "No pudimos hacer el cambio: <reason>". The order is unchanged. */
-    | { readonly type: "change_declined"; readonly order: OrderView; readonly reason: string };
+    | { readonly type: "change_declined"; readonly order: OrderView; readonly reason: string }
+    /**
+     * Proposed (K13): "Tu pedido va en camino con <nombre>". The courier's name as the store recorded
+     * it; null when the store has none, and the copy then leaves the name out.
+     */
+    | { readonly type: "order_dispatched"; readonly order: OrderView; readonly courierName: string | null };
 }
 
 // ---------------------------------------------------------------------------------------------
