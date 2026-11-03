@@ -41,11 +41,16 @@ describe("the engine's reads for perception", () => {
 
   it("catalog: a product keeps its name, no aliases and no barcode, ordered by name", async () => {
     const s = await newStore();
+    // An id that sorts first but a name that sorts last: the order must come from the name, not the id.
+    await env.DB.prepare(`INSERT INTO products (id, business_id, canonical_name, created_at_ms) VALUES (?, ?, ?, 0)`)
+      .bind(`${s.businessId}:0-zanahoria`, s.businessId, "Zanahoria")
+      .run();
     const catalog = await engine.catalog(s.context());
     expect(catalog.map((p) => [p.names, p.aliases, p.barcode])).toEqual([
       [["arroz-1lb"], [], null],
       [["azucar-1lb"], [], null],
       [["jabon-xtra"], [], null],
+      [["Zanahoria"], [], null],
     ]);
   });
 
