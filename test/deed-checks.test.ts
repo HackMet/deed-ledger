@@ -194,6 +194,29 @@ describe("the Deed's checks: one row per decision the engine refuses or verifies
     expect(JSON.stringify(await rowsOf(s.businessId))).not.toContain("50499998888");
   });
 
+  it("B2: a version the order never had, typed as a number, reaches no key on either path", async () => {
+    const s = await newStore();
+    const order = await placeFirstOrder(s);
+    const engine = checked();
+    const member = { type: "member" as const, memberId: ids.staff, role: "owner" as const };
+    // The review's 8-digit number on both paths, then an 11-digit one (a Honduran number with its country code).
+    for (const typed of [99887766, 50499998888]) {
+      await engine.onCustomerAction(s.context(), cancelTap(order.orderId, typed));
+      const ready: any = { type: "mark_ready", orderId: order.orderId, version: typed };
+      await engine.onConsoleAction(reviewer(s), { operationKey: staffKey(ready), actor: member, action: ready });
+    }
+    const rows = await rowsOf(s.businessId);
+    expect(rows.map((row) => [row.source, row.operation_key])).toEqual([
+      ["stale_version", null],
+      ["stale_version", null],
+      ["stale_version", null],
+      ["stale_version", null],
+    ]);
+    const everything = JSON.stringify(await env.DB.prepare(`SELECT * FROM deed_checks`).all());
+    expect(everything).not.toContain("99887766");
+    expect(everything).not.toContain("50499998888");
+  });
+
   it("keeps the outcome identical when the recorder throws, for a refusal and for a claim", async () => {
     const s = await newStore();
     const order = await placeFirstOrder(s);

@@ -286,6 +286,9 @@ const orderIdOfClaim = (claim: Claim): string | null =>
 /** A key as the caller sent it, kept only when it is the key the engine derives for that action (K20). */
 const derivedOnly = (key: string, derived: string | null): string | null => (key === derived ? key : null);
 
+/** Whether a version a key embeds is one this order has had, so a typed number never reaches a row (B2). */
+const versionResolves = (version: number, current: number): boolean => Number.isSafeInteger(version) && version >= 1 && version <= current;
+
 export class OrderEngine implements Engine {
   /**
    * `checks` is the Deed's record (K20): optional, written after each decision and never in its batch.
@@ -420,9 +423,8 @@ export class OrderEngine implements Engine {
   /** Whether the order, the version and the line label a customer's key embeds all resolve here (B1). */
   private async customerKeyResolves(context: CustomerContext, action: CustomerAction): Promise<boolean> {
     if (action.type !== "confirm_order" && action.type !== "cancel_order" && action.type !== "remove_line") return false;
-    if (!Number.isSafeInteger(action.version)) return false;
     const stored = await this.deps.store.customerOrder(context, context.customerId, action.orderId);
-    if (stored === null) return false;
+    if (stored === null || !versionResolves(action.version, stored.view.version)) return false;
     // A label points into the change waiting for review when there is one, as the removal does.
     return action.type !== "remove_line" || indexOfLabel((stored.openRequest ?? stored.view).lines.length, action.lineId) !== null;
   }
@@ -509,9 +511,9 @@ export class OrderEngine implements Engine {
     if (action.type === "propose_price" || action.type === "confirm_price") {
       return typeof action.productId === "string" && (await store.productNames(member, [action.productId])).size > 0;
     }
-    if (!isStaffAction(action) || !Number.isSafeInteger(action.version)) return false;
+    if (!isStaffAction(action)) return false;
     const stored = await store.order(member, action.orderId);
-    if (stored === null) return false;
+    if (stored === null || !versionResolves(action.version, stored.view.version)) return false;
     return action.type !== "mark_line" || indexOfLabel(stored.view.lines.length, action.lineId) !== null;
   }
 
