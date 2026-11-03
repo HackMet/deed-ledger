@@ -7,16 +7,34 @@ import pickupFile from "../demo/recordings/pickup.json";
 import sizeAnswerFile from "../demo/recordings/size-answer.json";
 import whenReadyFile from "../demo/recordings/when-ready.json";
 import { demoRuntime } from "../demo/worker";
-import { parseRecordings, recordedPerceptionHandler, recordingsFromBase64 } from "../demo/recorded-perception";
+import { readbackQuantity, refusedForTheOrder } from "../demo/checks.mjs";
+import { parseRecordings, recordedPerceptionHandler, recordingsFromBase64, render } from "../demo/recorded-perception";
 import type { CustomerContext, Engine, EngineResult, LineMatch } from "../src/application/engine";
 import { fixturePerceptionHandler } from "../src/application/engine/fixture-perception-handler";
 import { OrderEngine } from "../src/application/engine/order-engine";
 import type { JobInput } from "../src/application/ports";
 import type { BurstReading } from "../src/domain/contract/observation";
+import type { EngineOutcome } from "../src/domain/contract/outcomes";
 import { buildRuntime } from "../src/composition";
 import { RECEIVED_PLACEHOLDER } from "../src/domain/copy";
 import { MemoryEngine } from "../src/infrastructure/memory/memory-engine";
-import { firstOrder, firstOrderMatches, moreSugar, pickup, sizeAnswer, whenReady } from "./fixtures/contract";
+import {
+  askFulfillment,
+  askSize,
+  duplicateConfirm,
+  firstOrder,
+  firstOrderMatches,
+  moreSugar,
+  orderChanged,
+  orderConfirmed,
+  orderStatus,
+  pickup,
+  readback,
+  sizeAnswer,
+  staleRejected,
+  whenReady,
+} from "./fixtures/contract";
+import { save } from "./helpers/orders";
 import { newPhone, seedStore } from "./helpers/seed";
 
 const files: readonly unknown[] = [firstOrderFile, firstOrderDeliveryFile, moreSugarFile, pickupFile, sizeAnswerFile, whenReadyFile];
@@ -53,6 +71,18 @@ function spyEngine() {
   return { engine, bursts };
 }
 
+/** The reading with its one set_quantity edit aimed at another line label. */
+function retarget(reading: BurstReading, ref: string): BurstReading {
+  const copy = structuredClone(reading) as unknown as { observations: { edits: { target: { ref: string } }[] }[] };
+  copy.observations[0]!.edits[0]!.target.ref = ref;
+  return copy as unknown as BurstReading;
+}
+
+/** An engine whose every burst answers the given outcome. */
+function answering(outcome: EngineOutcome): Engine {
+  return { onBurst: async () => ({ outcome, notices: [], commits: [] }) } as unknown as Engine;
+}
+
 const noOpenOrder = { openOrder: async () => null };
 const clock = { now: () => 1_000 };
 
@@ -61,7 +91,10 @@ describe("demo recordings (K10)", () => {
     expect(recordings.map((r) => r.source)).toEqual(files.map(() => "fixture"));
     expect(byName("firstOrder").reading).toEqual(firstOrder);
     expect(byName("firstOrder").matches).toEqual(firstOrderMatches);
-    expect(byName("moreSugar").reading).toEqual(moreSugar);
+    // moreSugar is hand-built: the fixture's change aimed at L4, the azúcar of the demo's first order.
+    const sugar = byName("moreSugar");
+    expect(sugar.reading).toEqual(retarget(moreSugar, "L4"));
+    expect(sugar.note).toMatch(/by hand/);
     expect(byName("pickup").reading).toEqual(pickup);
     expect(byName("sizeAnswer").reading).toEqual(sizeAnswer);
     expect(byName("whenReady").reading).toEqual(whenReady);
@@ -165,5 +198,56 @@ describe("the demo runtime (K10)", () => {
     // The app's default handler does not know this text.
     const appDefault = await buildRuntime(env).deps.jobHandler.handle(job);
     expect(appDefault.replies?.[0]?.body).toBe(RECEIVED_PLACEHOLDER);
+  });
+});
+
+describe("the demo's change and replies (K10 fix 1)", () => {
+  it("moreSugar changes the azúcar line from 2 to 3 on the real engine, and nothing else", async () => {
+    const store = await seedStore({ members: [{ phone: newPhone(), role: "owner" }] });
+    const handler = demoRuntime(env, recordings).deps.jobHandler;
+    const lease = { businessId: store.businessId, conversationId: `conversation-${crypto.randomUUID()}`, leaseId: "lease-1" };
+    const v1 = await handler.handle({ ...input(byName("firstOrder").text), lease });
+    expect(v1.commits?.length).toBeGreaterThan(0);
+    await save({ outcome: { type: "readback", order: null as never }, notices: [], commits: v1.commits! });
+    const v2 = await demoRuntime(env, recordings).deps.jobHandler.handle({ ...input(byName("moreSugar").text), lease });
+    const before = v1.replies![0]!.body;
+    const after = v2.replies![0]!.body;
+    expect(readbackQuantity(before, "dos libras de azúcar")).toBe("2");
+    expect(readbackQuantity(after, "dos libras de azúcar")).toBe("3");
+    // The other lines read as before: the change touched only the azúcar.
+    const others = (reply: string) => reply.split("\n").filter((l) => l.startsWith("• ") && !l.includes("azúcar"));
+    expect(others(after)).toEqual(others(before));
+  });
+
+  it("answers each outcome in the same words as the fixture perception handler", async () => {
+    const outcomes = [askFulfillment, askSize, readback, orderConfirmed, orderStatus, orderChanged, duplicateConfirm, staleRejected];
+    for (const outcome of outcomes) {
+      const engine = answering(outcome);
+      const fixture = await fixturePerceptionHandler({ engine, orders: noOpenOrder, clock }).handle(input("Quiero hacer un pedido"));
+      const recorded = await recordedPerceptionHandler({ engine, orders: noOpenOrder, clock, recordings }).handle(input(byName("firstOrder").text));
+      expect(recorded.replies?.[0]?.body).toBe(fixture.replies?.[0]?.body);
+      expect(recorded.replies?.[0]?.body).toBe(render(outcome));
+    }
+    expect(render(readback)).toContain("• 2 Azúcar 1 lb");
+  });
+});
+
+describe("the demo runner's checks (K10 fix 1)", () => {
+  it("counts a staff tap as refused for the order only on aviso=estado or aviso=cambio", () => {
+    expect(refusedForTheOrder("/console/preparacion?aviso=estado#order-1")).toBe(true);
+    expect(refusedForTheOrder("/console/preparacion?aviso=cambio")).toBe(true);
+    // A refusal for the key, the actor or a missing order says nothing about the order's state.
+    expect(refusedForTheOrder("/console/preparacion?aviso=permiso#order-1")).toBe(false);
+    expect(refusedForTheOrder("/console/preparacion?aviso=falta")).toBe(false);
+    expect(refusedForTheOrder("/console/preparacion#order-1")).toBe(false);
+    expect(refusedForTheOrder("400")).toBe(false);
+    expect(refusedForTheOrder(null)).toBe(false);
+  });
+
+  it("reads a product's quantity off a readback, null when the line is not there", () => {
+    const reply = "Esto entendí de tu pedido:\n• 1 aceite clover\n• 3 Azúcar 1 lb\n¿Lo confirmo? Confirmar / Corregir / Cancelar";
+    expect(readbackQuantity(reply, "Azúcar 1 lb")).toBe("3");
+    expect(readbackQuantity(reply, "Arroz 1 lb")).toBeNull();
+    expect(readbackQuantity(null, "Azúcar 1 lb")).toBeNull();
   });
 });

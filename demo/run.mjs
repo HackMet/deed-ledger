@@ -11,6 +11,7 @@ import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "nod
 import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { parseArgs, SIM, SIM_SECRETS, simChildEnv, wrangler } from "../scripts/lib/sim.mjs";
+import { readbackQuantity, refusedForTheOrder } from "./checks.mjs";
 
 const args = parseArgs(process.argv.slice(2));
 const CONFIG = "demo/wrangler.demo.jsonc";
@@ -24,6 +25,8 @@ const COURIER = { phone: "50400000090", name: "Mario" };
 const CUSTOMERS = { A: "50400000011", B: "50400000012", C: "50400000013", D: "50400000014", E: "50400000015", F: "50400000016" };
 const REPLY_TIMEOUT_MS = 30_000;
 const NOTICE_WAIT_MS = 8_000;
+/** The product moreSugar changes: the first order's line L4 (2 of it, then 3). */
+const SUGAR = "Azúcar 1 lb";
 
 class NotRealEngine extends Error {}
 
@@ -140,8 +143,9 @@ async function scenario(cookie) {
   const cancel = (who) => customerSays(who, "cancelar", expectReply(/^Cancelé tu pedido/, { order_cancel: 1 }, "“Cancelé tu pedido.”; one order_cancel fact"));
   const refusedTap = (who, type, version) =>
     run(who, `staff taps ${type} (Preparación)`, () => staff.tap(who, type, version), ({ redirect, delta }) => ({
-      expectation: `${type} refused (a notice, not saved); no fact written`,
-      pass: redirect !== null && /aviso=/.test(redirect) && sameDelta(delta, {}),
+      // Only a refusal for the order's state or version counts; `aviso=permiso` proves nothing about the order.
+      expectation: `${type} refused for the order (aviso=estado or aviso=cambio, not permiso); no fact written`,
+      pass: refusedForTheOrder(redirect) && sameDelta(delta, {}),
     }));
   const staffStep = (who, label, action, state, notice) =>
     run(who, `staff ${label}`, action, async (outcome) => {
@@ -203,8 +207,13 @@ async function scenario(cookie) {
   await placeOrder("E");
   await run("E", `says “${said("moreSugar")}”`, () => say(CUSTOMERS.E, said("moreSugar")), ({ reply, delta }) => ({
     // Before confirming, the engine answers a change with a new readback of the new version.
-    expectation: "a readback of version 2; one order_version fact",
-    pass: reply !== null && /^Esto entendí de tu pedido:/.test(reply) && sameDelta(delta, { order_version: 1 }) && orderOf(CUSTOMERS.E)?.current_version === 2,
+    expectation: `a readback of version 2 with 3 ${SUGAR}; one order_version fact`,
+    pass:
+      reply !== null &&
+      /^Esto entendí de tu pedido:/.test(reply) &&
+      readbackQuantity(reply, SUGAR) === "3" &&
+      sameDelta(delta, { order_version: 1 }) &&
+      orderOf(CUSTOMERS.E)?.current_version === 2,
   }));
   await confirm("E");
   eOrderId = orderOf(CUSTOMERS.E)?.id ?? null;

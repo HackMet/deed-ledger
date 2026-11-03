@@ -9,10 +9,11 @@
  * reads exactly those words; any other text goes to the placeholder, never a guess.
  */
 import type { CustomerContext, Engine, LineMatch } from "../src/application/engine";
-import { type OpenOrderReader, fixturePerceptionHandler, render } from "../src/application/engine/fixture-perception-handler";
+import { type OpenOrderReader, fixturePerceptionHandler } from "../src/application/engine/fixture-perception-handler";
 import { placeholderHandler } from "../src/application/placeholder-handler";
 import type { Clock, JobHandler, JobInput, JobOutcome } from "../src/application/ports";
 import type { BurstReading } from "../src/domain/contract/observation";
+import type { EngineOutcome, OrderView, QuestionCode } from "../src/domain/contract/outcomes";
 import { PLACEHOLDER_TTL_MS } from "../src/domain/outbox";
 
 export type RecordingSource = "fixture" | "muse";
@@ -135,4 +136,66 @@ export function recordedPerceptionHandler(deps: {
       };
     },
   };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Replies. The demo renders its own, so `src/` stays untouched; the words match the fixture
+// perception handler's (src/application/engine/fixture-perception-handler.ts), and a test holds them alike.
+
+const NO_OPEN_ORDER = "No tengo un pedido abierto tuyo. Mandame lo que necesitás.";
+const CONFIRM_PROMPT = "¿Lo confirmo? Confirmar / Corregir / Cancelar";
+
+const money = (centavos: number): string => `L ${(centavos / 100).toFixed(2)}`;
+
+function readback(order: OrderView, lead: string): string {
+  const lines = order.lines.map((line) => `• ${line.quantity === null ? "" : `${line.quantity} `}${line.productName ?? line.text}`.replace(/\s+$/u, ""));
+  const total = order.total === null ? [] : [`Total: ${money(order.total)}`];
+  return [lead, ...lines, ...total, CONFIRM_PROMPT].join("\n");
+}
+
+function question(code: QuestionCode): string {
+  switch (code) {
+    case "pickup_or_delivery":
+      return "¿Lo pasás a traer o te lo llevamos?";
+    case "ambiguous_size":
+      return "¿De qué tamaño lo querés?";
+    case "ambiguous_product":
+      return "¿Cuál producto de tu pedido querés cambiar?";
+    default:
+      return "¿Me das un dato más para tu pedido?";
+  }
+}
+
+/** The customer's reply to an outcome of a recorded reading. */
+export function render(outcome: EngineOutcome): string {
+  switch (outcome.type) {
+    case "readback":
+      return readback(outcome.order, "Esto entendí de tu pedido:");
+    case "order_changed":
+      return readback(outcome.order, "Cambié tu pedido así:");
+    case "order_confirmed":
+      return "Quedó confirmado tu pedido. Te aviso cuando esté listo.";
+    case "order_cancelled":
+      return "Cancelé tu pedido.";
+    case "ask":
+      return question(outcome.question);
+    case "duplicate":
+      return outcome.first.type === "order_confirmed" ? "Tu pedido ya estaba confirmado." : render(outcome.first);
+    case "rejected":
+      switch (outcome.reason) {
+        case "stale_version":
+          return outcome.order === null ? NO_OPEN_ORDER : readback(outcome.order, "Tu pedido cambió. Te lo leo de nuevo:");
+        case "not_found":
+          return NO_OPEN_ORDER;
+        default:
+          return "Eso lo ve la tienda. Ya les aviso.";
+      }
+    case "order_status":
+      return outcome.order === null ? NO_OPEN_ORDER : readback(outcome.order, "Tu pedido va así:");
+    case "handoff":
+    case "out_of_scope":
+      return "Se lo paso a la tienda para que te ayuden.";
+    default:
+      return "Recibí tu mensaje. Lo estoy revisando.";
+  }
 }

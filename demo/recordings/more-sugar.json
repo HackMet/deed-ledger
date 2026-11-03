@@ -10,7 +10,7 @@
           {
             "op": "set_quantity",
             "target": {
-              "ref": "L3",
+              "ref": "L4",
               "said": "azúcar"
             },
             "quantity": "3",
@@ -36,5 +36,5 @@
     ]
   },
   "matches": [],
-  "note": "Copied from test/fixtures/contract.ts (moreSugar): a change, set azúcar to 3."
+  "note": "Built by hand from test/fixtures/contract.ts (moreSugar), with the target changed from L3 to L4: in the demo's first order L3 is Jabón Xtra and L4 is the azúcar, so the fixture's L3 would change the soap. A change: set azúcar to 3."
 }
