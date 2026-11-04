@@ -24,9 +24,9 @@ NONE_RE = re.compile(r"RESULT:\W*(COMMITTED\W+none|NO\s+COMMIT)\b", re.I)
 REVIEW_RE = re.compile(r"review|validate", re.I)
 PASSED_RE = re.compile(r"(\d+)\s+passed")
 FAILED_RE = re.compile(r"(\d+)\s+failed")
-LOCAL_PATH_RE = re.compile(r"(?<![\w.])/(?:home|Users|root|tmp|mnt|var)/[^\s`'\"),]+")
-SECRET_RE = re.compile(r"\b[A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET)=\S+")
-PHONE_RE = re.compile(r"\+\d{8,}")
+LOCAL_PATH_RE = re.compile(r"(?<![\w.])(?:/(?:home|Users|root|tmp|mnt|var|opt|srv)/|~/|[A-Za-z]:\\)[^\s`'\"),]+")
+SECRET_RE = re.compile(r"\b(?:(?:[A-Za-z_][A-Za-z0-9_]*)?(?:KEY|TOKEN|SECRET|PAT|key|token|secret)\s*[=:]\s*\S+|Bearer\s+\S+|sk-[A-Za-z0-9_-]{8,})")
+PHONE_RE = re.compile(r"\+\d[\d -]{6,}\d")
 
 
 def sh(cmd, cwd=None, timeout=None):
@@ -344,6 +344,13 @@ def selftest():
     """One check per finding of the RA2 review (B2, B3). Run: python3 -I deed_check_harness.py --selftest"""
     import tempfile
     sha = "dc615ed8a74ccc29ef9765b88d3a43ce4bae7478"
+    for dirty in ("worktree /home/a/b", "at ~/x", "at C:\\Users\\a", "at /opt/x", "MODEL_API_KEY=abc", "token: abc", "Bearer abc", "sk-abcdefghij", "+504 9999-8888"):
+        assert scrubbed(dirty) != dirty, dirty
+    line = "RESULT: COMMITTED abc1234 on claude/x, 12 passed"
+    assert scrubbed(line) == line
+    rec = dict(run="r", started="s", final="RESULT: COMMITTED abc1234 at /home/a", report="RESULT: COMMITTED abc1234 at /home/a", result={})
+    published = evidence_of(rec)
+    assert published["final_lines"] == published["report_lines"] == ["RESULT: COMMITTED abc1234 at <local path>"]
     # B2: the claim is read from final.txt first, then report.md; a review never reads final.txt.
     assert claim_of(f"RESULT: COMMITTED {sha}\n", "", {}) == sha
     assert claim_of("", f"RESULT: COMMITTED {sha}", {}) == sha

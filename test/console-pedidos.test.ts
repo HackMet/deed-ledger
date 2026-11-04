@@ -298,7 +298,7 @@ describe("K5: the Orders screen reads the ledger", () => {
     await changeAndApprove(s, addAndPickup, T0 + 3000);
     const cookie = await login(h, s);
     const page = await (await get(h, "/console/pedidos", cookie)).text();
-    expect(page).toContain("un jabón más × 1");
+    expect(page).toContain("jabón más × 1");
     expect(page).toContain("azucar-1lb × 2");
     expect(page).toContain("Cliente · Nuevo");
     const trail = await (await get(h, `/console/pedidos/${orderId}`, cookie)).text();
@@ -443,7 +443,7 @@ describe("K12: Pedidos shows a change waiting for review and sends the answer to
     expect(row(await (await get(h, "/console/pedidos", cookie)).text(), orderId)).toBe("yellow");
     const page = await (await get(h, `/console/pedidos/${orderId}`, cookie)).text();
     expect(page).toContain("El cliente pidió un cambio");
-    expect(page).toContain("Agregar: un jabón más × 1");
+    expect(page).toContain("Agregar: jabón más × 1");
     expect(page).toContain("Aprobar ✓");
     expect(page).toContain("Rechazar ✗");
     expect(page.match(/<input name="motivo" required maxlength="200"/g)).toHaveLength(2);

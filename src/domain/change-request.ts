@@ -23,11 +23,13 @@ export function reviewReason(reason: unknown): string | null {
   return trimmed.length >= 1 && [...trimmed].length <= REASON_MAX ? trimmed : null;
 }
 
+const wordsOf = (line: OrderLineView): string => wordsWithoutQuantity(line.text.trim(), line.quantity).toLowerCase();
+
 /** A line is the same line when it names the same product, or, unmatched, the same words, whatever quantity they start with. */
 const identity = (line: OrderLineView): string =>
-  line.productId !== null ? `p:${line.productId}` : `t:${wordsWithoutQuantity(line.text.trim()).toLowerCase()}`;
+  line.productId !== null ? `p:${line.productId}` : `t:${wordsOf(line)}`;
 
-const sameContent = (a: OrderLineView, b: OrderLineView): boolean => a.quantity === b.quantity && a.unit === b.unit && a.text === b.text;
+const sameContent = (a: OrderLineView, b: OrderLineView): boolean => a.quantity === b.quantity && a.unit === b.unit && wordsOf(a) === wordsOf(b);
 
 /**
  * What going from `before` to `after` adds, removes and changes. Lines pair by identity, not by
@@ -50,17 +52,22 @@ export function lineDiff(before: readonly OrderLineView[], after: readonly Order
 }
 
 /** The lines a waiting request would leave: `diff` applied to the order's lines, for showing the customer what they asked. */
+/** Where `line` is among `items`: the same line at the same quantity, since a product can repeat. */
+function closest<T>(items: readonly T[], line: OrderLineView, lineOf: (item: T) => OrderLineView): number {
+  return items.findIndex((item) => identity(lineOf(item)) === identity(line) && lineOf(item).quantity === line.quantity);
+}
+
 export function requestedLines(lines: readonly OrderLineView[], diff: LineDiff): OrderLineView[] {
   const removed = [...diff.removed];
   const changed = [...diff.changed];
   const kept: OrderLineView[] = [];
   for (const line of lines) {
-    const gone = removed.findIndex((old) => identity(old) === identity(line));
+    const gone = closest(removed, line, (old) => old);
     if (gone !== -1) {
       removed.splice(gone, 1);
       continue;
     }
-    const change = changed.findIndex(({ before }) => identity(before) === identity(line));
+    const change = closest(changed, line, ({ before }) => before);
     kept.push(change === -1 ? line : changed.splice(change, 1)[0]!.after);
   }
   return [...kept, ...diff.added];

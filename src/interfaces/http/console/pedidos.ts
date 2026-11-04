@@ -25,6 +25,7 @@ import {
   type TrailEntry,
 } from "../../../infrastructure/d1/order-trail";
 import { REASON_MAX, reviewKey, reviewReason } from "../../../domain/change-request";
+import { wordsWithoutQuantity } from "../../../domain/orders";
 import type { ActionEnvelope, ConsoleAction } from "../../../domain/contract/actions";
 import type { EngineOutcome, LineDiff, OrderLineView, OrderState } from "../../../domain/contract/outcomes";
 import { type ConsoleEnv, memberContext } from "./auth";
@@ -222,7 +223,7 @@ function orderRow(row: OrderListRow) {
   return html`<li class="order ${row.colour}"><a href="/console/pedidos/${encodeURIComponent(row.orderId)}">
 <div class="head"><strong>${row.code ?? "—"}</strong><span>${COLOUR_MARKS[row.colour]}</span></div>
 <p class="meta">${row.customerLabel} · ${STATE_LABELS[row.state]}${row.courier === null ? "" : ` · Lo lleva ${courierName(row.courier)}`}</p>
-<p>${row.lines.map((line) => `${line.text} × ${line.quantity ?? "?"}`).join(", ")}</p>
+<p>${row.lines.map((line) => `${wordsWithoutQuantity(line.text, line.quantity)} × ${line.quantity ?? "?"}`).join(", ")}</p>
 </a></li>`;
 }
 
@@ -241,7 +242,7 @@ ${stepBox(trail, orderId, csrf, members)}
 <ol class="trail">${trail.facts.map((entry) => trailEntry(entry, names))}</ol>`;
 }
 
-const lineText = (line: OrderLineView) => `${line.productName ?? line.text} × ${line.quantity ?? "?"}${line.unit === null ? "" : ` ${line.unit}`}`;
+const lineText = (line: OrderLineView) => `${line.productName ?? wordsWithoutQuantity(line.text, line.quantity)} × ${line.quantity ?? "?"}${line.unit === null ? "" : ` ${line.unit}`}`;
 
 /** The change waiting for review: what it adds, removes and changes, and the two answers. */
 function changeBox(request: { readonly id: string; readonly diff: LineDiff }, orderId: string, csrf: string) {

@@ -121,3 +121,4 @@
 {"claimed_passed": null, "final_lines": [], "report_lines": [], "result": {"commits": [], "model": "opus", "status": "ok"}, "run": "rc3-review-recheck", "started": "2026-11-04T11:54:23+00:00"}
 {"claimed_passed": null, "final_lines": [], "report_lines": [], "result": {"commits": [], "model": "opus", "status": "ok"}, "run": "rc10b-review-core", "started": "2026-11-04T14:55:46+00:00"}
 {"claimed_passed": null, "final_lines": [], "report_lines": [], "result": {"commits": ["4a400c6a8af5262881ebdff90767909e0616e329", "7fd8292977bca5e78f20e3ea93831824e3a583fe", "b47aeca3f51efe67de9d660f976a630b721d334a"], "model": "opus", "status": "ok"}, "run": "rd-review-demo-fixes", "started": "2026-11-04T14:58:38+00:00"}
+{"claimed_passed": null, "final_lines": [], "report_lines": [], "result": {"commits": [], "model": "opus", "status": "ok"}, "run": "rd2-review-demo-fixes", "started": "2026-11-04T15:43:28+00:00"}

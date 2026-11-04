@@ -128,7 +128,7 @@ const money = (centavos: number): string => `L ${(centavos / 100).toFixed(2)}`;
 /** A line's words: its product's name, or else the customer's text without the quantity it starts with. */
 function wordsOf(line: OrderView["lines"][number]): string {
   if (line.productName !== null) return line.productName;
-  return line.quantity === null ? line.text : wordsWithoutQuantity(line.text);
+  return wordsWithoutQuantity(line.text, line.quantity);
 }
 
 /** One line per order line, for a reply: the quantity once, then the words. */

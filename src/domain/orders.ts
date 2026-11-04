@@ -1,6 +1,6 @@
 /** Order versions and line labels. Pure: a version is immutable, a change produces the next one. */
 import type { DecimalString } from "./contract/numbers";
-import { isDecimalString } from "./contract/numbers";
+import { isDecimalString, toThousandths } from "./contract/numbers";
 import type { OrderLineView, OrderView } from "./contract/outcomes";
 
 const LABEL = /^L([1-9]\d{0,8})$/;
@@ -34,15 +34,37 @@ export interface NextVersion {
   readonly lines: readonly OrderLineView[];
 }
 
+const NUMBER_WORDS: Readonly<Record<string, number>> = {
+  media: 500, medio: 500, un: 1000, una: 1000, uno: 1000, dos: 2000, tres: 3000, cuatro: 4000, cinco: 5000, seis: 6000,
+  siete: 7000, ocho: 8000, nueve: 9000, diez: 10000, once: 11000, doce: 12000, quince: 15000, veinte: 20000,
+};
+const LEADING_NUMBER = /^x?(\d+\/\d+|\d+(?:[.,]\d+)?)(?:\s+|(?=\p{L}))(?=\S)/iu;
+const LEADING_WORD = /^(\p{L}+)\s+(?=\S)/u;
+
+function thousandthsOf(number: string): number | null {
+  const [top, bottom] = number.split("/");
+  if (bottom === undefined) return toThousandths(number.replace(",", "."));
+  const value = (Number(top) * 1000) / Number(bottom);
+  return Number.isInteger(value) ? value : null;
+}
+
+/**
+ * The customer's words without a leading number that says the line's own quantity: "2lb azucar" × 2 is "lb azucar".
+ * A number that says something else stays, because it is part of the words: "Tres Rosas" × 1, "2 litros de coca" × 3.
+ */
+export function wordsWithoutQuantity(text: string, quantity: DecimalString | null): string {
+  const wanted = quantity === null ? null : toThousandths(quantity);
+  if (wanted === null) return text;
+  const number = LEADING_NUMBER.exec(text);
+  if (number !== null) return thousandthsOf(number[1]!) === wanted ? text.slice(number[0].length) : text;
+  const word = LEADING_WORD.exec(text);
+  return word !== null && NUMBER_WORDS[word[1]!.toLocaleLowerCase("es")] === wanted ? text.slice(word[0].length) : text;
+}
+
 /**
  * The version after `current` with `change` applied, or null when the change points at a label
  * or quantity that doesn't resolve. `current` is never modified; labels are renumbered by position.
  */
-const LEADING_QUANTITY = /^(?:\d+(?:[.,]\d+)?|un|una|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s+(?=\S)/i;
-
-/** The customer's words without the quantity they start with ("1 aceite", "dos libras de azúcar"). */
-export const wordsWithoutQuantity = (text: string): string => text.replace(LEADING_QUANTITY, "");
-
 export function nextVersion(
   current: Pick<OrderView, "version" | "lines">,
   change: OrderChangeEdit,
@@ -66,7 +88,7 @@ export function nextVersion(
     // An unmatched line's words carry the old quantity; kept, the line would show two numbers.
     lines: current.lines.map((line, i) =>
       i === index
-        ? { ...line, quantity: change.quantity, text: line.productId === null ? wordsWithoutQuantity(line.text) : line.text }
+        ? { ...line, quantity: change.quantity, text: line.productId === null ? wordsWithoutQuantity(line.text, line.quantity) : line.text }
         : line,
     ),
   };

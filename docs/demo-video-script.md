@@ -4,14 +4,10 @@ Every line of output shown on screen below was measured, with its source. A scen
 after `./demo.sh` shows its step green (✓) on the recording machine; until then the scene is not in the cut. Spanish
 appears only where it quotes the product's own copy.
 
-**Status (2026-11-03).** `./demo.sh` is on the local branches `claude/demo-on-main` and `claude/owner-on-main`, not
-on `main`. It exits 0 there: 29 steps, 29 passed (`claude/demo-on-main` at `47a2d5c`, twice; `claude/owner-on-main`
-at `e446233`, `DEMO_PORT=8795 ./demo.sh`). The staff-side steps that failed on `claude/demo-env` at `cbce8de` (A's
-start, ready, dispatch and delivered; D's Aprobar; F's Rechazar; C's and E's refused taps) all pass, so scenes 5
-and 6 can be shot. K8's attack run passed review: 9 attacks, 0 false facts (`claude/adversary` at `dd3a342`).
+**Status (2026-11-04).** `./demo.sh` is in PR #71. It exits 0: 29 steps, 29 passed. Attacks: 9, 0 false facts.
 
 **On screen for the whole video, bottom strip, never hidden:** `PERCEPTION: RECORDED (6 fixture, 0 muse) — fixtures
-until Angel records real Muse outputs. The engine, ledger and console are live code.` (the exact first line
+until Angel records real Muse outputs. The engine, ledger and console are live code; answers to customer messages are demo templates, notices after a staff tap are the product's.` (the exact first line
 `./demo.sh` prints). If Angel records real Muse outputs before the cut, change the counts to what `demo.sh` prints
 then.
 
@@ -20,7 +16,7 @@ Don't film "Le pasé tu cambio a la tienda…" (customers D and F): the real pro
 | Time | Scene | On screen | Narration | Measured output shown |
 |---|---|---|---|---|
 | 0:00-0:15 | 1. The problem | The pilot store's paper notebook; a WhatsApp chat | "A mercadito in Tocoa keeps its orders in a notebook. The owner already lives on WhatsApp, so the assistant works there. Customers ask in their own words, and the assistant never says something the records can't back up." | none |
-| 0:15-0:35 | 2. One command | Terminal: `./demo.sh`, first line (the PERCEPTION label) in a highlight box | "One command runs six synthetic customers through the real engine and ledger. Perception is recorded fixtures until Angel records real Muse outputs; the engine, ledger and console after it are live code, and the customer replies on screen are demo templates." | The label line, verbatim, as `demo.sh` prints it |
+| 0:15-0:35 | 2. One command | Terminal: `./demo.sh`, first line (the PERCEPTION label) in a highlight box | "One command runs six synthetic customers through the real engine and ledger. Perception is recorded fixtures until Angel records real Muse outputs; the engine, ledger and console after it are live code. Answers to customer messages on screen are demo templates; notices after a staff tap are the product's." | The label line, verbatim, as `demo.sh` prints it |
 | 0:35-1:05 | 3. Exactly once (customer B) | Terminal lines for B; then the fact count | "Customer B says confirm three times. The engine derives the operation key itself, so the second and third answers are the first outcome. One confirm fact, not three." | `✓ B · says “confirmar” → “Quedó confirmado tu pedido. Te aviso cuando esté listo.” · [order_confirm +1]`, then twice `→ “Tu pedido ya estaba confirmado.” · [no facts]`, then `✓ B · check: order_confirm facts from B's three confirms → 1 order_confirm fact(s)` (K10 report, run 1, `3912a38`; RK10 reran at `cbce8de`) |
 | 1:05-1:30 | 4. The trail (customer E) | Browser, `/console/pedidos/<E's order>`: the header reads "Cancelado · Versión 2 · Cancelado"; in the trail list, version 1 shows "cerrado por … (reemplazado)" and the confirm shows "cerrado por … (cancelado)", both in red text | "E ordered, changed it to three pounds of sugar, confirmed, then cancelled. Version 1 was superseded, not erased. The confirm is closed by the cancellation. Nothing was edited; each step is a fact that points at what it came from." | `✓ E · check: trail at /console/pedidos/<E> → trail: reemplazado, cancelado` (K10 report, runs 1 and 2). The red text is the page's `.closed` style, which applies to both closed lines (`src/interfaces/http/console/pedidos.ts` at `cbce8de`). E's row in the Pedidos list also has a red border, because a cancelled order is red. |
 | 1:30-1:50 | 4b. The Deed view (customer E) | Browser, "Ver en Deed" from E's trail: `/console/deed/<E's order>`, the facts as a graph, closed ones red, the refused "Intento rechazado" box beside the fact that decided it; then `/console/deed/verificaciones` | "Every fact is a node; a cancellation closes what rests on it. The staff tap that came after is refused, and the engine records why." | Measured on `claude/deed-on-main` (`8ec9f87`), `DEMO_PORT=8795 ./demo.sh --serve`, 2026-11-03. Graph: 2 closed nodes, 2 live, 1 "Intento rechazado". Feed: "Intentos rechazados 4", by reason "ya se hizo antes" 2 and "el estado no lo permite" 2; row "✗ Intentó marcar listo · ancestro cancelado". The feed shows "Afirmaciones verificadas 0": never narrate claim checks over it. Don't film the replay slider as "now": it stops short of the last event. |

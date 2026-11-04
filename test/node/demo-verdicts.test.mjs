@@ -31,3 +31,10 @@ test("the demo's check refuses a judge that admits everything", () => {
     assert.throws(() => checkVerdicts(who, states), /the verdicts of/);
   }
 });
+
+test("the demo's label and the video script's strip say the same about what is real", () => {
+  const label = /LABEL = `PERCEPTION: [^`]*— ([^`]+)`/.exec(readFileSync("demo/run.mjs", "utf8"))?.[1];
+  assert.match(label ?? "", /demo templates/);
+  const script = readFileSync("docs/demo-video-script.md", "utf8").replace(/\s+/g, " ");
+  assert.ok(script.includes(label), label);
+});

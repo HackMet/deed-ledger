@@ -427,6 +427,26 @@ describe("G4b: a dependency written in the same batch is checked after the state
 });
 
 describe("lineDiff: lines pair by product or words, not by label", () => {
+  const said = (text: string, quantity: string) => ({ lineId: text, text, quantity, unit: null, productId: null, productName: null }) as unknown as OrderLineView;
+
+  it("keeps different products apart when both start with a number", () => {
+    const diff = lineDiff([said("Dos Rosas", "1"), said("Tres Rosas", "1")], [said("Tres Rosas", "1")]);
+    expect(diff.changed).toEqual([]);
+    expect(diff.removed.map((line) => line.text)).toEqual(["Dos Rosas"]);
+  });
+
+  it("sees no change when the words lost a quantity that stayed the same", () => {
+    expect(lineDiff([said("1 aceite", "1")], [said("aceite", "1")])).toEqual({ added: [], removed: [], changed: [] });
+  });
+
+  it("shows the waiting change on the right line when a product repeats", () => {
+    const before = [said("2 leche", "2"), said("5 leche", "5")];
+    const toSeven = [said("2 leche", "2"), said("leche", "7")];
+    expect(requestedLines(before, lineDiff(before, toSeven)).map((line) => line.quantity)).toEqual(["2", "7"]);
+    const removed = [said("2 leche", "2")];
+    expect(requestedLines(before, lineDiff(before, removed)).map((line) => line.quantity)).toEqual(["2"]);
+  });
+
   it("pairs an unmatched line whose words lost their old quantity as one change", () => {
     const before = { lineId: "l1", text: "1 aceite clover", quantity: "1", unit: null, productId: null, productName: null } as unknown as OrderLineView;
     const diff = lineDiff([before], [{ ...before, text: "aceite clover", quantity: "3" }]);

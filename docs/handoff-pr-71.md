@@ -41,7 +41,7 @@ Also waiting on him: decisions D-41 to D-44 and the migration numbers.
 - **`npm test`** is now `vitest run && node --test test/node/deed-recheck-command.test.mjs test/node/demo-verdicts.test.mjs`. The node tests start processes, which the Workers runtime can't do.
 - **`./demo.sh`:** read the exit code. With a broken judge it prints `Steps: 29 · passed 29`, then fails on the verdict check and exits 1. `0 differ` holds for the demo's entries only.
 - **Demo perception is recorded:** `6 fixture, 0 muse`. Only a real run proves the Meta models carry the flow.
-- **Demo replies aren't the product's.** The customer replies in `./demo.sh` are templates in `demo/recorded-perception.ts`; `src/domain/replies.ts` doesn't run there, so their wording differs and they skip the claim checks. Say so when filming.
+- **Demo replies aren't the product's.** Answers to customer messages in `./demo.sh` are templates in `demo/recorded-perception.ts`, so their wording differs and they skip the claim checks. Notices after a staff tap are the product's. Say so when filming.
 
 ## Known gaps
 
@@ -50,7 +50,8 @@ Also waiting on him: decisions D-41 to D-44 and the migration numbers.
 3. **Copy mismatch.** While a change waits for the store, the demo says "Le pasé tu cambio a la tienda. Queda así si lo aprueban: …". Real WhatsApp says "Tu pedido ya está en la fila. Te aviso apenas esté listo." or "Vas segundo en la fila. Te aviso apenas esté listo." The proposed `statusReply` change is in the PR body, uncommitted, and no test covers it. That demo message stays out of the video until they match.
 4. **C5:** append-only is enforced with triggers in the core's schema, not in the store. Store triggers would go on a separate branch, if Angel accepts them.
 5. **Codex review:** not done; codex isn't installed on Kerly's machine.
-6. **Local paths in branch history.** `docs/deed-run-evidence.jsonl` no longer holds any, but earlier commits on this branch do (`/home/kerly/...`). Before the repo goes public: squash on merge and delete these branches, or accept it, since the same username is in commit metadata.
+6. **A brand that starts with its own quantity loses the number on a changed unmatched line:** `Dos Pinos` × 2 reads `Pinos`. `src/interfaces/http/console/preparacion.ts:264`, Angel's, still prints the raw words.
+7. **Local paths in branch history.** `docs/deed-run-evidence.jsonl` no longer holds any, but earlier commits on this branch do (`/home/kerly/...`). Before the repo goes public: squash on merge and delete these branches, or accept it, since the same username is in commit metadata.
 
 ## Conformance
 
