@@ -87,10 +87,13 @@ describe("K12: the customer's change, whole", () => {
     expect(heard).not.toContain(`• 2 ${sugarOf(order.lines).productName}`);
     expect(heard).not.toContain("¿Lo confirmo?");
 
-    await save(await engine.onMemberAction(reviewer(s), reviewTap(order.openChangeRequest!.id)));
+    const requestFact = (await factsOfKind(s.businessId, "change_request")).at(-1)!;
+    expect(sugarOf((JSON.parse(requestFact.body_json) as { lines: OrderLineView[] }).lines).quantity).toBe("3");
+    const approved = await engine.onConsoleAction(reviewer(s), reviewTap(order.openChangeRequest!.id));
+    await save(approved);
     const versions = await factsOfKind(s.businessId, "order_version");
-    const newest = JSON.parse(versions.at(-1)!.body_json) as { lines: OrderLineView[] };
-    expect(sugarOf(newest.lines).quantity).toBe("3");
+    expect(versions.length).toBe(2);
+    expect(sugarOf((approved.outcome as { order: OrderView }).order.lines).quantity).toBe("3");
 
     const confirmsBefore = (await factsOfKind(s.businessId, "order_confirm")).length;
     await save(await engine.onCustomerAction(s.context({ nowMs: T0 + 60_000 }), tap(v1.orderId, 2)));
