@@ -210,6 +210,7 @@ Gate: Saturday Oct 31, 8:00 PM Honduras time.
 | Organizer questions U1–U4, U6 and U7 | Angel → Discord | Oct 26 |
 | Repository license, and when it goes public (right before submitting) | Team | Oct 26 |
 | Decisions made since Oct 28 aren't in [decisions.md](decisions.md) yet | Angel → Claude Code | Oct 28 |
+| D-57: the `inStock` contract fields and the short-stock copy; whether the preparation list should show a sold-out line differently; `stock_balances` has no unit, so "2 cajas" is compared as 2 | Angel | Nov 4 |
 | Product and team name: "Johan AI" is a working title | Team | Oct 27 |
 | K12 touched two of Angel's files: `src/domain/copy.ts` gains the owner-facing copy `CHANGE_AFTER_READY` (new copy, not compile-only), and `test/secrets.test.ts` lists `0024_change_requests.sql` (compile-only); both need Angel's OK | Angel | Nov 3 |
 | K21 touched Angel's files: `config.ts` (`deedEngine`), `wrangler.jsonc` (`DEED_ENGINE: "0"`), `worker-configuration.d.ts` (regenerated) and `composition.ts` (engine choice; the Deed checks recorder). Whether to turn `DEED_ENGINE` on is his call | Angel | Nov 3 |
