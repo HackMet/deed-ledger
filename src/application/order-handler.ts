@@ -238,9 +238,26 @@ async function asTappedNumber(deps: OrderHandlerDeps, lease: Lease, job: Job): P
 async function neverSilent(deps: OrderHandlerDeps, { lease, job, isNewestOfBurst }: JobInput, run: () => Promise<JobOutcome>): Promise<JobOutcome> {
   const outcome = await run();
   if (outcome.replies.length > 0 || !isNewestOfBurst) return outcome;
+  const stockAsked = await stockQuestionAgain(deps, lease, job);
+  if (stockAsked.length > 0) return { ...outcome, replies: stockAsked };
   const line = await fallbackLine(deps, lease, job);
   deps.log.info("silent_reply_filled", { businessId: lease.businessId, conversationId: lease.conversationId, inboundId: job.id });
   return { ...outcome, replies: [{ ...line, ttlMs: ORDER_REPLY_TTL_MS, closesBurst: true }] };
+}
+
+/** Stock's question restated with its amount and its claim: "¿Cuántos querés?" alone would lose the offer. */
+async function stockQuestionAgain(deps: OrderHandlerDeps, lease: Lease, job: Job): Promise<ReplyDraft[]> {
+  const source = readingSourceOf(deps.engine);
+  const customer = source?.shortOrder === undefined ? null : await deps.customers.ofConversation(lease);
+  if (customer === null) return [];
+  const order = await source!.shortOrder!({
+    businessId: lease.businessId,
+    conversationId: lease.conversationId,
+    customerId: customer.id,
+    jobId: job.id,
+    nowMs: deps.clock.now(),
+  });
+  return order === null ? [] : replyForOutcome(deps, { ...lease, customerId: customer.id }, { type: "readback", order });
 }
 
 async function fallbackLine(deps: OrderHandlerDeps, lease: Lease, job: Job): Promise<Pick<ReplyDraft, "body" | "claims">> {

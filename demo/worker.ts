@@ -7,6 +7,7 @@ import { DEMO_AGENT_ID } from "./agent";
 import { OrderEngine } from "../src/application/engine/order-engine";
 import { D1CustomerRepository } from "../src/infrastructure/d1/customer-repository";
 import { D1DeedChecks } from "../src/infrastructure/d1/deed-checks";
+import { D1StockBalances } from "../src/infrastructure/d1/stock-balances";
 import { D1FactLedger } from "../src/infrastructure/d1/fact-ledger";
 import { D1OrderStore } from "../src/infrastructure/d1/order-store";
 import { consoleLogger, randomIds, systemClock } from "../src/infrastructure/runtime";
@@ -24,6 +25,7 @@ export function demoRuntime(env: Env, recordings: readonly Recording[] = recordi
     ids: randomIds,
     ledger: new D1FactLedger(env.DB),
     checks: new D1DeedChecks(env.DB),
+    stock: new D1StockBalances(env.DB),
     clock: systemClock,
     log: consoleLogger,
     agentId: DEMO_AGENT_ID,

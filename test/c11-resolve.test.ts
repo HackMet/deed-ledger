@@ -273,15 +273,15 @@ describe("C11: what stays unresolved, on purpose", () => {
     expect(page).not.toContain(c.last().id);
   });
 
-  it("a no-hay notice on a catalog line goes as the safe reply: this engine records no availability to back it", async () => {
+  it("a no-hay notice on a catalog line goes out as itself, and resolves", async () => {
     const c = await scene();
     const orderId = await confirmed(c);
     await staffTap(c, { type: "start_preparing", orderId, version: 1 });
     const { view } = (await store.order({ businessId: c.s.businessId }, orderId))!;
     const lineId = view.lines.find((line) => line.productId !== null)!.lineId;
     await staffTap(c, { type: "mark_line", orderId, version: 1, lineId, mark: "no_hay", substituteProductId: null });
-    expect(c.last().body).toBe(COPY.safeReply);
-    expect((await search(c.h, c.cookie, c.last().id)).status).toBe(404);
+    expect(c.last().body).toContain("ahorita no hay");
+    expect((await search(c.h, c.cookie, c.last().id)).status).toBe(303);
   });
 
   it("the owner's own words from Pendientes carry no claim, so they resolve to nothing", async () => {

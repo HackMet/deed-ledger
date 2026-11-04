@@ -45,6 +45,7 @@ import { D1CustomerPlaceRepository } from "./infrastructure/d1/customer-place-re
 import { D1CustomerRepository } from "./infrastructure/d1/customer-repository";
 import type { DeedChecks } from "./application/engine/deed-checks";
 import { D1DeedChecks } from "./infrastructure/d1/deed-checks";
+import { D1StockBalances } from "./infrastructure/d1/stock-balances";
 import { D1FactLedger, D1FactPrecheck } from "./infrastructure/d1/fact-ledger";
 import { D1IntakeRepository } from "./infrastructure/d1/intake-repository";
 import { D1JobRepository } from "./infrastructure/d1/job-repository";
@@ -142,7 +143,7 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
   const engine =
     overrides.engine ??
     (config.deedEngine
-      ? new OrderEngine({ store: new D1OrderStore(db), ids, ledger: new D1FactLedger(db), checks: deedChecks, clock, log, agentId: AGENT_ID })
+      ? new OrderEngine({ store: new D1OrderStore(db), ids, ledger: new D1FactLedger(db), checks: deedChecks, stock: new D1StockBalances(db), clock, log, agentId: AGENT_ID })
       : config.pretendEngine
         ? new D1PretendEngine(db, { setup: storeSetup })
         : config.devConsole

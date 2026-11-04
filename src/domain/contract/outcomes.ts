@@ -18,7 +18,7 @@ export type OrderState =
   | "entregado"
   | "cancelado";
 
-/** From the latest evidence. Customers never hear a count. */
+/** From the latest evidence. Customers hear a count only as `OrderLineView.inStock`: what's left when they asked for more. */
 export type Availability = "hay" | "se_acabo" | "no_se";
 
 export interface OrderLineView {
@@ -33,6 +33,12 @@ export interface OrderLineView {
   /** The store's confirmed price only. A proposed price is never quoted to a customer. */
   readonly unitPrice: Centavos | null;
   readonly availability: Availability;
+  /**
+   * Proposed, pending Angel's OK: what the store's verified stock shows when it's above zero and under
+   * `quantity`. The customer is asked whether to take that amount. Absent: nothing to offer. Not stored
+   * with the line: the engine reads it again for each readback.
+   */
+  readonly inStock?: DecimalString;
   /** Alcohol or tobacco: "solo en tienda", never priced or confirmed in chat. */
   readonly restricted: boolean;
   readonly mark: LineMark | null;
@@ -252,7 +258,8 @@ export type Claim =
   | { readonly type: "order_state"; readonly orderId: string; readonly version: number; readonly state: OrderState }
   | { readonly type: "order_total"; readonly orderId: string; readonly version: number; readonly total: Centavos }
   | { readonly type: "unit_price"; readonly productId: string; readonly price: Centavos }
-  | { readonly type: "availability"; readonly productId: string; readonly availability: "hay" | "se_acabo" }
+  /** Proposed `inStock`, pending Angel's OK: with it, the store's verified stock is exactly that amount now. */
+  | { readonly type: "availability"; readonly productId: string; readonly availability: "hay" | "se_acabo"; readonly inStock?: DecimalString }
   | { readonly type: "payment_confirmed"; readonly paymentClaimId: string; readonly amount: Centavos }
   | { readonly type: "balance"; readonly customerId: string; readonly balance: Centavos }
   /** Proposed (#47): the store's hours are exactly these now (same entries, same order). */

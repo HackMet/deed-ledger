@@ -189,6 +189,8 @@ in `src/domain/contract/outcomes.ts`, marked "Proposed (#47)"; they are additive
    `verifyClaims` answers true only when the store's hours now are exactly these (same entries, same order).
    `unit_price` and `availability` claims need `verifyClaims` support too: true only while the confirmed price,
    or the availability from evidence, is still the one claimed. Until then those replies go out as the safe reply.
+   Proposed (D-57): the order engine answers `availability` from `stock_balances`, and an optional `inStock` on the
+   claim, with `OrderLineView.inStock`, holds only while the balance is exactly that amount.
 5. **Topic routing in the engine:** `order_status` → `order_status`; `price`/`availability` → `answer`;
    `store_hours` → `store_hours`; `other` → `out_of_scope` (the short redirect); `balance` → unchanged (handoff in
    the pretend engine). A burst that also changes the order gets the order's next step; the question isn't

@@ -22,6 +22,14 @@ export function countsTowardTotal(line: OrderLineView): boolean {
   return !line.restricted && line.availability !== "se_acabo" && line.mark !== "no_hay";
 }
 
+/**
+ * An order nobody can prepare: no lines, or every line sold out (some maybe sold only at the store).
+ * Only restricted lines isn't this: the customer may still confirm and pick those up at the store.
+ */
+export function nothingToPrepare(lines: readonly OrderLineView[]): boolean {
+  return lines.length === 0 || (lines.some((line) => !line.restricted && !countsTowardTotal(line)) && !lines.some(countsTowardTotal));
+}
+
 /** A counted line's amount, or null when its price or quantity is unknown. */
 export function countedLineAmount(line: OrderLineView): Centavos | null {
   if (line.unitPrice === null || line.quantity === null) return null;
