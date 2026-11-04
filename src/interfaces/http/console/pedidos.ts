@@ -234,7 +234,7 @@ function trailBody(trail: OrderTrail, orderId: string, csrf: string, notice: str
   const names = new Map(trail.facts.map((entry, n) => [entry.factId, `${KIND_LABELS[entry.kind]} (paso ${n + 1})`]));
   return html`${notice === null ? "" : html`<p class="notice">${notice}</p>`}
 <p class="meta">${STATE_LABELS[trail.state]} · Versión ${trail.version}${marks === "" ? "" : ` · ${marks}`}</p>
-<p class="meta"><a href="/console/deed/${encodeURIComponent(orderId)}">Ver en Deed</a></p>
+<p class="meta"><a href="/console/deed/${encodeURIComponent(orderId)}">Ver en Deed</a> · <a href="/console/deed/${encodeURIComponent(orderId)}/libro">Ver libro</a></p>
 ${trail.courier === null || trail.delivered ? "" : html`<p class="meta">Lo lleva ${courierName(trail.courier)}</p>`}
 ${trail.openRequest === null ? "" : changeBox(trail.openRequest, orderId, csrf)}
 ${stepBox(trail, orderId, csrf, members)}

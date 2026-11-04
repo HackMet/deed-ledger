@@ -16,6 +16,7 @@ import {
 } from "./auth";
 import { bienvenidaScreen } from "./bienvenida";
 import { deedScreen } from "./deed";
+import { libroScreen } from "./libro";
 import { empleadosScreen } from "./empleados";
 import { facturasScreen } from "./facturas";
 import { masScreen } from "./mas";
@@ -54,6 +55,7 @@ export function consoleRoutes() {
   negocioScreen(app);
   facturasScreen(app);
   deedScreen(app);
+  libroScreen(app);
 
   return app;
 }

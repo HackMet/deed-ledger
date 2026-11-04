@@ -129,6 +129,7 @@ ${rows.length === 0 ? html`<p class="empty">Todavía no hay verificaciones.</p>`
         // No refresh here: a reload drops the fact panel that is open (`#f-…`) and the `?foco=` path.
         style: STYLE,
         body: html`${replayForm(times, at)}
+<p class="meta"><a href="/console/deed/${encodeURIComponent(orderId)}/libro">Ver libro</a></p>
 ${graphSvg(graph, onPath)}
 <p class="hint">Tocá un hecho para ver su detalle.</p>
 ${shownEntries.map((entry) => panelOf(entry, graph, facts))}`,
