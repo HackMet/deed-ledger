@@ -170,6 +170,23 @@ describe("D1LibroReads: the values the judge decides on, pinned by literal value
   });
 });
 
+describe("D1LibroReads: this order's refusals and each reply's delivery, pinned by literal values", () => {
+  it("reads no other order's refusal, and each reply's outbox status, delivery time and place in the order", async () => {
+    const mine = await newStore();
+    const { orderId } = await confirmedOrder(mine);
+    await insertCheck(mine.businessId, "chk-other-order", { orderId: "order-elsewhere", source: "gate", result: "fail", reason: "invalid_state" });
+    const claim: Claim = { type: "order_state", orderId, version: 1, state: "confirmado" };
+    await insertReply(mine.businessId, "reply-failed", [claim], { status: "failed" });
+    await insertReply(mine.businessId, "reply-read", [claim], { providerStatus: "read" });
+    const input = await new D1LibroReads(env.DB).read({ businessId: mine.businessId }, orderId);
+    expect(input?.refusals).toEqual([]);
+    expect(input?.replies.map((reply) => [reply.id, reply.status, reply.providerStatus, reply.providerStatusAtS, reply.atMs])).toEqual([
+      ["reply-failed", "failed", null, null, T0 + 1_500],
+      ["reply-read", "sent", "read", T0 / 1000 + 2, T0 + 1_500],
+    ]);
+  });
+});
+
 describe("D1LibroReads: isolation and absence", () => {
   it("never shows another store's replies, facts or checks on this order", async () => {
     const mine = await newStore();
