@@ -25,6 +25,7 @@ const BUSINESS_WORDS = [
   "member",
   "delivery",
   "dispatch",
+  "payment",
 ];
 
 /**
