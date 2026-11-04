@@ -34,16 +34,16 @@ branding. The other seven can be partial and it is still recognisably Deed.
 | # | Criterion | Status |
 |---|---|---|
 | **C1** ★ | **A claim is not a fact.** The actor writes only the claim leg and a pointer to where its counter-leg must appear. Separation of write permissions, enforced structurally. | ✅ built and tested |
-| **C2** ★ | **Every fact carries evidence from a source the actor does not control.** No evidence, no fact. | ⚠️ the witness exists (staff taps, WhatsApp delivery status) but is not surfaced → K20c-a |
+| **C2** ★ | **Every fact carries evidence from a source the actor does not control.** No evidence, no fact. | ✅ built and tested. The order's Libro view (`/console/deed/:pedido/libro`) pairs each claim with its witness. The demo has no WhatsApp statuses, so delivery reads *en duda* there |
 | **C3** ★ | **The verdict is issued by fixed arithmetic, never by a model.** Re-runnable by a third party from the entry alone. | ✅ built and tested |
 | **C4** | **Admission is atomic with the effect.** The fact, the reply and the job's completion live or die in one transaction. "Saved" cannot exist without the fact. | ✅ built and tested |
 | **C5** | **Append-only, with validity.** Never updated, never deleted. A correction is a new fact; a cancellation closes an interval. | ✅ as stated above: append-only enforced by schema; no hash chain, no signatures |
 | **C6** ★ | **Dependencies gate at commit time, not with an `if`.** Liveness is derived from closures, never cascaded by writes. | ✅ built and tested |
 | **C7** | **Uncertainty is a first-class outcome.** Silence is not failure; a fetch error is never a contradiction. | ⚠️ **partial, and say so:** the view surfaces *en duda*; the engine does not model an in-doubt state in the order flow. Showing it is not the same as having it. |
-| **C8** | **Reliability is measured per (agent id, effect class), under dependence.** Agent errors arrive in bursts, so a Bernoulli interval is mis-specified. | ⚠️ in the scale page, from harness data → K20c-b |
+| **C8** | **Reliability is measured per (agent id, effect class), under dependence.** Agent errors arrive in bursts, so a Bernoulli interval is mis-specified. | ⚠️ partial: `docs/deed-scale.html`, from harness runs only, not store orders. There the id is sha256(model + brief), not `facts.agent_id`. It shows no contradictions, and no group reaches the 30 claims n_eff needs, so n_eff is one aggregate that proves no independence |
 | **C9** | **Nothing identifies, scores, profiles or tracks a person.** The unit is an agent version and an effect class. | ✅ built and tested |
 | **C10** | **The core is agnostic.** No business nouns inside it; a new business flow is a new policy, never an edit to the core. | ❌ cut. Never claimed. |
-| **C11** | **The agent is identified, and the identity travels.** Every fact records which agent version made the claim; every customer-facing output carries a code that resolves to that entry. | ✅ see the limit below |
+| **C11** | **The agent is identified, and the identity travels.** Every fact records which agent version made the claim; every customer-facing output carries a code that resolves to that entry. | ⚠️ partial: every customer fact records the agent version (see the limit below). No customer-facing output carries a code yet |
 
 C7, verbatim from the status table: *mostrar 'en duda' en una pantalla no es lo mismo que modelarlo en el motor*
 (in English: showing "en duda" on a screen is not the same as modelling it in the engine).
@@ -70,9 +70,9 @@ Three numbers, each with where it was measured:
 
 | Number | Value | Measured |
 |---|---|---|
-| Tests | 1264 passed, 88 files; typecheck exit 0 | `npm test` and `npm run typecheck` on `claude/deed-close` at `a0812c5`, the A1 agent_id run. This branch (`claude/submission-docs`) runs 1014 passed, 68 files |
+| Tests | 1269 passed, 89 files; typecheck exit 0 | `npm test` and `npm run typecheck` on `claude/deed-close` at `ba7aa87`, 2026-11-03. This branch (`claude/submission-docs`) runs 1014 passed, 68 files |
 | Attacks | 9 attacks that reach the engine: 0 false facts admitted. One more attack is intake only and is not counted | `node scripts/adversary.mjs` on `claude/adversary` at `dd3a342`, exit 0, reviewed PASS (RK8). Removing a defence on purpose turns its row red, except one K12 scope that an older read still catches (RK8 N1). Perception is recorded fixtures; the engine, ledger and console are live code |
-| n_eff | `runs: 108`, then the printed line `dependence of errors (claims in time order): {'n': 52, 'rho1': 0.0, 'vif': 1.0, 'n_eff': 52}` | `deed_check_harness.py` over 108 runs, 2026-11-03. Commit-only verdicts (52 confirmed, 56 no claim); tests are not re-run |
+| Harness runs | 109 runs: 53 confirmed, 0 contradictions, 56 with no claim. The printed line is `{'n': 53, 'rho1': 0.0, 'vif': 1.0, 'n_eff': 53}` | `deed_check_harness.py` on 2026-11-03, rows in `docs/deed-verdicts.csv`, page in `docs/deed-scale.html`. Confirmed only means the commit exists and that run made it; tests are not re-run. With no contradictions, n_eff and the CUSUM show nothing about dependence |
 
 `./demo.sh` exits 0: 29 steps, 29 passed, on `claude/demo-on-main` (`47a2d5c`, twice) and on `claude/owner-on-main` (`e446233`) and on `claude/deed-on-main` (`8ec9f87`), `DEMO_PORT=8795 ./demo.sh`, 2026-11-03. The staff-side steps that failed on `claude/demo-env` (Preparación taps, console saves, customer notices) pass there: each console tap saves through `runConsoleAction` (#63) and the customer's notice is read back from the outbox. See `docs/demo-video-script.md` for what the video may and may not show.
 
