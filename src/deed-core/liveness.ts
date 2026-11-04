@@ -64,6 +64,8 @@ export function viewAfter(view: LedgerView, entry: Pick<Entry, "factId" | "depen
  * live after its own writes, which is what the batch's post-check tests. Empty when the entry may be written.
  */
 export function deadForEntry(entry: Pick<Entry, "factId" | "dependsOn" | "sameBatch" | "closes">, view: LedgerView): string[] {
-  if ((entry.sameBatch ?? []).length === 0) return deadAncestors(entry.dependsOn, view);
-  return deadAncestors([entry.factId], viewAfter(view, entry));
+  const sameBatch = entry.sameBatch ?? [];
+  if (sameBatch.length === 0) return deadAncestors(entry.dependsOn, view);
+  const before = deadAncestors(entry.dependsOn.filter((id) => !sameBatch.includes(id)), view);
+  return [...before, ...deadAncestors([entry.factId], viewAfter(view, entry))];
 }

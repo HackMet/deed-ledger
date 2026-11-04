@@ -53,7 +53,7 @@ branding. The other seven can be partial and it is still recognisably Deed.
 | **C7** | **Uncertainty is a first-class outcome.** Silence is not failure; a fetch error is never a contradiction. | ⚠️ **partial, and say so:** the view surfaces *en duda*; the engine does not model an in-doubt state in the order flow. Showing it is not the same as having it. |
 | **C8** | **Reliability is measured per (agent id, effect class), under dependence.** Agent errors arrive in bursts, so a Bernoulli interval is mis-specified. | ⚠️ partial: `docs/deed-scale.html`, from harness runs only, not store orders. There the id is sha256(model + brief), not `facts.agent_id`. The page gives counts only; it makes no claim about dependence |
 | **C9** | **Nothing identifies, scores, profiles or tracks a person.** The unit is an agent version and an effect class. | ✅ built and tested |
-| **C10** | **The core is agnostic.** No business nouns inside it; a new business flow is a new policy, never an edit to the core. | ⚠️ in progress. Evidence below; open disagreements between its three judges keep it unmarked |
+| **C10** | **The core is agnostic.** No business nouns inside it; a new business flow is a new policy, never an edit to the core. | ⚠️ in progress. Evidence and known limits below |
 | **C11** | **The agent is identified, and the identity travels.** Every fact records which agent version made the claim; every customer-facing output carries a code that resolves to that entry. | ⚠️ partial: every customer fact records the agent version (see the limit below). No customer-facing output carries a code yet |
 
 **Known limits of C3.** These have no test:
@@ -77,16 +77,15 @@ branding. The other seven can be partial and it is still recognisably Deed.
 
 What it rests on: `test/deed-core-boundary.test.ts` fails on a listed business noun or an outside import inside the core, and the last two industries were written by the reviewing agent, which took no part in building the core.
 
-What keeps it unmarked, each reproduced by a test on the reviewer's list:
+**Known limits of C10.** None of these admitted a false fact on D1, but a third party's re-check built on the memory store can answer differently:
 
 | Case | Pure judge and memory store | D1 |
 |---|---|---|
-| A `sameBatch` entry with a second dependency outside the batch (blocking) | admitted | `dependency_not_live`, which is correct |
 | `validFromMs` of `1.5` or `NaN` | admitted | throws a raw `D1_ERROR`, no fact written |
 | A policy with a bad bound (`min: 1.5`, `-1`) | admitted | every admit throws, even for other kinds |
 | Two concurrent identical entries that close a fact | not applicable | the loser gets `closes_not_live`, not `duplicate`; a refusal either way |
 
-Also, `MemoryLedgerStore` keeps the caller's `dependsOn` array by reference, so changing that array later changes its ledger. No false fact reached D1 in any of these, but a third party's re-check built on the memory store can disagree with it.
+Also, `MemoryLedgerStore` keeps the caller's `dependsOn` array by reference, so changing that array later changes its ledger.
 
 Known limit of the boundary test: it finds only the words on its list. A hard-coded host word outside the list, such as `"confirmation"`, is not detected. It also misses compounds such as `unitprice`, and an import hidden after a regex with an escaped slash. None of these is in the code today, by reading the files.
 

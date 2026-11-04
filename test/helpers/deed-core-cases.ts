@@ -216,6 +216,18 @@ export const cases: readonly Case[] = [
     ],
   },
   {
+    name: "clinic: refuses a dependency outside the batch that only a sameBatch one keeps alive",
+    policy: "clinic",
+    steps: [
+      { entry: sample("s1"), expect: "admitted" },
+      { entry: correction("c1", ["s1"], [ev("clinician", "c3")], { factId: "s1", reason: "superseded" }), expect: "admitted" },
+      {
+        entry: entry({ factId: "r1", kind: "result_reported", operationKey: "op-r1", dependsOn: ["s1", "c1"], sameBatch: ["c1"], evidence: [ev("lab_device", "d1")] }),
+        expect: "dependency_not_live",
+      },
+    ],
+  },
+  {
     name: "clinic: refuses a sameBatch dependency that the entry closes itself",
     policy: "clinic",
     steps: [
