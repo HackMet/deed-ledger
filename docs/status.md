@@ -141,7 +141,7 @@ Kept as written on `main`. In this merge the default `jobHandler` is the order h
   [contract.md](contract.md) and need Angel's OK; as with K12, taps save through `runConsoleAction` (#63).
 - K21 and K20 (Nov 3, `claude/deed-on-main`, from `claude/owner-on-main`, local only, **not deployed**):
   - K21: `OrderEngine` gives Angel's reader `perceptionContext` and `catalog`. The catalog comes from our `products` table, not `store_products`.
-  - K21: with `DEED_ENGINE=1` the app runs on `OrderEngine`, and the Muse reader reads through it. The flag is off by default. `plannerContext` is not built, so the planner conversation mode can't run on it yet.
+  - K21: with `DEED_ENGINE=1` the app runs on `OrderEngine`, and the Muse reader reads through it. `wrangler.jsonc` sets the flag to "1", so a deploy runs on it with nothing else to set; the simulator and the tests set "0". `plannerContext` is not built, so the planner conversation mode can't run on it yet.
   - K20: every refusal and claim check the engine makes is recorded in `deed_checks` (migration `0027`, append-only, IDs and codes only).
   - K20: `/console/deed/<order>` shows the order's facts as a graph, and `/console/deed/verificaciones` shows the feed.
   - Measured: 84 files / 1192 tests pass and `./demo.sh` gives 29/29.

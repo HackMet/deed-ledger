@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { buildRuntime } from "../src/composition";
@@ -7,10 +8,17 @@ import { D1PretendEngine } from "../src/infrastructure/memory/d1-pretend-engine"
 import { MemoryEngine } from "../src/infrastructure/memory/memory-engine";
 import { testEnv } from "./helpers/harness";
 import { newPhone, seedStore } from "./helpers/seed";
+import wranglerConfig from "../wrangler.jsonc?raw";
+import simConfig from "../scripts/lib/sim.mjs?raw";
 
 const withVars = (vars: Record<string, string>) => testEnv(vars as unknown as Partial<Env>);
 
 describe("DEED_ENGINE", () => {
+  it("a deployed Worker runs on the real engine with nothing else to set, and the simulator keeps its own", () => {
+    expect(wranglerConfig).toMatch(/"DEED_ENGINE":\s*"1"/);
+    expect(simConfig).toMatch(/DEED_ENGINE:\s*"0"/);
+  });
+
   it("is off unless it reads \"1\"", () => {
     expect(readConfig(testEnv()).deedEngine).toBe(false);
     expect(readConfig(withVars({ DEED_ENGINE: "0" })).deedEngine).toBe(false);
