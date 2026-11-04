@@ -60,15 +60,21 @@ export class D1OrderLookup {
     return null;
   }
 
-  /** The one order a sent message's claims name. None when it names no order, or two. */
+  /** The one order a sent message's claims name. None when it names no order or two, or its claims were blocked: a safe reply went out instead. */
   private async orderOfMessage(tenant: Tenant, providerMessageId: string): Promise<string | null> {
     const row = await this.db
-      .prepare(`SELECT claims_json FROM outbound_messages WHERE business_id = ?1 AND provider_message_id = ?2`)
+      .prepare(`SELECT claims_json FROM outbound_messages WHERE business_id = ?1 AND provider_message_id = ?2 AND claims_blocked_at_ms IS NULL`)
       .bind(tenant.businessId, providerMessageId)
       .first<{ claims_json: string | null }>();
     if (row?.claims_json == null) return null;
     const ids = new Set<string>();
-    for (const check of JSON.parse(row.claims_json) as ClaimCheck[]) {
+    let checks: ClaimCheck[];
+    try {
+      checks = JSON.parse(row.claims_json) as ClaimCheck[];
+    } catch {
+      return null;
+    }
+    for (const check of checks) {
       for (const claim of check.anyOf) {
         if (claim.type === "order_state" || claim.type === "order_total") ids.add(claim.orderId);
       }

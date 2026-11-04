@@ -372,6 +372,18 @@ describe("/console/deed/buscar: a typed code or reference reaches the order's en
       expect((await search(h, wamid, await login(h, other, "staff"))).status).toBe(404);
     });
 
+    it("finds nothing for a message whose claims were blocked, or unreadable", async () => {
+      const s = await storeWithMembers();
+      const { orderId } = await confirmedOrder(s);
+      const blockedId = crypto.randomUUID();
+      const blocked = await sent(s.businessId, blockedId, [about(orderId)]);
+      await env.DB.prepare(`UPDATE outbound_messages SET claims_blocked_at_ms = ? WHERE id = ?`).bind(T0, blockedId).run();
+      const h = harness({ engine: checkedEngine });
+      const cookie = await login(h, s, "staff");
+      expect((await search(h, blocked, cookie)).status).toBe(404);
+      expect((await search(h, "wamid.never-sent", cookie)).status).toBe(404);
+    });
+
     it("finds nothing for a message about no order, about two, or that was never sent", async () => {
       const s = await storeWithMembers();
       const { orderId } = await confirmedOrder(s);

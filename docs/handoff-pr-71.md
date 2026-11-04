@@ -62,13 +62,13 @@ Also waiting on him: decisions D-41 to D-44 and the migration numbers.
 
 9. **No total on this engine.** `order-engine.ts:352` sets every line's `unitPrice` to null, so every order's total is null and the real reply says "El total te lo confirmo". No wrong total is possible, and none is shown. Prices need a decision.
 
-10. **C11's code is invisible (D-56).** A message resolves to its entry through its WhatsApp ID at `/console/deed/buscar`. Fixed messages with no order claim, such as "Tu cambio fue aprobado", resolve to nothing. `claude/c11-ref` isn't used.
+10. **C11's code is invisible (D-56).** A message resolves to its entry through its WhatsApp ID at `/console/deed/buscar`. No screen shows that ID yet, and messages with no order claim, such as "Tu cambio fue aprobado", resolve to nothing, so C11 stays partial. `claude/c11-ref` isn't used.
 11. **Not built: offering what there is when the stock is short.** Angel asked for it. The engine has no stock read yet, and `availability` is always `no_se`.
 
 ## Conformance
 
-- ✅ C1, C2, C3, C4, C6, C9, C10, C11. The known limits of C3, C10 and C11 are in the README.
-- ⚠️ C5, C7, C8, each stated in the README.
+- ✅ C1, C2, C3, C4, C6, C9, C10. The known limits of C3 and C10 are in the README.
+- ⚠️ C5, C7, C8, C11, each stated in the README.
 
 ## Under review
 
