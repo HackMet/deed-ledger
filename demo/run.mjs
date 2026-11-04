@@ -366,17 +366,39 @@ async function recheckEntries(cookie, orders) {
     if (orderId === undefined || orderId === null) throw new Error(`no order of ${who} to recheck`);
     const response = await fetch(`${BASE}/console/deed/${encodeURIComponent(orderId)}/entrada.json`, { headers: { cookie }, redirect: "manual" });
     if (response.status !== 200) throw new Error(`entrada.json of ${who} answered ${response.status}`);
+    const text = await response.text();
     const file = join(dir, `${who}.json`);
-    writeFileSync(file, await response.text());
+    writeFileSync(file, text);
     const result = spawnSyncNode("scripts/deed-recheck.mjs", [file]);
     const counts = result.stdout.match(/^pairs: (\d+), same: \d+, differ: (\d+)/m);
     if (counts === null) throw new Error(`the recheck could not read ${who}'s entry:\n${result.stdout}${result.stderr}`);
+    // The exit code is part of the answer too: 1 when a verdict differs, 0 when none does.
+    const expected = Number(counts[2]) === 0 ? 0 : 1;
+    if (result.status !== expected) throw new Error(`the recheck of ${who}'s entry exited ${result.status} with ${counts[2]} differ, expected ${expected}`);
     if (result.status !== 0) console.log(result.stdout.trimEnd());
+    if (who === "A") checkExitCodes(dir, text);
     pairs += Number(counts[1]);
     differ += Number(counts[2]);
   }
   console.log(`Recheck: ${orders.length} entries, ${pairs} pairs, ${differ} differ`);
   return differ;
+}
+
+/** Two copies of A's entry the command must refuse by exit code: one verdict changed (exit 1), and schema 2 (exit 2). */
+function checkExitCodes(dir, text) {
+  const entry = JSON.parse(text);
+  const changed = structuredClone(entry);
+  const first = changed.verdicts[0];
+  first.state = first.state === "emparejado" ? "sin_pareja" : "emparejado";
+  for (const [name, copy, expected] of [
+    ["changed", changed, 1],
+    ["schema2", { ...entry, schema: 2 }, 2],
+  ]) {
+    const file = join(dir, `A-${name}.json`);
+    writeFileSync(file, JSON.stringify(copy));
+    const result = spawnSyncNode("scripts/deed-recheck.mjs", [file]);
+    if (result.status !== expected) throw new Error(`the recheck of A's ${name} copy exited ${result.status}, expected ${expected}`);
+  }
 }
 
 function staffConsole(cookie) {

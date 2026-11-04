@@ -67,6 +67,17 @@ describe("entryOf and recheckEntry: the judge re-runs from the entry alone", () 
     expect(result).toEqual({ ok: true, pairs: 5, same: 4, differ: [{ rowKey: "r1", stored: "emparejado", recomputed: "sin_pareja" }] });
   });
 
+  it("finds a stored verdict whose row the input does not have: one difference, the row missing on the judge's side", () => {
+    const entry = entryOf(input);
+    const added = { ...entry, verdicts: [...entry.verdicts, { rowKey: "r9", state: "emparejado" as const }] };
+    expect(recheckEntry(roundTrip(added))).toEqual({
+      ok: true,
+      pairs: 6,
+      same: 5,
+      differ: [{ rowKey: "r9", stored: "emparejado", recomputed: "missing" }],
+    });
+  });
+
   it("counts a verdict whose row is missing from the stored entry as a difference, not a pass", () => {
     const entry = entryOf(input);
     const shorter = { ...entry, verdicts: entry.verdicts.slice(0, 4) };
@@ -98,6 +109,29 @@ describe("recheckEntry: a malformed entry is an error, never a pass", () => {
     ["a fact of an unknown kind", { ...good, input: { ...input, facts: [{ ...input.facts[0], kind: "order_magic" }] } }],
     ["a line with a fractional price", { ...good, input: { ...input, lines: [{ ...input.lines[0], unitPrice: 25.5 }] } }],
     ["a quantity that is not a decimal string", { ...good, input: { ...input, lines: [{ ...input.lines[0], quantity: 2 }] } }],
+    ["a fact whose live flag is not true or false", { ...good, input: { ...input, facts: [{ ...input.facts[0], live: "yes" }] } }],
+    ["a fact whose witness is of an unknown kind", { ...good, input: { ...input, facts: [{ ...input.facts[0], witness: { kind: "robot", refId: "u1" } }] } }],
+    ["a fact whose witness has no refId", { ...good, input: { ...input, facts: [{ ...input.facts[0], witness: { kind: "member" } }] } }],
+    ["a line whose counted flag is not true or false", { ...good, input: { ...input, lines: [{ ...input.lines[0], counted: "yes" }] } }],
+    ["a reply whose provider status is not one of the five", { ...good, input: { ...input, replies: [{ ...input.replies[0], providerStatus: "seen" }, input.replies[1]] } }],
+    [
+      "an order_state claim in a state the book does not know",
+      { ...good, input: { ...input, replies: [{ ...input.replies[0], claims: [{ anyOf: [{ type: "order_state", orderId: "order-1", version: 1, state: "verde" }] }] }, input.replies[1]] } },
+    ],
+    [
+      "an order_state claim whose version is not an integer",
+      { ...good, input: { ...input, replies: [{ ...input.replies[0], claims: [{ anyOf: [{ type: "order_state", orderId: "order-1", version: 1.5, state: "confirmado" }] }] }, input.replies[1]] } },
+    ],
+    [
+      "an order_total claim whose total is a string",
+      { ...good, input: { ...input, replies: [input.replies[0], { ...input.replies[1], claims: [{ anyOf: [{ type: "order_total", orderId: "order-1", version: 1, total: "5000" }] }] }] } },
+    ],
+    [
+      "an order_total claim whose total is fractional",
+      { ...good, input: { ...input, replies: [input.replies[0], { ...input.replies[1], claims: [{ anyOf: [{ type: "order_total", orderId: "order-1", version: 1, total: 50.5 }] }] }] } },
+    ],
+    ["a refusal whose time is not an integer", { ...good, input: { ...input, refusals: [{ id: "chk-1", atMs: "soon", reason: "invalid_state", decidingFactId: null, operationKey: null }] } }],
+    ["a refusal whose reason is not text", { ...good, input: { ...input, refusals: [{ id: "chk-1", atMs: 5000, reason: 7, decidingFactId: null, operationKey: null }] } }],
     ["a verdict with an unknown state", { ...good, verdicts: [{ rowKey: "r1", state: "verde" }] }],
     ["a verdict with no state field", { ...good, verdicts: [{ rowKey: "r1" }] }],
     ["two verdicts with one row key", { ...good, verdicts: [{ rowKey: "r1", state: null }, { rowKey: "r1", state: null }] }],
