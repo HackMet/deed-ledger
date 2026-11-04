@@ -1,10 +1,10 @@
 /**
- * The same rules as the D1 ledger, with no database: for tests and for hosts that aren't on Cloudflare.
+ * The same rules as the D1 store, with no database: for tests and for hosts that aren't on Cloudflare.
  * Writes are applied only after every check passes, so a refused entry leaves nothing behind.
  */
 import { judge } from "./judge";
 import { type Closed, type LedgerView, deadAncestors } from "./liveness";
-import type { LedgerPort } from "./port";
+import type { LedgerStore } from "./store";
 import type { Entry, JudgeState, Policy, Verdict } from "./types";
 
 interface Scope {
@@ -14,20 +14,21 @@ interface Scope {
   readonly closures: Map<string, Closed>;
 }
 
-export class MemoryLedger implements LedgerPort {
+export class MemoryLedgerStore implements LedgerStore {
   private readonly scopes = new Map<string, Scope>();
 
   constructor(private readonly policy: Policy) {}
 
-  async read(scope: string, entry: Entry): Promise<JudgeState> {
-    return stateOf(this.scopeOf(scope), entry);
+  async admit(scope: string, entry: Entry): Promise<Verdict> {
+    return this.admitNow(scope, entry);
   }
 
-  async admit(scope: string, entry: Entry): Promise<Verdict> {
+  /** The same admit, synchronous: for a judge that must answer in one step (see recheck.ts). */
+  admitNow(scope: string, entry: Entry): Verdict {
     const state = this.scopeOf(scope);
     const verdict = judge(entry, stateOf(state, entry), this.policy);
     if (!verdict.admitted) return verdict;
-    // G4b: after the writes, the entry and its whole ancestry must be live. Checked on an overlay before any write.
+    // After the writes, the entry and its whole ancestry must be live. Checked on an overlay before any write.
     if (deadAncestors([entry.factId], viewOf(withEntry(state, entry))).length > 0) return { admitted: false, reason: "dependency_not_live" };
     state.dependsOn.set(entry.factId, entry.dependsOn);
     state.keys.add(entry.operationKey);
@@ -45,14 +46,17 @@ export class MemoryLedger implements LedgerPort {
   }
 }
 
-/** The reads for one entry: a key in use, dependencies dead before the write (sameBatch excluded), and the closed target's state. */
+/**
+ * The reads for one entry: a key or fact id in use, dependencies dead before the write (sameBatch excluded), and the
+ * closed target's state.
+ */
 function stateOf(scope: Scope, entry: Entry): JudgeState {
   const sameBatch = entry.sameBatch ?? [];
   const target = entry.closes?.factId;
   const closes: JudgeState["closes"] =
     target === undefined ? null : scope.closures.has(target) ? "closed" : scope.dependsOn.has(target) ? "live" : "missing";
   return {
-    keyUsed: scope.keys.has(entry.operationKey),
+    keyUsed: scope.keys.has(entry.operationKey) || scope.dependsOn.has(entry.factId),
     deadDependencies: deadAncestors(entry.dependsOn.filter((id) => !sameBatch.includes(id)), viewOf(scope)),
     closes,
   };

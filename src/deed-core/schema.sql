@@ -1,0 +1,88 @@
+-- The core's four tables, with neutral names and no kind lists: a host's policy decides which kinds exist.
+-- Every row is scoped by scope_id (a tenant, a site, a lot: the host decides). Append-only: nothing updates
+-- or removes a row, so each triggers below refuses it. A host may add its own columns and CHECKs in its own
+-- migration, never by editing these tables.
+
+-- One operation = one operation_key. A second entry with the same key is a duplicate, refused by the judge first.
+CREATE TABLE facts (
+  scope_id TEXT NOT NULL,
+  id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  operation_key TEXT NOT NULL,
+  actor_id TEXT NOT NULL,
+  valid_from_ms INTEGER NOT NULL,          -- business time
+  recorded_at_ms INTEGER NOT NULL,         -- system time
+  body_json TEXT NOT NULL,
+  agent_id TEXT,                           -- stamped by the host on a claim; the core stores it and never reads it
+  PRIMARY KEY (scope_id, id),
+  UNIQUE (scope_id, operation_key)
+) STRICT;
+
+-- The evidence a fact rests on. content_sha256 is set for media only.
+CREATE TABLE fact_evidence (
+  scope_id TEXT NOT NULL,
+  fact_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  ref_id TEXT NOT NULL,
+  content_sha256 TEXT,
+  PRIMARY KEY (scope_id, fact_id, kind, ref_id)
+) STRICT;
+
+-- "Fact B was decided using fact A" (B -> A). Liveness is derived from these edges, never cascaded.
+CREATE TABLE fact_dependencies (
+  scope_id TEXT NOT NULL,
+  fact_id TEXT NOT NULL,
+  depends_on_fact_id TEXT NOT NULL,
+  PRIMARY KEY (scope_id, fact_id, depends_on_fact_id),
+  CHECK (fact_id <> depends_on_fact_id)
+) STRICT;
+
+-- A fact closes once: the primary key refuses a second close, so a double close fails loudly.
+CREATE TABLE fact_closures (
+  scope_id TEXT NOT NULL,
+  fact_id TEXT NOT NULL,
+  closed_by_fact_id TEXT NOT NULL,
+  reason TEXT NOT NULL CHECK (reason IN ('cancelled', 'superseded')),
+  closed_at_ms INTEGER NOT NULL,
+  PRIMARY KEY (scope_id, fact_id)
+) STRICT;
+
+CREATE TRIGGER facts_are_never_updated BEFORE UPDATE ON facts
+BEGIN
+  SELECT RAISE(ABORT, 'facts are append-only');
+END;
+
+CREATE TRIGGER facts_are_never_deleted BEFORE DELETE ON facts
+BEGIN
+  SELECT RAISE(ABORT, 'facts are append-only');
+END;
+
+CREATE TRIGGER fact_evidence_is_never_updated BEFORE UPDATE ON fact_evidence
+BEGIN
+  SELECT RAISE(ABORT, 'fact evidence is append-only');
+END;
+
+CREATE TRIGGER fact_evidence_is_never_deleted BEFORE DELETE ON fact_evidence
+BEGIN
+  SELECT RAISE(ABORT, 'fact evidence is append-only');
+END;
+
+CREATE TRIGGER fact_dependencies_are_never_updated BEFORE UPDATE ON fact_dependencies
+BEGIN
+  SELECT RAISE(ABORT, 'fact dependencies are append-only');
+END;
+
+CREATE TRIGGER fact_dependencies_are_never_deleted BEFORE DELETE ON fact_dependencies
+BEGIN
+  SELECT RAISE(ABORT, 'fact dependencies are append-only');
+END;
+
+CREATE TRIGGER fact_closures_are_never_updated BEFORE UPDATE ON fact_closures
+BEGIN
+  SELECT RAISE(ABORT, 'fact closures are append-only');
+END;
+
+CREATE TRIGGER fact_closures_are_never_deleted BEFORE DELETE ON fact_closures
+BEGIN
+  SELECT RAISE(ABORT, 'fact closures are append-only');
+END;
