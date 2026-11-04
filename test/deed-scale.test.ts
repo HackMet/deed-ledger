@@ -78,26 +78,36 @@ describe("the page takes the checker's verdict as written", () => {
     const html = renderPage(await buildScale(parseCsv(csv)));
     expect(html).toContain("el runner lo registró para esa corrida");
     expect(html).toContain("No puede repetir los veredictos");
-    expect(html).toContain("sin sha, no se detecta");
+    expect(html).toContain("cualquier otra afirmación, con sha o sin él, no se detecta");
     expect(html).not.toContain("(C3)");
   });
 
   it("says the rows are last attempts, and names a rewritten sha", async () => {
-    const notes = { attemptsWithoutVerdict: 48, rewritten: [{ from: "aaaaaaa", to: "bbbbbbb" }] };
+    const notes = { attemptsWithoutVerdict: 51, rewritten: [{ from: "aaaaaaa", to: "bbbbbbb" }] };
     const html = renderPage(await buildScale(parseCsv(csv)), notes);
     expect(html).toContain("4 nombres de corrida");
     expect(html).toContain("con el último intento de cada uno");
-    expect(html).toContain("Otros 48 intentos anteriores");
+    expect(html).toContain("Al menos 51 intentos anteriores no tienen veredicto");
     expect(html).toContain("<code>aaaaaaa</code> se reescribió como <code>bbbbbbb</code>");
   });
 
   it("prints each count in its own counter", async () => {
-    const html = renderPage(await buildScale(parseCsv(csv)));
+    // Four different counts, so a counter that prints another one's number fails.
+    const rows = [
+      csv,
+      "syn-task-44,2026-10-04T09:04:00,haiku,ok,,,,,,,NO_CLAIM",
+      "syn-task-45,2026-10-04T09:05:00,haiku,ok,,,,,,,NO_CLAIM",
+      "syn-task-47,2026-10-04T09:07:00,haiku,ok,a1b2c32f0000,True,,,,,IN_DOUBT_NO_RUNNER_RECORD",
+      "syn-task-48,2026-10-04T09:08:00,haiku,ok,a1b2c3300000,True,,,,,IN_DOUBT_NO_RUNNER_RECORD",
+      "syn-task-49,2026-10-04T09:09:00,haiku,ok,a1b2c3310000,True,,,,,IN_DOUBT_NO_RUNNER_RECORD",
+      "syn-task-50,2026-10-04T09:10:00,haiku,ok,a1b2c3320000,True,,,,,IN_DOUBT_NO_RUNNER_RECORD",
+    ].join("\n");
+    const html = renderPage(await buildScale(parseCsv(rows)));
     const counter = (label: string) => html.match(new RegExp(`<b>(\\d+)</b><span>${label}</span>`))?.[1];
     expect(counter("Confirmadas")).toBe("1");
     expect(counter("Contradicciones")).toBe("2");
-    expect(counter("En duda")).toBe("0");
-    expect(counter("Sin afirmación")).toBe("1");
+    expect(counter("En duda")).toBe("4");
+    expect(counter("Sin afirmación")).toBe("3");
   });
 
   it("prints the n_eff row the arithmetic gives", async () => {

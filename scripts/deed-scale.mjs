@@ -6,7 +6,7 @@ import { buildScale, parseCsv, renderPage } from "./lib/deed-scale.mjs";
 
 const [csvPath, outPath, notesPath] = process.argv.slice(2);
 if (!csvPath || !outPath) {
-  console.error("usage: node scripts/deed-scale.mjs <deed-verdicts.csv> <out.html>");
+  console.error("usage: node scripts/deed-scale.mjs <deed-verdicts.csv> <out.html> [notes.json]");
   process.exit(2);
 }
 

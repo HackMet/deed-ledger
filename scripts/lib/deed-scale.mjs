@@ -321,7 +321,7 @@ export function renderPage(scale, notes = {}) {
   const { counts, huella, huellaRows } = scale;
   const days = scale.rows.map((r) => r.started.slice(0, 10)).filter(Boolean).sort();
   const earlier = notes.attemptsWithoutVerdict
-    ? ` Otros ${notes.attemptsWithoutVerdict} intentos anteriores se sobrescribieron y no tienen veredicto.`
+    ? ` Al menos ${notes.attemptsWithoutVerdict} intentos anteriores no tienen veredicto: se sobrescribieron.`
     : "";
   const rewritten = (notes.rewritten ?? [])
     .map((r) => `<code>${esc(r.from)}</code> se reescribió como <code>${esc(r.to)}</code>, con el mismo contenido.`)
@@ -340,7 +340,7 @@ export function renderPage(scale, notes = {}) {
 <h1>Escala del libro Deed</h1>
 <p class="lede">${counts.total} nombres de corrida del harness, ${span} (UTC), con el último intento de cada uno.${earlier} Cada afirmación del agente se compara con dos testigos: ¿existe el sha en git, y el runner lo registró para esa corrida?
 Las confirmadas se cuentan y se resumen en una huella; las contradicciones se muestran completas. Las corridas sin afirmación no cuentan como confirmadas.</p>
-<p class="note"><b>Confirmada</b> solo dice que el commit existe y que el runner lo registró para esa corrida: las pruebas no se volvieron a correr. <b>Contradicción</b>: el sha no existe, el commit no es de esa corrida, o dijo que hizo commit y no hizo ninguno. Un error en texto libre, sin sha, no se detecta. <b>Sin afirmación</b>: una revisión o validación (no se le pide commit), una corrida bloqueada, una que dijo que no hizo commit nuevo, o una sin sha legible.</p>
+<p class="note"><b>Confirmada</b> solo dice que el commit existe y que el runner lo registró para esa corrida: las pruebas no se volvieron a correr. <b>Contradicción</b>: el sha no existe, el commit no es de esa corrida, o dijo que hizo commit y no hizo ninguno. Solo se lee el primer sha de <code>RESULT: COMMITTED</code>; cualquier otra afirmación, con sha o sin él, no se detecta. <b>Sin afirmación</b>: una revisión o validación (no se le pide commit), una corrida bloqueada, una que dijo que no hizo commit nuevo, o una sin sha legible.</p>
 <p class="note"><b>Qué puede comprobar un tercero:</b> desde el CSV, los conteos y la huella, y buscar cada sha en el repo. No puede repetir los veredictos: se calcularon en el clon de los mantenedores, con un verificador y unas corridas que no se publican, y parte de los commits existe solo en ramas y copias locales. ${rewritten}</p>
 <p class="note">Filas: <code>docs/deed-verdicts.csv</code>.</p>
 
