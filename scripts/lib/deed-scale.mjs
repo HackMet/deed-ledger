@@ -248,43 +248,6 @@ ${groups
 </table>`;
 }
 
-function cusumChart(series, h) {
-  const width = 640;
-  const height = 160;
-  const top = Math.max(h, ...series, 0) * 1.1 || 1;
-  const xAt = (t) => (series.length > 1 ? (t * width) / (series.length - 1) : 0);
-  const yAt = (v) => height - (v / top) * height;
-  const points = series.map((v, t) => `${xAt(t).toFixed(1)},${yAt(v).toFixed(1)}`).join(" ");
-  const threshold = yAt(h).toFixed(1);
-  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="CUSUM S_t con alarma en h">
-<line x1="0" x2="${width}" y1="${threshold}" y2="${threshold}" stroke="${PALETTE.bad}" stroke-dasharray="6 4"/>
-<polyline fill="none" stroke="${PALETTE.claim}" stroke-width="2" points="${points}"/>
-</svg>`;
-}
-
-function dependenceSection(scale) {
-  const { neff, cusum, claims } = scale;
-  const neffPart = neff
-    ? `<table>
-<thead><tr><th>n (afirmaciones)</th><th>ρ₁</th><th>VIF</th><th>n_eff</th></tr></thead>
-<tbody><tr><td>${neff.n}</td><td>${neff.rho1}</td><td>${neff.vif}</td><td>${neff.nEff}</td></tr></tbody>
-</table>`
-    : `<p class="note">Hacen falta al menos ${NEFF_MIN} afirmaciones; hay ${claims.length}.</p>`;
-  const alarmRun = cusum.alarm === null ? null : claims[cusum.alarm];
-  const alarmPart =
-    cusum.alarm === null
-      ? "ninguna"
-      : `en la afirmación nº ${cusum.alarm + 1} (<code>${esc(alarmRun.run)}</code>)`;
-  return `<h2>Dependencia entre errores</h2>
-${neffPart}
-<p class="note">n_eff = n / VIF, con VIF = 1 + 2·Σ(1 − h/n)·ρₕ hasta el primer ρₕ no positivo o n/2. Misma aritmética que <code>neff()</code> de <code>deed_check_harness.py</code>. Es un solo agregado, no por (agent_id, clase). Con pocas contradicciones, o ninguna, estos números no prueban independencia.</p>
-<h2>CUSUM de contradicciones</h2>
-<p>S_t = max(0, S_{t−1} + x_t − k), con x_t = 1 si la afirmación es una contradicción, en orden de inicio. k = tasa global = <code>${cusum.k === null ? "—" : cusum.k.toFixed(4)}</code>. Alarma en h = <code>${cusum.h}</code> (S_t ≥ h).</p>
-<p>Alarma: ${alarmPart}. S máximo: <code>${cusum.max.toFixed(3)}</code>.</p>
-<p class="note">Con k = tasa global y pocos eventos, S_t no puede llegar a h: que no haya alarma no es evidencia de nada.</p>
-${cusumChart(cusum.series, cusum.h)}`;
-}
-
 const STYLE = `
 :root { --bg:#EDF0F5; --surface:#FFFFFF; --lane:#F4F6FA; --ink:#141C2E; --muted:#5B6578; --line:#D3D9E3;
   --claim:${PALETTE.claim}; --witness:${PALETTE.witness}; --ok:${PALETTE.ok}; --doubt:${PALETTE.doubt}; --bad:${PALETTE.bad}; }
@@ -361,7 +324,6 @@ ${contradictionRows(scale.rows)}
 <p class="note">Agrupado por (agent_id, clase de efecto). <code>agent_id</code> = primeros 8 hex de sha256(modelo + brief); brief = nombre de la corrida sin el sufijo <code>-fixN</code>. Clase = <code>review</code> si el nombre contiene review o validate, si no <code>commit</code>. Es autodeclarado: sale del nombre de la corrida y el testigo no lo verifica (límite de C11).</p>
 ${groupRows(scale.groups)}
 
-${dependenceSection(scale)}
 
 <p class="note">Veredictos fijos por aritmética, sin ningún modelo de por medio. Solo nombre de corrida, modelo, sha, veredicto y conteos; ningún texto de informe, prompt ni secreto.</p>
 </main>

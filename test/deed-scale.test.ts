@@ -112,18 +112,9 @@ describe("the page takes the checker's verdict as written", () => {
     expect(counter("Sin afirmación")).toBe("3");
   });
 
-  it("prints the n_eff row the arithmetic gives", async () => {
-    // Reference from the Python checker's neff(): ten correct claims, then ten contradictions, then ten correct.
-    const lines = Array.from({ length: 30 }, (_, i) => {
-      const bad = i >= 10 && i < 20;
-      const id = String(i).padStart(2, "0");
-      return bad
-        ? `syn-${id},2026-10-01T09:${id}:00,haiku,ok,a1b2c3${id}0000,False,,,,,CONTRADICTED_COMMIT_MISSING`
-        : `syn-${id},2026-10-01T09:${id}:00,haiku,ok,a1b2c3${id}0000,True,,,,,CONFIRMED_COMMIT_ONLY`;
-    });
-    const header = csv.split("\n")[0];
-    const html = renderPage(await buildScale(parseCsv([header, ...lines].join("\n"))));
-    expect(html).toContain("<td>30</td><td>0.833</td><td>5.61</td><td>5.3</td>");
+  it("claims only the counts: no n_eff and no CUSUM on the page", async () => {
+    const html = renderPage(await buildScale(parseCsv(csv)));
+    expect(html).not.toMatch(/n_eff|VIF|CUSUM|Dependencia entre errores/);
   });
 
   it("draws one contradiction row per contradiction", async () => {
@@ -144,12 +135,6 @@ describe("the page takes the checker's verdict as written", () => {
 
   it("the committed page is exactly what its committed CSV and notes build", async () => {
     expect(renderPage(await buildScale(parseCsv(committedCsv)), committedNotes)).toBe(committedPage);
-  });
-
-  it("says a clean run proves nothing about independence", async () => {
-    const html = renderPage(await buildScale(parseCsv(csv)));
-    expect(html).toContain("no prueban independencia");
-    expect(html).toContain("no es evidencia de nada");
   });
 });
 

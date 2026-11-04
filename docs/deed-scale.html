@@ -37,20 +37,20 @@ svg { width:100%; height:auto; background:var(--surface); border:1px solid var(-
 <body>
 <main>
 <h1>Escala del libro Deed</h1>
-<p class="lede">114 nombres de corrida del harness, del 2026-10-30 al 2026-11-04 (UTC), con el último intento de cada uno. Al menos 54 intentos anteriores no tienen veredicto: se sobrescribieron. Cada afirmación del agente se compara con dos testigos: ¿existe el sha en git, y el runner lo registró para esa corrida?
+<p class="lede">121 nombres de corrida del harness, del 2026-10-30 al 2026-11-04 (UTC), con el último intento de cada uno. Al menos 61 intentos anteriores no tienen veredicto: se sobrescribieron. Cada afirmación del agente se compara con dos testigos: ¿existe el sha en git, y el runner lo registró para esa corrida?
 Las confirmadas se cuentan y se resumen en una huella; las contradicciones se muestran completas. Las corridas sin afirmación no cuentan como confirmadas.</p>
 <p class="note"><b>Confirmada</b> solo dice que el commit existe y que el runner lo registró para esa corrida: las pruebas no se volvieron a correr. <b>Contradicción</b>: el sha no existe, el commit no es de esa corrida, o dijo que hizo commit y no hizo ninguno. Solo se lee el primer sha de <code>RESULT: COMMITTED</code>; cualquier otra afirmación, con sha o sin él, no se detecta. <b>Sin afirmación</b>: una revisión o validación (no se le pide commit), una corrida bloqueada, una que dijo que no hizo commit nuevo, o una sin sha legible.</p>
 <p class="note"><b>Qué puede repetir un tercero:</b> los conteos y la huella desde el CSV, y los veredictos desde la evidencia publicada, sin las corridas: <code>python3 scripts/deed_check_harness.py --evidence docs/deed-run-evidence.jsonl --compare docs/deed-verdicts.csv --out v.csv</code>. La evidencia guarda solo las líneas RESULT y los campos del runner. Un commit que no esté en su clon se cuenta aparte, nunca como acuerdo: parte de los commits existe solo en copias locales. <code>0ec7f74</code> se reescribió como <code>69ed7cb</code>, con el mismo contenido.</p>
 <p class="note">Filas: <code>docs/deed-verdicts.csv</code>.</p>
 
 <section class="counters">
-  <div class="counter ok"><b>57</b><span>Confirmadas</span></div>
+  <div class="counter ok"><b>63</b><span>Confirmadas</span></div>
   <div class="counter bad"><b>0</b><span>Contradicciones</span></div>
   <div class="counter doubt"><b>0</b><span>En duda</span></div>
-  <div class="counter"><b>57</b><span>Sin afirmación</span></div>
+  <div class="counter"><b>58</b><span>Sin afirmación</span></div>
 </section>
-<p class="huella"><b>Huella</b> <code>4783691950d009a1b853e694c0df6800115cf9a8206220021b01fb720549d09c</code><br>
-<span class="note">sha256 (UTF-8) sobre 57 filas confirmadas, ordenadas; cada fila es <code>run,model,claimed_sha,verdict</code>, unidas con saltos de línea y sin salto final.</span></p>
+<p class="huella"><b>Huella</b> <code>34e8d39bed787794921dd9c532e2dd04b616b759d7a87613498ae6fc7104769a</code><br>
+<span class="note">sha256 (UTF-8) sobre 63 filas confirmadas, ordenadas; cada fila es <code>run,model,claimed_sha,verdict</code>, unidas con saltos de línea y sin salto final.</span></p>
 
 <h2>Contradicciones y dudas, fila por fila</h2>
 <p class="note">Cada fila muestra la afirmación entera. La barra es la pareja: turquesa si el sha de la afirmación existe en git, roja si no hay par.</p>
@@ -71,9 +71,11 @@ Las confirmadas se cuentan y se resumen en una huella; las contradicciones se mu
 <tr><td><code>10a4bb2c</code></td><td>review</td><td>1</td><td>0</td><td>0</td><td>0</td><td>1</td></tr>
 <tr><td><code>171f1fcf</code></td><td>review</td><td>1</td><td>0</td><td>0</td><td>0</td><td>1</td></tr>
 <tr><td><code>1e1643ac</code></td><td>review</td><td>1</td><td>0</td><td>0</td><td>0</td><td>1</td></tr>
+<tr><td><code>1ec18894</code></td><td>review</td><td>1</td><td>0</td><td>0</td><td>0</td><td>1</td></tr>
 <tr><td><code>2176f0c2</code></td><td>review</td><td>1</td><td>0</td><td>0</td><td>0</td><td>1</td></tr>
 <tr><td><code>2381a0c2</code></td><td>commit</td><td>4</td><td>4</td><td>0</td><td>0</td><td>0</td></tr>
 <tr><td><code>378df5d2</code></td><td>review</td><td>1</td><td>0</td><td>0</td><td>0</td><td>1</td></tr>
+<tr><td><code>38294ae7</code></td><td>commit</td><td>1</td><td>1</td><td>0</td><td>0</td><td>0</td></tr>
 <tr><td><code>382d1532</code></td><td>commit</td><td>2</td><td>2</td><td>0</td><td>0</td><td>0</td></tr>
 <tr><td><code>3be6e5fc</code></td><td>commit</td><td>1</td><td>1</td><td>0</td><td>0</td><td>0</td></tr>
 <tr><td><code>3d1d89b0</code></td><td>review</td><td>1</td><td>0</td><td>0</td><td>0</td><td>1</td></tr>
@@ -95,7 +97,7 @@ Las confirmadas se cuentan y se resumen en una huella; las contradicciones se mu
 <tr><td><code>83b6adfd</code></td><td>commit</td><td>1</td><td>1</td><td>0</td><td>0</td><td>0</td></tr>
 <tr><td><code>85cf6d16</code></td><td>commit</td><td>1</td><td>0</td><td>0</td><td>0</td><td>1</td></tr>
 <tr><td><code>86929f75</code></td><td>commit</td><td>1</td><td>1</td><td>0</td><td>0</td><td>0</td></tr>
-<tr><td><code>88d2d7df</code></td><td>commit</td><td>2</td><td>2</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td><code>88d2d7df</code></td><td>commit</td><td>6</td><td>6</td><td>0</td><td>0</td><td>0</td></tr>
 <tr><td><code>8b141be7</code></td><td>review</td><td>1</td><td>0</td><td>0</td><td>0</td><td>1</td></tr>
 <tr><td><code>8e81d405</code></td><td>review</td><td>1</td><td>0</td><td>0</td><td>0</td><td>1</td></tr>
 <tr><td><code>929153b5</code></td><td>review</td><td>1</td><td>0</td><td>0</td><td>0</td><td>1</td></tr>
@@ -124,6 +126,7 @@ Las confirmadas se cuentan y se resumen en una huella; las contradicciones se mu
 <tr><td><code>dd847f10</code></td><td>commit</td><td>1</td><td>1</td><td>0</td><td>0</td><td>0</td></tr>
 <tr><td><code>ddfd194e</code></td><td>commit</td><td>1</td><td>1</td><td>0</td><td>0</td><td>0</td></tr>
 <tr><td><code>e00d6114</code></td><td>commit</td><td>1</td><td>1</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td><code>e20e3524</code></td><td>commit</td><td>1</td><td>1</td><td>0</td><td>0</td><td>0</td></tr>
 <tr><td><code>e30efd19</code></td><td>review</td><td>1</td><td>0</td><td>0</td><td>0</td><td>1</td></tr>
 <tr><td><code>e734b6c7</code></td><td>commit</td><td>2</td><td>2</td><td>0</td><td>0</td><td>0</td></tr>
 <tr><td><code>e8e9fe11</code></td><td>commit</td><td>3</td><td>3</td><td>0</td><td>0</td><td>0</td></tr>
@@ -136,20 +139,6 @@ Las confirmadas se cuentan y se resumen en una huella; las contradicciones se mu
 </tbody>
 </table>
 
-<h2>Dependencia entre errores</h2>
-<table>
-<thead><tr><th>n (afirmaciones)</th><th>ρ₁</th><th>VIF</th><th>n_eff</th></tr></thead>
-<tbody><tr><td>57</td><td>0</td><td>1</td><td>57</td></tr></tbody>
-</table>
-<p class="note">n_eff = n / VIF, con VIF = 1 + 2·Σ(1 − h/n)·ρₕ hasta el primer ρₕ no positivo o n/2. Misma aritmética que <code>neff()</code> de <code>deed_check_harness.py</code>. Es un solo agregado, no por (agent_id, clase). Con pocas contradicciones, o ninguna, estos números no prueban independencia.</p>
-<h2>CUSUM de contradicciones</h2>
-<p>S_t = max(0, S_{t−1} + x_t − k), con x_t = 1 si la afirmación es una contradicción, en orden de inicio. k = tasa global = <code>0.0000</code>. Alarma en h = <code>4</code> (S_t ≥ h).</p>
-<p>Alarma: ninguna. S máximo: <code>0.000</code>.</p>
-<p class="note">Con k = tasa global y pocos eventos, S_t no puede llegar a h: que no haya alarma no es evidencia de nada.</p>
-<svg viewBox="0 0 640 160" role="img" aria-label="CUSUM S_t con alarma en h">
-<line x1="0" x2="640" y1="14.5" y2="14.5" stroke="#C2362F" stroke-dasharray="6 4"/>
-<polyline fill="none" stroke="#3A4BC8" stroke-width="2" points="0.0,160.0 11.4,160.0 22.9,160.0 34.3,160.0 45.7,160.0 57.1,160.0 68.6,160.0 80.0,160.0 91.4,160.0 102.9,160.0 114.3,160.0 125.7,160.0 137.1,160.0 148.6,160.0 160.0,160.0 171.4,160.0 182.9,160.0 194.3,160.0 205.7,160.0 217.1,160.0 228.6,160.0 240.0,160.0 251.4,160.0 262.9,160.0 274.3,160.0 285.7,160.0 297.1,160.0 308.6,160.0 320.0,160.0 331.4,160.0 342.9,160.0 354.3,160.0 365.7,160.0 377.1,160.0 388.6,160.0 400.0,160.0 411.4,160.0 422.9,160.0 434.3,160.0 445.7,160.0 457.1,160.0 468.6,160.0 480.0,160.0 491.4,160.0 502.9,160.0 514.3,160.0 525.7,160.0 537.1,160.0 548.6,160.0 560.0,160.0 571.4,160.0 582.9,160.0 594.3,160.0 605.7,160.0 617.1,160.0 628.6,160.0 640.0,160.0"/>
-</svg>
 
 <p class="note">Veredictos fijos por aritmética, sin ningún modelo de por medio. Solo nombre de corrida, modelo, sha, veredicto y conteos; ningún texto de informe, prompt ni secreto.</p>
 </main>

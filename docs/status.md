@@ -3,9 +3,15 @@
 Shared state for every agent: what's true now, what's next, what's open, what bit us. Keep it short. Anything a
 command can tell you (git log, test results, CI) doesn't belong here. Decisions go in [decisions.md](decisions.md).
 
-Last updated: Tue Nov 3, 2026, midday Honduras time, by Claude Code.
+Last updated: Wed Nov 4, 2026, morning Honduras time, by Claude Code.
 
 ## Now
+
+- **Integration (branch `claude/integration`, Nov 4, not merged):** `claude/deed-core` + `claude/deed-recheck` +
+  `claude/demo-fixes`. C3 passed its re-review. C10 stays in progress: its review's last round found one disagreement
+  (pure judge and memory store admit, D1 refuses, a `sameBatch` entry with a second dependency outside the batch).
+  D1 is the correct one; no false fact reaches the store. The scale page now gives counts only. Waiting on Angel:
+  the `statusReply` copy for a pending change, not committed; append-only triggers in the store's migrations (C5).
 
 - **Deed core, D1 half (branch `claude/deed-core-store`, Nov 4, not merged):** the fact batch moved from
   `fact-ledger.ts` into `src/deed-core/d1-store.ts`. The store's evidence rules are policy data
