@@ -7,6 +7,8 @@ import type { ActionEnvelope, ConsoleAction, CustomerAction } from "../src/domai
 import type { BurstReading } from "../src/domain/contract/observation";
 import { INVITE_TTL_MS } from "../src/domain/console-auth";
 import { D1DeedChecks } from "../src/infrastructure/d1/deed-checks";
+import { orderCode } from "../src/domain/order-code";
+import { orderRef } from "../src/domain/order-ref";
 import { D1FactLedger } from "../src/infrastructure/d1/fact-ledger";
 import { hashToken, newToken } from "../src/infrastructure/tokens";
 import { firstOrder, ids, moreSugar } from "./fixtures/contract";
@@ -247,6 +249,91 @@ describe("/console/deed/:orderId: the order's facts as a graph", () => {
     expect(trail).toContain(`href="/console/deed/${encodeURIComponent(orderId)}"`);
     const more = await (await get(h, "/console/mas", cookie)).text();
     expect(more).toContain(`href="/console/deed/verificaciones"`);
+  });
+});
+
+/** A placed order its customer confirmed: its id, its code as staff say it, and its reference. */
+async function confirmedOrder(s: Store): Promise<{ orderId: string; code: string; ref: string }> {
+  const v1 = await placeFirstOrder(s, ids.customer, T0, firstOrder);
+  await save(await checkedEngine.onCustomerAction(s.context({ nowMs: T0 + 1_000 }), tap(v1.orderId, 1)));
+  const confirm = await env.DB.prepare(`SELECT id FROM facts WHERE business_id = ? AND kind = 'order_confirm'`)
+    .bind(s.businessId)
+    .first<{ id: string }>();
+  return { orderId: v1.orderId, code: (await orderCode(confirm!.id))!, ref: orderRef(v1.orderId) };
+}
+
+describe("/console/deed/buscar: a typed code or reference reaches the order's entry", () => {
+  const search = (h: Harness, typed: string, cookie?: string) => get(h, `/console/deed/buscar?codigo=${encodeURIComponent(typed)}`, cookie);
+  const libroOf = (orderId: string) => `/console/deed/${encodeURIComponent(orderId)}/libro`;
+
+  it("redirects the order code, with or without # and in any case, to the order's libro", async () => {
+    const s = await storeWithMembers();
+    const { orderId, code } = await confirmedOrder(s);
+    const h = harness({ engine: checkedEngine });
+    const cookie = await login(h, s, "staff");
+    for (const typed of [code, code.slice(1), code.toLowerCase(), code.slice(1).toLowerCase(), ` ${code} `]) {
+      const response = await search(h, typed, cookie);
+      expect(response.status, typed).toBe(302);
+      expect(response.headers.get("location"), typed).toBe(libroOf(orderId));
+    }
+  });
+
+  it("redirects the reference, bare or after `Ref. `, to the order's libro", async () => {
+    const s = await storeWithMembers();
+    const { orderId, ref } = await confirmedOrder(s);
+    const h = harness({ engine: checkedEngine });
+    const cookie = await login(h, s, "staff");
+    for (const typed of [ref, `Ref. ${ref}`]) {
+      const response = await search(h, typed, cookie);
+      expect(response.status, typed).toBe(302);
+      expect(response.headers.get("location"), typed).toBe(libroOf(orderId));
+    }
+  });
+
+  it("answers 404 with the console shell for an unknown code, a made-up reference and an empty field", async () => {
+    const s = await storeWithMembers();
+    const { code } = await confirmedOrder(s);
+    const h = harness({ engine: checkedEngine });
+    const cookie = await login(h, s, "staff");
+    const unknown = code === "#ZZZZZ" ? "#00000" : "#ZZZZZ";
+    for (const typed of [unknown, "00000000", "", "#"]) {
+      const response = await search(h, typed, cookie);
+      expect(response.status, typed).toBe(404);
+      const body = await response.text();
+      expect(body, typed).toContain("No encontré un pedido con ese código en esta tienda.");
+      expect(body, typed).toContain('<nav');
+    }
+  });
+
+  it("answers 404 for another store's order, even when its code or reference is typed", async () => {
+    const mine = await storeWithMembers();
+    const theirs = await newStore();
+    await confirmedOrder(mine);
+    const foreign = await confirmedOrder(theirs);
+    const h = harness({ engine: checkedEngine });
+    const cookie = await login(h, mine, "staff");
+    expect((await search(h, foreign.code, cookie)).status).toBe(404);
+    expect((await search(h, foreign.ref, cookie)).status).toBe(404);
+  });
+
+  it("gives the same answer to a request without a login as the feed does", async () => {
+    const s = await storeWithMembers();
+    const { code } = await confirmedOrder(s);
+    const h = harness({ engine: checkedEngine });
+    const sibling = await get(h, "/console/deed/verificaciones");
+    const found = await search(h, code);
+    expect(found.status).toBe(sibling.status);
+    expect(found.headers.get("location")).toBeNull();
+  });
+
+  it("puts the search field at the top of the feed", async () => {
+    const s = await storeWithMembers();
+    const h = harness({ engine: checkedEngine });
+    const cookie = await login(h, s, "staff");
+    const feed = await (await get(h, "/console/deed/verificaciones", cookie)).text();
+    expect(feed).toContain(`<form method="get" action="/console/deed/buscar"`);
+    expect(feed).toContain(`Buscar pedido por código`);
+    expect(feed.indexOf("Buscar pedido por código")).toBeLessThan(feed.indexOf('id="contadores"'));
   });
 });
 

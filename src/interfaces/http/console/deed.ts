@@ -18,12 +18,14 @@ import {
   visibleAt,
 } from "../../../domain/deed-graph";
 import { D1DeedReads, type DeedCheckView } from "../../../infrastructure/d1/deed-checks";
+import { D1OrderLookup } from "../../../infrastructure/d1/order-lookup";
 import { D1OrderTrail, type TrailEntry } from "../../../infrastructure/d1/order-trail";
 import type { ConsoleEnv } from "./auth";
 import { EVIDENCE_LABELS, KIND_LABELS, formatTime } from "./pedidos";
 import { shell, simplePage } from "./layout";
 
 const VERIFICATIONS = "/console/deed/verificaciones";
+const SEARCH = "/console/deed/buscar";
 const REFRESH_SECONDS = 3;
 
 const SHORT_KIND: Record<TrailEntry["kind"], string> = {
@@ -84,7 +86,25 @@ const REPLAY_SLIDER = false;
 const replayTime = (raw: string | undefined): number | null => (raw !== undefined && /^\d{1,15}$/.test(raw) ? Number(raw) : null);
 
 export function deedScreen(app: Hono<ConsoleEnv>) {
-  // Before `/deed/:orderId`, so the feed's name is never read as an order id.
+  // Before `/deed/:orderId`, so the feed's and the search's names are never read as an order id.
+  app.get("/deed/buscar", async (c) => {
+    const tenant = { businessId: c.get("member").businessId };
+    const found = await new D1OrderLookup(c.env.DB).find(tenant, c.req.query("codigo") ?? "");
+    if (found !== null) return c.redirect(`/console/deed/${encodeURIComponent(found)}/libro`, 302);
+    return c.html(
+      await shell(c, {
+        title: "Deed",
+        subtitle: "Buscar",
+        back: VERIFICATIONS,
+        path: SEARCH,
+        tab: "/console/mas",
+        style: STYLE,
+        body: html`<p class="empty">No encontré un pedido con ese código en esta tienda.</p>`,
+      }),
+      404,
+    );
+  });
+
   app.get("/deed/verificaciones", async (c) => {
     const tenant = { businessId: c.get("member").businessId };
     const reads = new D1DeedReads(c.env.DB);
@@ -98,7 +118,11 @@ export function deedScreen(app: Hono<ConsoleEnv>) {
         tab: "/console/mas",
         refreshSeconds: REFRESH_SECONDS,
         style: STYLE,
-        body: html`<p class="counters" id="contadores">Intentos rechazados ${counters.attempts}</p>
+        body: html`<form method="get" action="${SEARCH}" class="buscar">
+<label>Buscar pedido por código <input type="text" name="codigo" autocomplete="off" autocapitalize="characters" required></label>
+<button type="submit">Buscar</button>
+</form>
+<p class="counters" id="contadores">Intentos rechazados ${counters.attempts}</p>
 ${counters.refusedByReason.size === 0 ? "" : html`<ul class="reasons">${[...counters.refusedByReason].map(([reason, n]) => html`<li>${reasonLabel(reason, null)}: ${n}</li>`)}</ul>`}
 <p class="counters" id="afirmaciones">Afirmaciones verificadas ${counters.claims}, pasaron ${counters.claimsPassed}</p>
 ${rows.length === 0 ? html`<p class="empty">Todavía no hay verificaciones.</p>` : html`<ol class="feed">${rows.map(feedRow)}</ol>`}`,
