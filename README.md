@@ -75,7 +75,7 @@ Agnostic core (C10, K17), signatures, watermarks, C2PA, hash chain.
 
 | Number | Value | Measured |
 |---|---|---|
-| Tests | @@TESTS@@ | `npm test` and `npm run typecheck` on this branch, November 4, 2026 |
+| Tests | 1340 passed, 92 files; typecheck exit 0 | `npm test` and `npm run typecheck` on this branch, November 4, 2026 |
 | Attacks | 9 attacks that reach the engine: 0 false facts admitted. One more attack is intake only and is not counted | `node scripts/adversary.mjs`, exit 0. Removing a defence on purpose turns its row red, except one K12 case noted in the script's review |
 | Harness runs | 109 run names, last attempt of each (at least 51 earlier attempts were overwritten with no verdict): 53 confirmed, 0 contradictions, 56 with no claim. The printed line is `{'n': 53, 'rho1': 0.0, 'vif': 1.0, 'n_eff': 53}` | `deed_check_harness.py` on 2026-11-03, 11:10 PM Honduras time, rows in `docs/deed-verdicts.csv`, page in `docs/deed-scale.html`. Confirmed only means the commit exists and the runner recorded it for that run; tests are not re-run. Only the first sha on the `RESULT: COMMITTED` line is read, so any other false statement, with a sha or without one, is not detected. so a reader re-runs them from the published evidence, and about a quarter of those shas exist only in local copies. With no contradictions, n_eff and the CUSUM show nothing about dependence |
 
@@ -149,14 +149,8 @@ customer (D-52). The eval suite can also use Muse Spark to score the replies' Sp
 
 - **Live** on Cloudflare Workers (D1, R2, Queues, a one-minute cron). Every merge to `main` runs the tests and
   deploys (`.github/workflows/deploy.yml`); every pull request runs the typecheck and the tests.
-- **The demo** runs a synthetic store, "Tienda demo (sintética)", with 40 made-up products, the planner on, and
-  test commands for the store's own members (`/new`, `/help`). Its engine is a pretend engine
-  (`src/infrastructure/memory/d1-pretend-engine.ts`) that follows the real engine's contract (versions, operation
-  keys, roles) and keeps each store's state in D1.
-- **The order engine and the fact ledger** are merged into `main` and tested on local D1
-  (`src/application/engine/order-engine.ts`, `src/infrastructure/d1/fact-ledger.ts`): versioned orders, operation
-  keys as the idempotency anchor, an audit trail, cancellations as compensating entries. The running app doesn't
-  use them yet: the engine still needs the preparation list, the claim check and prices ([status](docs/status.md)).
+- **The demo** runs a synthetic store, "Tienda demo (sintética)", with 40 made-up products and test commands for the store's own members (`/new`, `/help`).
+- **The order engine and the fact ledger** run the app when `DEED_ENGINE` is `"1"`, the default in `wrangler.jsonc` (`src/application/engine/order-engine.ts`, `src/infrastructure/d1/fact-ledger.ts`): versioned orders, operation keys as the idempotency anchor, an audit trail, cancellations as compensating entries. This engine has no planner read yet, so it runs the classic reader. The numbers below were measured before this engine ran the app, on the pretend engine that kept each store's state in D1 (`src/infrastructure/memory/d1-pretend-engine.ts`).
 - **Tested from a phone** on the live number: a typed order, a voice-note order, and a photo of a handwritten
   11-item list (all 11 read, items the store doesn't carry kept and never priced), each through readback,
   Confirmar, the customer's name, the staff's Listo or No hay, and the customer's notice. Text replies take 9 to 21 s
@@ -168,7 +162,7 @@ customer (D-52). The eval suite can also use Muse Spark to score the replies' Sp
 
 ## Built during the hackathon
 
-The first commit, `495573e` (tag `pre-event-baseline`), holds only planning documents, agent configuration and the
+The first commit, `495573e`, holds only planning documents, agent configuration and the
 written cases for the first model experiments: the PRD, `docs/`, `AGENTS.md`, `CLAUDE.md`, repository settings and
 the JSON cases now in `spikes/cases/`. It contains no application code. The repository's other root commit,
 `7002275` (October 28), only created this README. Everything after them is hackathon work.
