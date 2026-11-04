@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { LibroInput } from "../src/domain/deed-libro";
 import { entryOf, recheckEntry } from "../src/domain/deed-recheck";
+import example from "../docs/deed-entry-example.json";
 
 /** A small order: a version and its confirm, a delivered claim that pairs, a claim with no delivery yet, and a total. */
 const input: LibroInput = {
@@ -107,5 +108,26 @@ describe("recheckEntry: a malformed entry is an error, never a pass", () => {
 
   it("names the field that is wrong", () => {
     expect(recheckEntry({ ...good, schema: 2 })).toEqual({ ok: false, error: "malformed entry: schema must be 1 (unknown schema 2)" });
+  });
+});
+
+describe("docs/deed-entry-example.json: a real entry of the demo's order A", () => {
+  // Order A has paired rows (a witnessed fact) and en duda rows (replies with no delivery status yet).
+  it("re-runs to the same eight verdicts, with no difference", () => {
+    expect(recheckEntry(example)).toEqual({ ok: true, pairs: 8, same: 8, differ: [] });
+    expect(example.verdicts.map((v) => v.state)).toContain("en_duda");
+    expect(example.verdicts.map((v) => v.state)).toContain("emparejado");
+  });
+
+  it("finds one stored verdict that is changed: one difference", () => {
+    const tampered = { ...example, verdicts: example.verdicts.map((v) => (v.rowKey === "r4" ? { ...v, state: "emparejado" } : v)) };
+    expect(recheckEntry(tampered)).toEqual({ ok: true, pairs: 8, same: 7, differ: [{ rowKey: "r4", stored: "emparejado", recomputed: "en_duda" }] });
+  });
+
+  it("finds one input field that decides a pair changed: the first reply read as delivered", () => {
+    const tampered = { ...example, input: { ...example.input, replies: [{ ...example.input.replies[0], providerStatus: "delivered" }, ...example.input.replies.slice(1)] } };
+    const result = recheckEntry(tampered);
+    expect(result).toMatchObject({ ok: true, pairs: 8, same: 7 });
+    expect(result.ok && result.differ).toEqual([expect.objectContaining({ stored: "en_duda", recomputed: "emparejado" })]);
   });
 });

@@ -4,6 +4,9 @@
 // fake webhooks and the staff console, checks every step against the records, and exits 0 only if
 // every expectation held. Synthetic data and fake secrets only; nothing is sent to WhatsApp.
 //
+// At the end, the owner's session re-judges the entries of A, D and E (scripts/deed-recheck.mjs): one line,
+// and a difference fails the demo.
+//
 //   ./demo.sh [--json <file>] [--serve]          DEMO_PORT=8790 by default; PERCEPTION=recorded
 import { spawn, spawnSync } from "node:child_process";
 import { createHmac, randomUUID } from "node:crypto";
@@ -93,7 +96,8 @@ async function main() {
     await waitUntilUp();
     const cookie = await login();
     const results = await scenario(cookie);
-    exitCode = results.failed === 0 ? 0 : 1;
+    const differ = await recheckEntries(cookie, ["A", "D", "E"].map((who) => [who, orderOf(CUSTOMERS[who])?.id]));
+    exitCode = results.failed === 0 && differ === 0 ? 0 : 1;
     if (args.serve === true) await serve();
   } catch (error) {
     if (error instanceof NotRealEngine) {
@@ -347,6 +351,32 @@ async function login() {
   const cookie = used.headers.getSetCookie().map((c) => c.split(";")[0]).find((c) => c.startsWith("consola="));
   if (cookie === undefined) throw new Error(`login refused (${used.status})`);
   return cookie;
+}
+
+/**
+ * The owner's session downloads each order's entry from the running Worker and re-judges it with
+ * scripts/deed-recheck.mjs, which needs nothing but the file. Returns how many verdicts differ.
+ */
+async function recheckEntries(cookie, orders) {
+  const dir = join(dirname(ENV_FILE), "entries");
+  mkdirSync(dir, { recursive: true });
+  let pairs = 0;
+  let differ = 0;
+  for (const [who, orderId] of orders) {
+    if (orderId === undefined || orderId === null) throw new Error(`no order of ${who} to recheck`);
+    const response = await fetch(`${BASE}/console/deed/${encodeURIComponent(orderId)}/entrada.json`, { headers: { cookie }, redirect: "manual" });
+    if (response.status !== 200) throw new Error(`entrada.json of ${who} answered ${response.status}`);
+    const file = join(dir, `${who}.json`);
+    writeFileSync(file, await response.text());
+    const result = spawnSyncNode("scripts/deed-recheck.mjs", [file]);
+    const counts = result.stdout.match(/^pairs: (\d+), same: \d+, differ: (\d+)/m);
+    if (counts === null) throw new Error(`the recheck could not read ${who}'s entry:\n${result.stdout}${result.stderr}`);
+    if (result.status !== 0) console.log(result.stdout.trimEnd());
+    pairs += Number(counts[1]);
+    differ += Number(counts[2]);
+  }
+  console.log(`Recheck: ${orders.length} entries, ${pairs} pairs, ${differ} differ`);
+  return differ;
 }
 
 function staffConsole(cookie) {
