@@ -1,0 +1,79 @@
+# Handoff: PR #71, the Deed engine
+
+For Angel's agents. PR: https://github.com/HackMet/deed-ledger/pull/71, branch `claude/integration`. Everything goes through this one PR. It replaces #70; don't merge #70.
+
+**Merging deploys.** `.github/workflows/deploy.yml` applies remote D1 migrations and deploys on every push to `main`.
+
+## What changes when it is deployed
+
+- `DEED_ENGINE` is `"1"` in `wrangler.jsonc` and wins over `PRETEND_ENGINE`. The app moves from the pretend engine to the real `OrderEngine` on D1.
+- Migrations `0023` to `0028` apply remotely. There is no `0029` (D-54).
+- Orders in flight don't carry over: the pretend engine keeps its state in `pretend_engine_state`, and `OrderEngine` reads `products` and its own tables. Whether the demo store's catalog exists remotely is unchecked.
+- New console screens: `/console/deed/<order>`, `/console/deed/<order>/libro`, `/console/deed/<order>/entrada.json`, `/console/deed/verificaciones`.
+
+## What was built
+
+- **Engine:** facts, evidence, dependencies and closures commit inside the batch. Change requests with approval (K12), dispatch (K13), prices and business info (K6, K15), invoices (K14).
+- **Core:** `src/deed-core/` is an agnostic black box. The store is one host: `src/domain/store-policy.ts` and `src/infrastructure/d1/store-extension.ts`. Don't put business words in the core; a new flow is a new policy (D-53).
+- **Agent identity:** `facts.agent_id` on customer facts (C11).
+- **Evidence tools:** `node scripts/deed-recheck.mjs <entry.json>`, `node scripts/adversary.mjs`, `docs/deed-scale.html`.
+
+## Files in Angel's area that changed
+
+| File | Change | His call |
+|---|---|---|
+| `wrangler.jsonc`, `worker-configuration.d.ts` | `DEED_ENGINE: "1"` and regenerated types | Accept the switch |
+| `src/infrastructure/config.ts` | `deedEngine` flag | Review |
+| `src/composition.ts` | Wires `OrderEngine`, the Deed checks, catalog, business and receipts | Review. It imports `test/fixtures/receipts` from production code for `RecordedReceiptReader` |
+| `src/application/perception/agent.ts` | Exposes `readerConfiguration` for the agent id | Review |
+| `src/integrations/perception/recorded-receipt-reader.ts` | New: invoices are read from recordings, not by Muse | Review |
+| `src/domain/replies.ts`, `src/domain/copy.ts` | Copy for K12 and K13, including `CHANGE_AFTER_READY` | Check the Spanish |
+| `src/domain/contract/actions.ts`, `outcomes.ts` | `review_change`, `dispatch`, `change_approved`, `change_declined`, `order_dispatched`, `payment_rejected`, `en_camino`, `openChangeRequest`, `lastReview` | **Accept or replace** |
+| `src/interfaces/http/console/*` | Deed, Libro, Pedidos, Facturas, Negocio and Productos screens | Which stays: Tienda or Precios |
+| `package.json` | `npm test` also runs two `node:test` files | Note it |
+| `scripts/lib/sim.mjs` | Sets `DEED_ENGINE` to `"0"` for the simulator | Review |
+
+Also waiting on him: decisions D-41 to D-44 and the migration numbers.
+
+## Changes to how you work
+
+- **Local:** a `PRETEND_ENGINE=1` in `.dev.vars` no longer wins. Add `DEED_ENGINE=0` to keep the pretend engine. The simulator and vitest already set `"0"`.
+- **`npm test`** is now `vitest run && node --test test/node/deed-recheck-command.test.mjs test/node/demo-verdicts.test.mjs`. The node tests start processes, which the Workers runtime can't do.
+- **`./demo.sh`:** read the exit code. With a broken judge it prints `Steps: 29 · passed 29`, then fails on the verdict check and exits 1. `0 differ` holds for the demo's entries only.
+- **Demo perception is recorded:** `6 fixture, 0 muse`. Only a real run proves the Meta models carry the flow.
+
+## Known gaps
+
+1. **The planner doesn't run on this engine.** `OrderEngine` has no `plannerContext`, so `CONVERSATION=planner` falls back to the classic reader with no error, and alias proposals stop. On Nov 3, on the previous engine, the eval completed 27 to 28 of 32 conversations on the planner and 12 to 16 on classic. Kerly hasn't decided on this; don't build it without asking.
+2. **Nothing has run deployed:** remote D1, Queues, R2, real WhatsApp and real Muse are all untested on this engine. `wrangler deploy --dry-run` wasn't run, so bundle size is unmeasured.
+3. **Copy mismatch.** While a change waits for the store, the demo says "Le pasé tu cambio a la tienda. Queda así si lo aprueban: …". Real WhatsApp says "Tu pedido ya está en la fila. Te aviso apenas esté listo." or "Vas segundo en la fila. Te aviso apenas esté listo." The proposed `statusReply` change is in the PR body, uncommitted, and no test covers it. That demo message stays out of the video until they match.
+4. **C5:** append-only is enforced with triggers in the core's schema, not in the store. Store triggers would go on a separate branch, if Angel accepts them.
+5. **Codex review:** not done; codex isn't installed on Kerly's machine.
+
+## Conformance
+
+- ✅ C1, C2, C3, C4, C6, C9. C3's known limits are in the README.
+- ⚠️ C5, C7, C8, C11, each stated in the README.
+- C10 is in progress and isn't claimed.
+
+## Under review
+
+Both reviews are one Opus run each, with no automatic fix. Their code is already in this PR. Check `docs/status.md` or ask Kerly for the verdicts.
+
+- **C10:** the fix for the blocking disagreement is in. N1 to N4 stay as known limits in the README. C10 is marked only if the review passes by 15:00 Guayaquil time; if not, it stays in progress.
+- **`claude/demo-fixes` and `7e8c379`:** a FAIL goes to Kerly.
+
+## Angel's steps, in order
+
+1. Read the PR's "Before merging" section and accept or replace the contract additions.
+2. Check the demo store's catalog on the remote database.
+3. Run `npx wrangler deploy --dry-run` to measure the bundle.
+4. Merge #71. That deploys.
+5. **Run one real order end to end with Muse on the deployed Worker: order, readback, confirm, Listo, "listo". This is the hackathon's gate.**
+6. Decide on the `statusReply` copy and the C5 triggers.
+
+Code freeze for the video: 17:00 Guayaquil time, which is 16:00 Honduras time. Submission deadline: 8:00 PM Honduras time, November 4.
+
+## Rules
+
+Read `AGENTS.md`. Don't edit `src/deed-core/` for one industry. Don't force-push. Never read `.dev.vars`. The app's key is `MODEL_API_KEY`, never `META_API_KEY`.
