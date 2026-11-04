@@ -11,7 +11,7 @@ import { demoRuntime } from "../demo/worker";
 import { agentIdOf } from "../src/domain/agent-id";
 import { readerConfiguration } from "../src/application/perception/agent";
 import { SPARK_MODEL } from "../src/integrations/meta/spark";
-import { readbackQuantity, refusedForTheOrder } from "../demo/checks.mjs";
+import { noticeIs, noticeOf, readbackQuantity, refusedForTheOrder } from "../demo/checks.mjs";
 import { parseRecordings, recordedPerceptionHandler, recordingsFromBase64, render } from "../demo/recorded-perception";
 import type { CustomerContext, Engine, EngineResult, LineMatch } from "../src/application/engine";
 import { fixturePerceptionHandler } from "../src/application/engine/fixture-perception-handler";
@@ -266,6 +266,19 @@ describe("the demo runner's checks (K10 fix 1)", () => {
     expect(refusedForTheOrder("/console/preparacion#order-1")).toBe(false);
     expect(refusedForTheOrder("400")).toBe(false);
     expect(refusedForTheOrder(null)).toBe(false);
+  });
+
+  it("reads the notice a redirect carries, and tells the adversary's wrong notices apart from the right ones", () => {
+    expect(noticeOf("/console/pedidos/o-1?aviso=permiso")).toBe("permiso");
+    expect(noticeOf("/console/preparacion/o-1#o-1")).toBeNull();
+    expect(noticeOf("400")).toBeNull();
+    // A forged key is refused as not_allowed (permiso); a state refusal (estado) is the wrong notice for it.
+    expect(noticeIs("/console/pedidos/o-1?aviso=permiso", "permiso")).toBe(true);
+    expect(noticeIs("/console/pedidos/o-1?aviso=estado", "permiso")).toBe(false);
+    // A duplicate answers with no notice; a notice where none is due is wrong too.
+    expect(noticeIs("/console/preparacion/o-1", null)).toBe(true);
+    expect(noticeIs("/console/preparacion/o-1?aviso=guardar", null)).toBe(false);
+    expect(noticeIs(null, "cambio")).toBe(false);
   });
 
   it("reads a product's quantity off a readback, null when the line is not there", () => {
