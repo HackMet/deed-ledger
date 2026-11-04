@@ -6,6 +6,9 @@
 /// <reference types="vite/client" />
 import { describe, expect, it } from "vitest";
 import fixture from "./fixtures/deed-scale.csv?raw";
+import committedCsv from "../docs/deed-verdicts.csv?raw";
+import committedPage from "../docs/deed-scale.html?raw";
+import committedNotes from "../docs/deed-scale-notes.json";
 import {
   agentIdOf,
   briefOf,
@@ -69,6 +72,55 @@ describe("the page takes the checker's verdict as written", () => {
     expect(html).toContain("del 2026-10-02 al 2026-10-04");
     expect(html).toContain("las pruebas no se volvieron a correr");
     expect(html).toContain("docs/deed-verdicts.csv");
+  });
+
+  it("says what a confirmed run rests on and what a third party cannot repeat", async () => {
+    const html = renderPage(await buildScale(parseCsv(csv)));
+    expect(html).toContain("el runner lo registró para esa corrida");
+    expect(html).toContain("No puede repetir los veredictos");
+    expect(html).toContain("sin sha, no se detecta");
+    expect(html).not.toContain("(C3)");
+  });
+
+  it("says the rows are last attempts, and names a rewritten sha", async () => {
+    const notes = { attemptsWithoutVerdict: 48, rewritten: [{ from: "aaaaaaa", to: "bbbbbbb" }] };
+    const html = renderPage(await buildScale(parseCsv(csv)), notes);
+    expect(html).toContain("4 nombres de corrida");
+    expect(html).toContain("con el último intento de cada uno");
+    expect(html).toContain("Otros 48 intentos anteriores");
+    expect(html).toContain("<code>aaaaaaa</code> se reescribió como <code>bbbbbbb</code>");
+  });
+
+  it("prints each count in its own counter", async () => {
+    const html = renderPage(await buildScale(parseCsv(csv)));
+    const counter = (label: string) => html.match(new RegExp(`<b>(\\d+)</b><span>${label}</span>`))?.[1];
+    expect(counter("Confirmadas")).toBe("1");
+    expect(counter("Contradicciones")).toBe("2");
+    expect(counter("En duda")).toBe("0");
+    expect(counter("Sin afirmación")).toBe("1");
+  });
+
+  it("prints the n_eff row the arithmetic gives", async () => {
+    // Reference from the Python checker's neff(): ten correct claims, then ten contradictions, then ten correct.
+    const lines = Array.from({ length: 30 }, (_, i) => {
+      const bad = i >= 10 && i < 20;
+      const id = String(i).padStart(2, "0");
+      return bad
+        ? `syn-${id},2026-10-01T09:${id}:00,haiku,ok,a1b2c3${id}0000,False,,,,,CONTRADICTED_COMMIT_MISSING`
+        : `syn-${id},2026-10-01T09:${id}:00,haiku,ok,a1b2c3${id}0000,True,,,,,CONFIRMED_COMMIT_ONLY`;
+    });
+    const header = csv.split("\n")[0];
+    const html = renderPage(await buildScale(parseCsv([header, ...lines].join("\n"))));
+    expect(html).toContain("<td>30</td><td>0.833</td><td>5.61</td><td>5.3</td>");
+  });
+
+  it("draws one contradiction row per contradiction", async () => {
+    const scale = await buildScale(parseCsv(csv));
+    expect(renderPage(scale).split('<tr class="bad">').length - 1).toBe(scale.counts.contradicted);
+  });
+
+  it("the committed page is exactly what its committed CSV and notes build", async () => {
+    expect(renderPage(await buildScale(parseCsv(committedCsv)), committedNotes)).toBe(committedPage);
   });
 
   it("says a clean run proves nothing about independence", async () => {

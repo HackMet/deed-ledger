@@ -46,8 +46,8 @@ rk2-review-engine-issue-12,2026-11-02T21:35:43+00:00,opus,ok,,,,,,,NO_CLAIM
 k9-witness-report,2026-11-02T23:52:17+00:00,sonnet,ok,,,,,,,NO_CLAIM
 k9-witness-report-fix4,2026-11-02T23:58:29+00:00,sonnet,empty,,,270,,,,NO_CLAIM
 k9-witness-report-fix5,2026-11-02T23:59:05+00:00,sonnet,empty,,,270,,,,NO_CLAIM
-k9-witness-report-fix6,2026-11-02T23:59:51+00:00,sonnet,empty,,,,,,,NO_CLAIM
-k9-witness-report-fix7,2026-11-03T00:00:35+00:00,sonnet,empty,,,,,,,NO_CLAIM
+k9-witness-report-fix6,2026-11-02T23:59:51+00:00,sonnet,empty,c15155b,True,,,,,NO_CLAIM
+k9-witness-report-fix7,2026-11-03T00:00:35+00:00,sonnet,empty,c15155b,True,,,,,NO_CLAIM
 k9-witness-report-fix8,2026-11-03T00:01:26+00:00,sonnet,empty,,,270,,,,NO_CLAIM
 k9-witness-report-fix1,2026-11-03T03:53:54+00:00,sonnet,empty,,,270,,,,NO_CLAIM
 k9-witness-report-fix2,2026-11-03T03:54:22+00:00,sonnet,empty,,,270,,,,NO_CLAIM

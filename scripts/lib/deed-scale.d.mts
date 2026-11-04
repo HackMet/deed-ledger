@@ -93,4 +93,8 @@ export function agentIdOf(model: string, brief: string): Promise<string>;
 export function neffOf(x: readonly number[]): Neff | null;
 export function cusumOf(x: readonly number[], h?: number): Cusum;
 export function buildScale(csvRows: readonly CsvRow[]): Promise<Scale>;
-export function renderPage(scale: Scale): string;
+export interface ScaleNotes {
+  attemptsWithoutVerdict?: number;
+  rewritten?: { from: string; to: string }[];
+}
+export function renderPage(scale: Scale, notes?: ScaleNotes): string;

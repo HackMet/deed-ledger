@@ -316,9 +316,16 @@ svg { width:100%; height:auto; background:var(--surface); border:1px solid var(-
 `;
 
 /** The whole page as one self-contained HTML string: inline CSS and SVG, no script, no external URL. */
-export function renderPage(scale) {
+/** notes: what the CSV cannot say (docs/deed-scale-notes.json): earlier attempts with no verdict, rewritten shas. */
+export function renderPage(scale, notes = {}) {
   const { counts, huella, huellaRows } = scale;
   const days = scale.rows.map((r) => r.started.slice(0, 10)).filter(Boolean).sort();
+  const earlier = notes.attemptsWithoutVerdict
+    ? ` Otros ${notes.attemptsWithoutVerdict} intentos anteriores se sobrescribieron y no tienen veredicto.`
+    : "";
+  const rewritten = (notes.rewritten ?? [])
+    .map((r) => `<code>${esc(r.from)}</code> se reescribió como <code>${esc(r.to)}</code>, con el mismo contenido.`)
+    .join(" ");
   const span = days.length ? `del ${days[0]} al ${days[days.length - 1]}` : "sin fechas";
   return `<!doctype html>
 <html lang="es">
@@ -331,10 +338,11 @@ export function renderPage(scale) {
 <body>
 <main>
 <h1>Escala del libro Deed</h1>
-<p class="lede">${counts.total} corridas del harness, ${span} (UTC). Cada afirmación del agente se compara con el testigo de git: ¿existe el sha y es de esa corrida?
+<p class="lede">${counts.total} nombres de corrida del harness, ${span} (UTC), con el último intento de cada uno.${earlier} Cada afirmación del agente se compara con dos testigos: ¿existe el sha en git, y el runner lo registró para esa corrida?
 Las confirmadas se cuentan y se resumen en una huella; las contradicciones se muestran completas. Las corridas sin afirmación no cuentan como confirmadas.</p>
-<p class="note"><b>Confirmada</b> solo dice que el commit existe y lo hizo esa corrida: las pruebas no se volvieron a correr. <b>Sin afirmación</b>: una revisión o validación (no se le pide commit), una corrida bloqueada, una que dijo que no hizo commit, una que nombró un commit anterior a su inicio, o una sin sha legible.
-Filas: <code>docs/deed-verdicts.csv</code>.</p>
+<p class="note"><b>Confirmada</b> solo dice que el commit existe y que el runner lo registró para esa corrida: las pruebas no se volvieron a correr. <b>Contradicción</b>: el sha no existe, el commit no es de esa corrida, o dijo que hizo commit y no hizo ninguno. Un error en texto libre, sin sha, no se detecta. <b>Sin afirmación</b>: una revisión o validación (no se le pide commit), una corrida bloqueada, una que dijo que no hizo commit nuevo, o una sin sha legible.</p>
+<p class="note"><b>Qué puede comprobar un tercero:</b> desde el CSV, los conteos y la huella, y buscar cada sha en el repo. No puede repetir los veredictos: se calcularon en el clon de los mantenedores, con un verificador y unas corridas que no se publican, y parte de los commits existe solo en ramas y copias locales. ${rewritten}</p>
+<p class="note">Filas: <code>docs/deed-verdicts.csv</code>.</p>
 
 <section class="counters">
   <div class="counter ok"><b>${counts.confirmed}</b><span>Confirmadas</span></div>
@@ -355,7 +363,7 @@ ${groupRows(scale.groups)}
 
 ${dependenceSection(scale)}
 
-<p class="note">Veredictos fijos por aritmética (C3). Solo nombre de corrida, modelo, sha, veredicto y conteos; ningún texto de informe, prompt ni secreto.</p>
+<p class="note">Veredictos fijos por aritmética, sin ningún modelo de por medio. Solo nombre de corrida, modelo, sha, veredicto y conteos; ningún texto de informe, prompt ni secreto.</p>
 </main>
 </body>
 </html>
