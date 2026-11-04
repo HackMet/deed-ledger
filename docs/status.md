@@ -12,8 +12,9 @@ Last updated: Wed Nov 4, 2026, morning Honduras time, by Claude Code.
   - **C3 met, with known limits in the README.** Its last review passed after more fix rounds than Kerly authorized,
     because `track.sh` relaunched the chain; those scripts are now disabled. The two findings closed only by the demo now
     have tests under `npm test`: `test/node/deed-recheck-command.test.mjs` and `test/node/demo-verdicts.test.mjs`.
-  - **C10 in progress.** The blocking disagreement between the pure judge, the memory store and D1 is fixed. Its known
-    limits are in the README, and one Opus review is running. Handoff for Angel's agents: `docs/handoff-pr-71.md`.
+  - **C10 met, with known limits in the README.** One Opus review gave PASS after the fix for the blocking
+    disagreement. Open for Kerly: any kind can close any kind, and a policy can't require a dependency or a closure.
+    Handoff for Angel's agents: `docs/handoff-pr-71.md`.
   - **Not reviewed independently:** `claude/demo-fixes` and `7e8c379`. Codex was not run: it isn't installed here.
   - **Video:** "Le pasé tu cambio…" exists only in the demo's recorded perception. Real WhatsApp doesn't say it, so it
     stays out of the video until Angel matches it.

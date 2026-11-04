@@ -52,16 +52,12 @@ Also waiting on him: decisions D-41 to D-44 and the migration numbers.
 
 ## Conformance
 
-- ✅ C1, C2, C3, C4, C6, C9. C3's known limits are in the README.
+- ✅ C1, C2, C3, C4, C6, C9, C10. The known limits of C3 and C10 are in the README.
 - ⚠️ C5, C7, C8, C11, each stated in the README.
-- C10 is in progress and isn't claimed.
 
 ## Under review
 
-Both reviews are one Opus run each, with no automatic fix. Their code is already in this PR. Check `docs/status.md` or ask Kerly for the verdicts.
-
-- **C10:** the fix for the blocking disagreement is in. N1 to N4 stay as known limits in the README. C10 is marked only if the review passes by 15:00 Guayaquil time; if not, it stays in progress.
-- **`claude/demo-fixes` and `7e8c379`:** a FAIL goes to Kerly.
+**`claude/demo-fixes` and `7e8c379`:** one Opus review. Their code is already in this PR. Any fix lands here as a new commit, so re-read the PR before merging.
 
 ## Angel's steps, in order
 

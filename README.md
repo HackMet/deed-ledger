@@ -53,7 +53,7 @@ branding. The other seven can be partial and it is still recognisably Deed.
 | **C7** | **Uncertainty is a first-class outcome.** Silence is not failure; a fetch error is never a contradiction. | ⚠️ **partial, and say so:** the view surfaces *en duda*; the engine does not model an in-doubt state in the order flow. Showing it is not the same as having it. |
 | **C8** | **Reliability is measured per (agent id, effect class), under dependence.** Agent errors arrive in bursts, so a Bernoulli interval is mis-specified. | ⚠️ partial: `docs/deed-scale.html`, from harness runs only, not store orders. There the id is sha256(model + brief), not `facts.agent_id`. The page gives counts only; it makes no claim about dependence |
 | **C9** | **Nothing identifies, scores, profiles or tracks a person.** The unit is an agent version and an effect class. | ✅ built and tested |
-| **C10** | **The core is agnostic.** No business nouns inside it; a new business flow is a new policy, never an edit to the core. | ⚠️ in progress. Evidence and known limits below |
+| **C10** | **The core is agnostic.** No business nouns inside it; a new business flow is a new policy, never an edit to the core. | ✅ built and tested, with the known limits below |
 | **C11** | **The agent is identified, and the identity travels.** Every fact records which agent version made the claim; every customer-facing output carries a code that resolves to that entry. | ⚠️ partial: every customer fact records the agent version (see the limit below). No customer-facing output carries a code yet |
 
 **Known limits of C3.** These have no test:
@@ -65,7 +65,7 @@ branding. The other seven can be partial and it is still recognisably Deed.
 - The demo prints `RESULT: every expectation held` before its recheck, and its tallies can't see a path no demo order reaches, such as a closed fact or a total.
 - `entrada.json` has no `Cache-Control: no-store` and no explicit no-login test (the route does answer 401). "19 pairs" counts rows, 10 of them with no pair.
 
-**C10, in progress.** Un host cuyos efectos son solo hechos escribe una política. Un host que necesita escrituras propias en el mismo batch agrega una extensión fuera del núcleo. En ningún caso se edita el núcleo. (Like an adapter in hexagonal architecture.)
+**C10, met.** Un host cuyos efectos son solo hechos escribe una política. Un host que necesita escrituras propias en el mismo batch agrega una extensión fuera del núcleo. En ningún caso se edita el núcleo. (Like an adapter in hexagonal architecture.)
 
 | Industria | Política (archivo) | Extensión | Líneas del núcleo modificadas |
 |---|---|---|---|
@@ -77,15 +77,21 @@ branding. The other seven can be partial and it is still recognisably Deed.
 
 What it rests on: `test/deed-core-boundary.test.ts` fails on a listed business noun or an outside import inside the core, and the last two industries were written by the reviewing agent, which took no part in building the core.
 
-**Known limits of C10.** None of these admitted a false fact on D1, but a third party's re-check built on the memory store can answer differently:
+An independent review gave C10 PASS: the three judges agreed on the shared table and on 33,753 exhaustive and 21,000 fuzzed steps, on local workerd, not on real Cloudflare D1.
+
+**Known limits of C10.** None of these wrote a fact on D1, but a third party's re-check built on the memory store can answer differently:
 
 | Case | Pure judge and memory store | D1 |
 |---|---|---|
-| `validFromMs` of `1.5` or `NaN` | admitted | throws a raw `D1_ERROR`, no fact written |
-| A policy with a bad bound (`min: 1.5`, `-1`) | admitted | every admit throws, even for other kinds |
+| A value the schema refuses: `validFromMs` of `1.5`, `NaN` or `Infinity`, a `body` that can't be serialized, a null `actor` or `refId` | admitted | throws a raw `D1_ERROR`, no fact written |
+| A policy with a bad bound (`min: 1.5`, `-1`) in a reachable rule, or a NUL in a kind | admitted | every entry the judge would admit throws, even of other kinds |
+| A very large policy: 100 two-rule kinds work, 300 do not | admitted | every entry the judge would admit throws `SQLITE_TOOBIG` |
+| A cancel racing a `sameBatch` entry | not applicable | throws a raw error, not `dependency_not_live`; no fact written |
 | Two concurrent identical entries that close a fact | not applicable | the loser gets `closes_not_live`, not `duplicate`; a refusal either way |
 
 Also, `MemoryLedgerStore` keeps the caller's `dependsOn` array by reference, so changing that array later changes its ledger.
+
+**What a policy can't say.** All three judges agree on these. Any kind can close any kind, and a policy can't require a dependency or a closure; a host that needs that adds an extension guard, which exists only on D1. A requirement with no bound is always true, so it admits with no such evidence. An empty `refId` counts as evidence.
 
 Known limit of the boundary test: it finds only the words on its list. A hard-coded host word outside the list, such as `"confirmation"`, is not detected. It also misses compounds such as `unitprice`, and an import hidden after a regex with an escaped slash. None of these is in the code today, by reading the files.
 
@@ -104,7 +110,7 @@ entry, no more.
 
 ### Next for Deed
 
-The judge and memory-store fix that closes C10, the store's append-only triggers (C5), signatures, watermarks, C2PA, hash chain.
+The store's append-only triggers (C5), signatures, watermarks, C2PA, hash chain.
 
 ## Deed: what was measured
 

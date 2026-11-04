@@ -13,7 +13,7 @@ An `Entry` (`types.ts`): one append-only fact the host asks to admit.
 - `evidence`: what the fact rests on, each `{ kind, refId, contentSha256 }`. The kinds are opaque strings.
 - `dependsOn`: the facts this one was decided with. Each must be live.
 - `sameBatch` (optional): dependencies written earlier in the same host batch, checked again after the writes.
-- `closes` (optional): `{ factId, reason: "cancelled" | "superseded" }` for the fact this one closes.
+- `closes`: `{ factId, reason: "cancelled" | "superseded" }` for the fact this one closes, or `null`.
 - `agentId` (optional): stamped by the host; stored, never read.
 
 ## What comes out
@@ -56,7 +56,7 @@ policy says.
 
 ## Adoption example
 
-A host with its own tables and its own policy, on the memory store:
+A host with its own policy, on the memory store:
 
 ```ts
 import { MemoryLedgerStore, type Entry, type Policy } from "./deed-core";
@@ -93,5 +93,8 @@ for the core's part and runs it with its own fence.
 - It does not read a clock, call a model, or do I/O in the judge. The store takes the time it is given.
 - It does not know any kind, evidence kind or reason string of a business. Those belong to the policy and the host.
 - It does not sign, hash-chain or authenticate entries. The host does that if it needs to.
+- It does not limit which kind closes which, or require a dependency or a closure. A host that needs that adds an
+  extension guard, which exists only on D1.
+- It does not judge whether a witness is real. A requirement with no bound is always true, and an empty `refId` counts.
 - It does not validate a host's extension. Its statements run in the batch as written, so an extension can insert a
   fact with no evidence: the host is trusted with what it writes beside the core's rules.

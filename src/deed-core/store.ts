@@ -27,7 +27,7 @@ export interface BatchPlan {
   readonly post: readonly CoreGuard[];
 }
 
-/** Where the core's four tables live. Column names are the host's, so the core names no business. */
+/** Where the core's four tables live. The table, scope and actor names are the host's, so the core names no business. */
 export interface LedgerConfig {
   readonly tables: { readonly facts: string; readonly evidence: string; readonly dependencies: string; readonly closures: string };
   readonly columns: { readonly scope: string; readonly actor: string };
