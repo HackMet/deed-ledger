@@ -8,7 +8,7 @@ import type { ActionEnvelope, ConsoleAction } from "../src/domain/contract/actio
 import type { BurstReading } from "../src/domain/contract/observation";
 import { agentIdOf, type AgentConfiguration } from "../src/domain/agent-id";
 import { sha256Hex } from "../src/domain/sha256";
-import { firstOrder, ids, staleReady } from "./fixtures/contract";
+import { firstOrder, ids, moreSugar, staleReady } from "./fixtures/contract";
 import { AGENT_ID, engine, newStore, placeFirstOrder, save, T0, tap } from "./helpers/orders";
 
 const configuration: AgentConfiguration = {
@@ -79,6 +79,18 @@ describe("readerConfiguration: the configuration the burst reader sends", () => 
   });
 });
 
+/** "que sean 4 de azúcar" after confirming: a change request (the same reading change-requests.test.ts uses). */
+const sugarToFour: BurstReading = {
+  ...moreSugar,
+  observations: [
+    {
+      kind: "order_change",
+      edits: [{ op: "set_quantity", target: { ref: "L4", said: "azúcar" }, quantity: "4", evidence: { source: "text", message: 0, start: 0, end: 20 } }],
+      issues: [],
+    },
+  ],
+};
+
 /** The kinds and agent ids of one order's facts, oldest first. */
 const factAgents = async (orderId: string) =>
   (
@@ -123,6 +135,33 @@ describe("C11: the engine stamps the agent on every customer fact", () => {
       { kind: "order_version", agent_id: AGENT_ID },
       { kind: "order_confirm", agent_id: AGENT_ID },
       { kind: "order_status", agent_id: null },
+    ]);
+  });
+
+  it("gives the customer's cancel and change request the agent id (N1)", async () => {
+    const s = await newStore();
+    const cancelled = await placeFirstOrder(s);
+    await save(await engine.onCustomerAction(s.context({ nowMs: T0 + 1000 }), tap(cancelled.orderId, 1)));
+    await save(
+      await engine.onCustomerAction(
+        s.context({ nowMs: T0 + 2000 }),
+        tap(cancelled.orderId, 1, { operationKey: `cancel:${cancelled.orderId}:v1`, action: { type: "cancel_order", orderId: cancelled.orderId, version: 1 } }),
+      ),
+    );
+    expect(await factAgents(cancelled.orderId)).toEqual([
+      { kind: "order_version", agent_id: AGENT_ID },
+      { kind: "order_confirm", agent_id: AGENT_ID },
+      { kind: "order_cancel", agent_id: AGENT_ID },
+    ]);
+
+    const asked = await newStore();
+    const v1 = await placeFirstOrder(asked);
+    await save(await engine.onCustomerAction(asked.context({ nowMs: T0 + 1000 }), tap(v1.orderId, 1)));
+    await save(await engine.onBurst(asked.context({ nowMs: T0 + 2000 }), sugarToFour, []));
+    expect(await factAgents(v1.orderId)).toEqual([
+      { kind: "order_version", agent_id: AGENT_ID },
+      { kind: "order_confirm", agent_id: AGENT_ID },
+      { kind: "change_request", agent_id: AGENT_ID },
     ]);
   });
 

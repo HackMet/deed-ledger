@@ -1068,6 +1068,9 @@ export class OrderEngine implements Engine {
         sameBatch: [versionFact.factId],
         closes: null,
         movements: [],
+        // The confirm is the customer's (their message asked for the change), so the agent stamps it like any
+        // other customer fact. The version beside it has the owner as actor and stays unstamped.
+        agentId: this.deps.agentId ?? null,
       };
       facts.push(versionFact, confirmFact);
       cacheFacts = { versionFactId: versionFact.factId, confirmFactId: confirmFact.factId };

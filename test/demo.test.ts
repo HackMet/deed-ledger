@@ -6,7 +6,11 @@ import moreSugarFile from "../demo/recordings/more-sugar.json";
 import pickupFile from "../demo/recordings/pickup.json";
 import sizeAnswerFile from "../demo/recordings/size-answer.json";
 import whenReadyFile from "../demo/recordings/when-ready.json";
+import { DEMO_AGENT_ID } from "../demo/agent";
 import { demoRuntime } from "../demo/worker";
+import { agentIdOf } from "../src/domain/agent-id";
+import { readerConfiguration } from "../src/application/perception/agent";
+import { SPARK_MODEL } from "../src/integrations/meta/spark";
 import { readbackQuantity, refusedForTheOrder } from "../demo/checks.mjs";
 import { parseRecordings, recordedPerceptionHandler, recordingsFromBase64, render } from "../demo/recorded-perception";
 import type { CustomerContext, Engine, EngineResult, LineMatch } from "../src/application/engine";
@@ -199,6 +203,25 @@ describe("the demo runtime (K10)", () => {
     // The app's default handler does not know this text.
     const appDefault = await buildRuntime(env).deps.jobHandler.handle(job);
     expect(appDefault.replies?.[0]?.body).toBe(RECEIVED_PLACEHOLDER);
+  });
+});
+
+describe("the demo's agent id (C11)", () => {
+  it("names the recordings, so it differs from the production agent's id (B3)", () => {
+    expect(DEMO_AGENT_ID).toMatch(/^[0-9a-f]{8}$/);
+    expect(DEMO_AGENT_ID).not.toBe(agentIdOf(readerConfiguration(SPARK_MODEL)));
+  });
+
+  it("the demo's engine stamps the demo id on the customer's facts (N3)", async () => {
+    const store = await seedStore({ members: [{ phone: newPhone(), role: "owner" }] });
+    const lease = { businessId: store.businessId, conversationId: `conversation-${crypto.randomUUID()}`, leaseId: "lease-1" };
+    const v1 = await demoRuntime(env, recordings).deps.jobHandler.handle({ ...input(byName("firstOrder").text), lease });
+    expect(v1.commits?.length).toBeGreaterThan(0);
+    await save({ outcome: { type: "readback", order: null as never }, notices: [], commits: v1.commits! });
+    const stamped = await env.DB.prepare(`SELECT agent_id FROM facts WHERE business_id = ? AND kind = 'order_version'`)
+      .bind(store.businessId)
+      .all<{ agent_id: string | null }>();
+    expect(stamped.results).toEqual([{ agent_id: DEMO_AGENT_ID }]);
   });
 });
 

@@ -13,7 +13,7 @@ import { D1FactLedger } from "../src/infrastructure/d1/fact-ledger";
 import { D1OrderTrail } from "../src/infrastructure/d1/order-trail";
 import { guardedBatch } from "../src/infrastructure/d1/fence";
 import { addAndPickup, ids, moreSugar, staleReady } from "./fixtures/contract";
-import { count, engine, footprint, newStore, placeFirstOrder, reviewer, reviewTap, save, store, T0, tap } from "./helpers/orders";
+import { AGENT_ID, count, engine, footprint, newStore, placeFirstOrder, reviewer, reviewTap, save, store, T0, tap } from "./helpers/orders";
 
 type Store = Awaited<ReturnType<typeof newStore>>;
 
@@ -60,6 +60,7 @@ const dependsOf = (id: string) =>
   env.DB.prepare(`SELECT depends_on_fact_id AS id FROM fact_dependencies WHERE fact_id = ?`).bind(id).all<{ id: string }>().then((r) => r.results.map((x) => x.id));
 const closureOf = (id: string) =>
   env.DB.prepare(`SELECT closed_by_fact_id AS closedBy, reason FROM fact_closures WHERE fact_id = ?`).bind(id).first();
+const agentOf = (id: string) => env.DB.prepare(`SELECT agent_id FROM facts WHERE id = ?`).bind(id).first<string | null>("agent_id");
 const colourOf = async (s: Store, orderId: string) => (await trail.listOrders(s.context())).find((row) => row.orderId === orderId)?.colour;
 const factsOfKind = (businessId: string, kind: string) =>
   env.DB.prepare(`SELECT id, body_json FROM facts WHERE business_id = ? AND kind = ? ORDER BY rowid`).bind(businessId, kind).all<{ id: string; body_json: string }>().then((r) => r.results);
@@ -125,6 +126,10 @@ describe("K12: a change after confirming is a request the owner or staff answer 
     expect(await fact(after.c)).toMatchObject({ kind: "order_confirm", body: { version: 2, resumeState: "confirmado" } });
     expect(await dependsOf(after.c)).toEqual([after.v]);
     expect(await evidenceOf(after.c)).toEqual([{ kind: "inbound_message", ref_id: jobId }]);
+    // C11: the confirm rests on the customer's message, so the agent stamps it; the owner's version and review stay unstamped.
+    expect(await agentOf(after.c)).toBe(AGENT_ID);
+    expect(await agentOf(after.v)).toBeNull();
+    expect(await agentOf(review!.id)).toBeNull();
     const live = new Map((await store.orderFacts(s.context(), v1.orderId)).map((f) => [f.id, f.live]));
     expect([live.get(before.v), live.get(before.c), live.get(after.v), live.get(after.c)]).toEqual([false, false, true, true]);
 

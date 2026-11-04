@@ -120,6 +120,9 @@ export type RuntimeOverrides = Partial<
   readonly receiptReader?: ReceiptReader;
 } & Partial<Pick<Deps, "audioDecoder" | "transcriber">>;
 
+/** C11: the id of this deployment's agent configuration, hashed once when the Worker starts and stamped on customer facts. */
+const AGENT_ID = agentIdOf(readerConfiguration(SPARK_MODEL));
+
 export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtime {
   const config = readConfig(env);
   const db = overrides.db ?? env.DB;
@@ -132,8 +135,6 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
   const log = overrides.log ?? consoleLogger;
   // The Deed's record of checks (K20): the order engine writes every claim check and refusal to it.
   const deedChecks = new D1DeedChecks(db);
-  // C11: the id of this deployment's agent configuration, computed once here and stamped on customer facts.
-  const agentId = agentIdOf(readerConfiguration(SPARK_MODEL));
   // DEED_ENGINE: the real order engine on D1 (OrderEngine), which Angel's reader reads through. DEV_CONSOLE:
   // in memory, demo catalog, no login, local simulator only. PRETEND_ENGINE: state in D1, shared by every
   // isolate, each store's own products and hours (#40), console behind login. Both (the simulator's
@@ -141,7 +142,7 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
   const engine =
     overrides.engine ??
     (config.deedEngine
-      ? new OrderEngine({ store: new D1OrderStore(db), ids, ledger: new D1FactLedger(db), checks: deedChecks, clock, log, agentId })
+      ? new OrderEngine({ store: new D1OrderStore(db), ids, ledger: new D1FactLedger(db), checks: deedChecks, clock, log, agentId: AGENT_ID })
       : config.pretendEngine
         ? new D1PretendEngine(db, { setup: storeSetup })
         : config.devConsole
