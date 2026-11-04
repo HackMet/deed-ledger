@@ -296,7 +296,8 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
   on, since the claim might not outlast the send's 10 s timeout: the row goes back to pending (a notice's last try
   ends it). `markSent` and every settle run as one batch guarded by the claim: a stale or repeated call writes
   nothing, early statuses and group stops included, and logs `outbox_claim_lost`.
-- **Outcomes.** Sent: the provider message ID is kept for members only, since it embeds the phone number. A 429 is
+- **Outcomes.** Sent: the provider message ID is kept for anyone with a conversation, not for an unknown sender,
+  and shown only to the store's logged-in members, never in the exported entry, since it embeds the phone number. A 429 is
   retried, up to 5 attempts; another 4xx fails the row. A 5xx, a timeout, a dropped connection or an unreadable 200
   becomes `unknown_delivery` and is never sent again automatically: at most once. A dispatcher that dies mid-send
   leaves its row `sending`; once the claim has run out, the sweep marks it `unknown_delivery`.

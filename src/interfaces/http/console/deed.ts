@@ -5,7 +5,7 @@
  * The feed refreshes every few seconds; the order page does not, so an open panel stays open. `?t=<ms>` replays
  * the order as it stood at that time.
  */
-import type { Hono } from "hono";
+import type { Context, Hono } from "hono";
 import { html } from "hono/html";
 import {
   type DeedFact,
@@ -22,7 +22,7 @@ import { D1OrderLookup } from "../../../infrastructure/d1/order-lookup";
 import { D1OrderTrail, type TrailEntry } from "../../../infrastructure/d1/order-trail";
 import type { ConsoleEnv } from "./auth";
 import { EVIDENCE_LABELS, KIND_LABELS, formatTime } from "./pedidos";
-import { shell, simplePage } from "./layout";
+import { csrfField, shell, simplePage } from "./layout";
 
 const VERIFICATIONS = "/console/deed/verificaciones";
 const SEARCH = "/console/deed/buscar";
@@ -87,28 +87,13 @@ const replayTime = (raw: string | undefined): number | null => (raw !== undefine
 
 export function deedScreen(app: Hono<ConsoleEnv>) {
   // Before `/deed/:orderId`, so the feed's and the search's names are never read as an order id.
-  app.get("/deed/buscar", async (c) => {
-    const tenant = { businessId: c.get("member").businessId };
-    const typed = c.req.query("codigo");
-    const found = typed === undefined ? null : await new D1OrderLookup(c.env.DB).find(tenant, typed);
-    if (found !== null) return c.redirect(`/console/deed/${encodeURIComponent(found)}/libro`, 302);
-    // No refresh on this page: a reload would empty the field while someone types.
-    return c.html(
-      await shell(c, {
-        title: "Deed",
-        subtitle: "Buscar",
-        back: VERIFICATIONS,
-        path: SEARCH,
-        tab: "/console/mas",
-        style: STYLE,
-        body: html`${typed === undefined ? "" : html`<p class="empty">No encontré un pedido con ese código en esta tienda.</p>`}
-<form method="get" action="${SEARCH}" class="buscar">
-<label>Buscar pedido por código <input type="text" name="codigo" autocomplete="off" autocapitalize="characters" required></label>
-<button type="submit">Buscar</button>
-</form>`,
-      }),
-      typed === undefined ? 200 : 404,
-    );
+  // A POST, so what is typed never sits in a URL or a log: a WhatsApp ID embeds the phone number. The GET is only the form.
+  app.get("/deed/buscar", async (c) => searchPage(c, false));
+  app.post("/deed/buscar", async (c) => {
+    const typed = (await c.req.parseBody())["codigo"];
+    const found = typeof typed === "string" ? await new D1OrderLookup(c.env.DB).find({ businessId: c.get("member").businessId }, typed) : null;
+    if (found !== null) return c.redirect(`/console/deed/${encodeURIComponent(found)}/libro`, 303);
+    return searchPage(c, true);
   });
 
   app.get("/deed/verificaciones", async (c) => {
@@ -166,6 +151,26 @@ ${shownEntries.map((entry) => panelOf(entry, graph, facts))}`,
       }),
     );
   });
+}
+
+/** The search form, and a 404 when a search found nothing. What was typed is never shown back. No refresh: a reload would empty the field while someone types. */
+async function searchPage(c: Context<ConsoleEnv>, notFound: boolean) {
+  return c.html(
+    await shell(c, {
+      title: "Deed",
+      subtitle: "Buscar",
+      back: VERIFICATIONS,
+      path: SEARCH,
+      tab: "/console/mas",
+      style: STYLE,
+      body: html`${notFound ? html`<p class="empty">No encontré un pedido con ese código en esta tienda.</p>` : ""}
+<form method="post" action="${SEARCH}" class="buscar">${csrfField(c.get("csrf"))}
+<label>Buscar pedido por código <input type="text" name="codigo" autocomplete="off" autocapitalize="characters" required></label>
+<button type="submit">Buscar</button>
+</form>`,
+    }),
+    notFound ? 404 : 200,
+  );
 }
 
 /** The replay: a range over the order's times, sent as a GET form to `?t=`. Empty when nothing is recorded. */

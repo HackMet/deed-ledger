@@ -7,9 +7,10 @@ Last updated: Wed Nov 4, 2026, morning Honduras time, by Claude Code.
 
 ## Now
 
-- **Ask before confirm (`claude/flow-ask`, D-57 proposed, not deployed):** on `OrderEngine`, a missing quantity, an
+- **Ask before confirm (`claude/flow-ask`, D-58 proposed, not deployed):** on `OrderEngine`, a missing quantity, an
   illegible line or no pickup or delivery is asked before an order confirms, and staff close an order stuck at `listo`
-  with Entregado. Not covered: a change request after confirming can still add a line with no quantity, for staff to
+  with Entregado. A typed word answers the customer's last readback only while that order is the open one; otherwise
+  it is read like any other message. Not covered: a change request after confirming can still add a line with no quantity, for staff to
   approve or decline. An illegible line is asked as `illegible` once, then as `quantity`, since nothing stores the issue.
   A list with a part unread is asked once too: the next message that changes nothing gets the readback, or the line's
   question while a line still waits. Exceptions: instructions found in a message stay out of scope, a handoff stays a
@@ -28,7 +29,9 @@ Last updated: Wed Nov 4, 2026, morning Honduras time, by Claude Code.
     stays out of the video.
   - **Decided (D-55, D-56):** the contract additions are accepted, and C11's code stays invisible. Angel also says the
     customer doesn't need the quantity shown while a change waits, so the `statusReply` diff is dropped.
-  - **New request, not built:** when the stock is short, offer what there is. The engine has no stock read yet.
+  - **C11 stays partial:** the Libro shows each reply's WhatsApp ID, the search is a POST, and the order notices resolve. The owner's words from Pendientes
+    and a safe reply don't (`docs/handoff-pr-71.md`, item 10).
+  - **Short stock (D-57 proposed):** a short line asks "¿Te mando 2 o lo quitamos?", and its written answer makes a new version the customer confirms. An unreadable answer asks again. An order with nothing to prepare can't be confirmed. Still open: a typed "confirmar" under the stock question commits the full amount.
   - **Waiting on Angel:** append-only triggers in the store's migrations (C5), `saidName`, and the real order with Muse.
 - **Deed core (`src/deed-core/`, in PR #71):** the fact batch lives in `src/deed-core/d1-store.ts`. The store's evidence
   rules are policy data (`src/domain/store-policy.ts`), its drafts and stock a host extension
@@ -218,6 +221,7 @@ Gate: Saturday Oct 31, 8:00 PM Honduras time.
 | Organizer questions U1–U4, U6 and U7 | Angel → Discord | Oct 26 |
 | Repository license, and when it goes public (right before submitting) | Team | Oct 26 |
 | Decisions made since Oct 28 aren't in [decisions.md](decisions.md) yet | Angel → Claude Code | Oct 28 |
+| D-57: the `inStock` contract fields and the short-stock copy; whether the preparation list should show a sold-out line differently; `stock_balances` has no unit, so "2 cajas" is compared as 2 | Angel | Nov 4 |
 | Product and team name: "Johan AI" is a working title | Team | Oct 27 |
 | K12 touched two of Angel's files: `src/domain/copy.ts` gains the owner-facing copy `CHANGE_AFTER_READY` (new copy, not compile-only), and `test/secrets.test.ts` lists `0024_change_requests.sql` (compile-only); both need Angel's OK | Angel | Nov 3 |
 | K21 touched Angel's files: `config.ts` (`deedEngine`), `wrangler.jsonc` (`DEED_ENGINE: "0"`), `worker-configuration.d.ts` (regenerated) and `composition.ts` (engine choice; the Deed checks recorder). Whether to turn `DEED_ENGINE` on is his call | Angel | Nov 3 |

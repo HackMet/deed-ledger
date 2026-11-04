@@ -2,7 +2,8 @@
  * The order's three-lane view (K20c): AGENTE dijo | LIBRO empareja | MUNDO registró. Read-only, for any member
  * of the store; another store's order is a 404. The drawing is server-side inline SVG in the reference's palette,
  * with no script: each row is a link to its detail below, opened with `:target`. The pairing is decided by
- * src/domain/deed-libro.ts; this file only draws it. Details carry IDs, codes and times, never message text.
+ * src/domain/deed-libro.ts; this file only draws it. Details carry IDs, codes and times, never message text. A
+ * reply's detail shows its WhatsApp ID, which resolves at the search and which the downloaded entry leaves out.
  */
 import type { Hono } from "hono";
 import { html } from "hono/html";
@@ -131,10 +132,11 @@ export function libroScreen(app: Hono<ConsoleEnv>) {
   app.get("/deed/:orderId/libro", async (c) => {
     const orderId = c.req.param("orderId");
     const tenant = { businessId: c.get("member").businessId };
-    const input = await new D1LibroReads(c.env.DB).read(tenant, orderId);
+    const reads = new D1LibroReads(c.env.DB);
+    const input = await reads.read(tenant, orderId);
     if (input === null) return c.html(simplePage("Libro", html`<p class="empty">Ese pedido no está en la lista.</p>`), 404);
     const trail = await new D1OrderTrail(c.env.DB).trail(tenant, orderId);
-    const rows = libroRows(input);
+    const rows = libroRows(input, await reads.whatsappIds(tenant, orderId));
     const height = HEADER_H + Math.max(rows.length, 1) * ROW_H + 6;
     const svg = html`<svg id="libro" class="libro" viewBox="0 0 ${VIEW_W} ${height}" role="img" aria-label="Lo que dijo el agente, lo que el libro empareja y lo que registró el mundo">
 ${LANE_TITLES.map((title, lane) => html`<text class="lane" x="${COL_X[lane]! + COL_W / 2}" y="20" text-anchor="middle">${title}</text>`)}

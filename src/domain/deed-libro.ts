@@ -43,6 +43,8 @@ export interface RecordedLine {
   readonly counted: boolean;
   readonly unitPrice: Centavos | null;
   readonly quantity: DecimalString | null;
+  /** Staff marked this line No hay on this version: the total after the tap leaves it out. */
+  readonly markedNoHay?: boolean;
 }
 
 export type ProviderStatus = "sent" | "delivered" | "read" | "played" | "failed";
@@ -88,7 +90,7 @@ export interface LibroCell {
   readonly atMs: number | null;
   /** The fact the cell is about (a gate: the fact that decided it). Null when none. */
   readonly factId: string | null;
-  /** Only IDs, codes and times: never message text, names or phone numbers. */
+  /** Only IDs, codes and times: never message text or names. A WhatsApp ID embeds the phone number: it stays off the entry. */
   readonly details: readonly LibroDetail[];
 }
 
@@ -266,12 +268,12 @@ const claimCell = (alternatives: readonly (StateClaim | TotalClaim)[], reply: Li
   return { kind: "claim", text, atMs: reply.atMs, factId: null, details: [{ term: "Afirmación", value: first.type }, { term: "Versión", value: String(first.version) }, { term: "Mensaje", value: reply.id }] };
 };
 
-const replyCell = (reply: LibroReply): LibroCell => ({
+const replyCell = (reply: LibroReply, whatsappId: string | undefined): LibroCell => ({
   kind: "reply",
   text: REPLY_WORDS[reply.status] ?? "Estado de respuesta desconocido",
   atMs: reply.atMs,
   factId: null,
-  details: [{ term: "Mensaje", value: reply.id }, { term: "Estado", value: reply.status }],
+  details: [{ term: "Mensaje", value: reply.id }, { term: "Estado", value: reply.status }, ...(whatsappId === undefined ? [] : [{ term: "ID de WhatsApp", value: whatsappId }])],
 });
 
 const DELIVERY_WORDS: Record<ProviderStatus, string> = {
@@ -336,9 +338,10 @@ const gateCell = (refusal: LibroRefusal): LibroCell => ({
 /**
  * The rows of the three-lane view, oldest first. Each reply with a claim about this order gives a delivery row
  * (the reply ↔ its delivery) and one row per claim (the claim ↔ the book). A fact with a witness in the store gives
- * a row with its tap, unless a claim row already shows it. Each refusal is a gate row.
+ * a row with its tap, unless a claim row already shows it. Each refusal is a gate row. `whatsappIds` (by reply) only
+ * adds a detail for the screen: it is not part of the input, so no verdict rests on it and the entry never holds it.
  */
-export function libroRows(input: LibroInput): LibroRow[] {
+export function libroRows(input: LibroInput, whatsappIds: ReadonlyMap<string, string> = new Map()): LibroRow[] {
   const rows: Omit<LibroRow, "id">[] = [];
   const shown = new Set<string>();
   const sortedFacts = [...input.facts].sort((a, b) => a.recordedAtMs - b.recordedAtMs || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
@@ -347,7 +350,7 @@ export function libroRows(input: LibroInput): LibroRow[] {
     // Each check keeps the alternatives about this order; a check with none about it is not this order's.
     const checks = reply.claims.map((check) => check.anyOf.filter((claim) => isOrderClaim(claim, input.orderId))).filter((alternatives) => alternatives.length > 0);
     if (checks.length === 0) continue;
-    rows.push({ atMs: reply.atMs, state: pairDelivery(reply), agent: replyCell(reply), book: null, world: deliveryCell(reply) });
+    rows.push({ atMs: reply.atMs, state: pairDelivery(reply), agent: replyCell(reply, whatsappIds.get(reply.id)), book: null, world: deliveryCell(reply) });
     for (const alternatives of checks) {
       const states = alternatives.filter((claim): claim is StateClaim => claim.type === "order_state");
       const totals = alternatives.filter((claim): claim is TotalClaim => claim.type === "order_total");
@@ -366,7 +369,10 @@ export function libroRows(input: LibroInput): LibroRow[] {
       }
       if (totals.length > 0) {
         const found = totals.map((claim) => {
-          const recorded = recordedTotalOf(input.lines.filter((line) => line.version === claim.version));
+          const lines = input.lines.filter((line) => line.version === claim.version);
+          // A version has two true totals once a line is No hay: the one said before the tap and the one said after.
+          const afterNoHay = recordedTotalOf(lines.map((line) => (line.markedNoHay === true ? { ...line, counted: false } : line)));
+          const recorded = afterNoHay === claim.total ? afterNoHay : recordedTotalOf(lines);
           return { claim, recorded, state: pairOrderTotal(claim.total, recorded) };
         });
         const hit = found.find((entry) => entry.state === "emparejado") ?? found.find((entry) => entry.state === "sin_pareja") ?? found[0]!;

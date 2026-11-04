@@ -4,6 +4,8 @@ For Angel's agents. PR: https://github.com/HackMet/deed-ledger/pull/71, branch `
 
 **Merging deploys.** `.github/workflows/deploy.yml` applies remote D1 migrations and deploys on every push to `main`.
 
+**Don't merge yet.** Two fixes on the core flow are still under review and land here as new commits: an order with no pickup or delivery can deadlock at `listo` (`claude/flow-ask`), and prices, No hay and the stock offer (`claude/flow-price-nohay`). Kerly says when it's ready. Re-read this file then.
+
 ## What changes when it is deployed
 
 This engine has never run deployed. Everything in the README's "Tested from a phone" was on the previous engine.
@@ -60,10 +62,23 @@ Also waiting on him: decisions D-41 to D-44 and the migration numbers.
 7. **`saidName` in `src/domain/replies.ts` now calls `wordsWithoutQuantity` first,** so the real readback no longer shows `• 12 Doce panes`. Kerly approved it without waiting; it's in Angel's file, so please check it. `src/interfaces/http/console/preparacion.ts:264`, also his, prints the raw words.
 8. **Local paths in branch history.** `docs/deed-run-evidence.jsonl` no longer holds any, but earlier commits on this branch do (`/home/kerly/...`). Don't squash on merge without checking: a squash removes `c15155b`, and two published `NO_CLAIM` rows then read as contradictions, so `--compare` reports 2 differ. Accept the paths, since the same username is in commit metadata, or re-run and republish the evidence after squashing.
 
-9. **No total on this engine.** `order-engine.ts:352` sets every line's `unitPrice` to null, so every order's total is null and the real reply says "El total te lo confirmo". No wrong total is possible, and none is shown. Prices need a decision.
+9. **Totals on this engine.** A matched line takes the product's live confirmed price when it is read (`lineFrom` in `order-engine.ts`); an unconfirmed price stays unknown, never zero. The total follows `totalOf`: every counted line priced and the delivery cost known. Pickup costs nothing, while no fulfillment yet, or a delivery (this engine sets no fee), still answers "El total te lo confirmo". A staff No hay takes its line out of the total the customer hears; the version row keeps the total it was confirmed with.
 
-10. **C11's code is invisible (D-56).** A message resolves to its entry through its WhatsApp ID at `/console/deed/buscar`. No screen shows that ID yet, and messages with no order claim, such as "Tu cambio fue aprobado", resolve to nothing, so C11 stays partial. The search is a GET and these IDs embed the phone number (`docs/architecture.md`), so make it a POST before any screen shows them. `claude/c11-ref` isn't used.
-11. **Not built: offering what there is when the stock is short.** Angel asked for it. The engine has no stock read yet, and `availability` is always `no_se`.
+10. **C11's code is invisible (D-56), and C11 stays ⚠️.** Each reply's detail on the order's Libro shows its WhatsApp ID, and a store member posts it to `/console/deed/buscar` (a POST with CSRF; the GET is only the form). The ID stays out of `entrada.json`, because it embeds the phone number. Every message the agent sends about an order now carries an order claim, including "Tu cambio fue aprobado", "No pudimos hacer el cambio", "Va. Decime qué le cambiamos", the crossed-readback answer and "¿Qué más te mando?". The copy didn't change, and a claim that's false at send time blocks the message. Not ✅, because these don't resolve: (a) the owner's own words from Pendientes, which carry no claim because the owner is the authority, and which can be about an order. Angel decides whether that counts. (b) A safe reply in place of a blocked message. (c) A send whose delivery is unknown. (d) An erased customer's messages. `claude/c11-ref` isn't used.
+11. **Short stock (D-57, proposed: needs Angel's OK).** With a `stock_balances` row, a short line asks "¿Te mando 2 o lo quitamos?", and a sold-out line stays out of the total. It adds two optional `inStock` fields to the contract and copy in `src/domain/replies.ts`. With no row, nothing changes. A store with no counted stock never sees it. Still open: a typed "confirmar" under the stock question commits the full amount, and "sacame 2" can read as a removal; each ends in a readback or the customer's own word. An approved change that removes every line leaves an empty confirmed order.
+
+## For Angel: gaps a scenario audit found on `DEED_ENGINE="1"`
+
+Tests that run on `MemoryEngine` don't prove the deployed path: test on `OrderEngine`.
+
+| Gap | Where | Fix |
+|---|---|---|
+| Without `MODEL_API_KEY`, every message gets "Lo estoy revisando" and nobody is told. **Check the live secret today** | `src/application/order-handler.ts:394-400` | Raise a Pendiente |
+| A refused cancel reads as if nothing was asked | `src/domain/replies.ts:956`, `src/application/order-handler.ts:385` | Its own copy and a handoff Pendiente |
+| A send that fails for good alerts nobody, even a readback | `src/application/dispatch.ts:226-231` | Raise a Pendiente when a customer row ends `failed` |
+| Deletion leaves the customer's words and place: `order_lines.customer_text`, `order_versions.place_text`, `operations.outcome_json`, `change_request` bodies. The copy says they go | `src/infrastructure/d1/customer-control-repository.ts:268-329`, `src/domain/customer-controls.ts` | Extend the erasure, or change the copy. **Privacy: settle it before real customers** |
+
+Kerly's side, not fixed either: pins are dropped, delivery can confirm with no address, hours and price questions get no answer, payment receipts are ignored, Tienda products don't feed the engine, a readback never expires. Details: ask Kerly for the audit.
 
 ## Conformance
 

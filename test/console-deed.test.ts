@@ -264,7 +264,23 @@ async function confirmedOrder(s: Store): Promise<{ orderId: string; code: string
 }
 
 describe("/console/deed/buscar: a typed code or reference reaches the order's entry", () => {
-  const search = (h: Harness, typed: string, cookie?: string) => get(h, `/console/deed/buscar?codigo=${encodeURIComponent(typed)}`, cookie);
+  /** The form's own POST: the session's CSRF value, read from the page that carries the form. */
+  const search = async (h: Harness, typed: string, cookie?: string) => {
+    const csrf = cookie === undefined ? "" : (/name="csrf" value="([^"]+)"/.exec(await (await get(h, "/console/deed/buscar", cookie)).text())?.[1] ?? "");
+    const ctx = createExecutionContext();
+    const response = await h.worker.fetch(
+      new IncomingRequest("https://worker.test/console/deed/buscar", {
+        method: "POST",
+        headers: { origin: "https://worker.test", ...(cookie === undefined ? {} : { cookie }) },
+        body: new URLSearchParams({ csrf, codigo: typed }),
+        redirect: "manual",
+      }),
+      h.env,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    return response;
+  };
   const libroOf = (orderId: string) => `/console/deed/${encodeURIComponent(orderId)}/libro`;
 
   it("redirects the order code, with or without # and in any case, to the order's libro", async () => {
@@ -274,7 +290,7 @@ describe("/console/deed/buscar: a typed code or reference reaches the order's en
     const cookie = await login(h, s, "staff");
     for (const typed of [code, code.slice(1), code.toLowerCase(), code.slice(1).toLowerCase(), ` ${code} `]) {
       const response = await search(h, typed, cookie);
-      expect(response.status, typed).toBe(302);
+      expect(response.status, typed).toBe(303);
       expect(response.headers.get("location"), typed).toBe(libroOf(orderId));
     }
   });
@@ -286,7 +302,7 @@ describe("/console/deed/buscar: a typed code or reference reaches the order's en
     const cookie = await login(h, s, "staff");
     for (const typed of [ref, `Ref. ${ref}`]) {
       const response = await search(h, typed, cookie);
-      expect(response.status, typed).toBe(302);
+      expect(response.status, typed).toBe(303);
       expect(response.headers.get("location"), typed).toBe(libroOf(orderId));
     }
   });

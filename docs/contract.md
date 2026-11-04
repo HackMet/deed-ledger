@@ -97,7 +97,7 @@ renders the WhatsApp copy.
   on the confirm and the live dispatch. A pickup order's `delivered` rests on the confirm, as before.
 - `dispatch` only for `fulfillment.mode = "delivery"` at `listo`; `mark_delivered` from `en_camino` (delivery) or
   `listo` (pickup). A `null` fulfillment is never guessed: `dispatch` answers `rejected`/`invalid_state`, and since
-  D-57 `mark_delivered` closes it from `listo` with the fulfillment left `null`, on a person's word.
+  D-58 `mark_delivered` closes it from `listo` with the fulfillment left `null`, on a person's word.
 - A courier id that isn't an active member of this store answers `rejected`/`not_found` with the order.
 - A customer's cancel (or change) from `en_camino` on answers `rejected`/`invalid_state`; the copy is
   `CANCEL_AFTER_DISPATCH` ("Ya va en camino; hablá con la tienda.") in `src/domain/copy.ts`.
@@ -189,6 +189,8 @@ in `src/domain/contract/outcomes.ts`, marked "Proposed (#47)"; they are additive
    `verifyClaims` answers true only when the store's hours now are exactly these (same entries, same order).
    `unit_price` and `availability` claims need `verifyClaims` support too: true only while the confirmed price,
    or the availability from evidence, is still the one claimed. Until then those replies go out as the safe reply.
+   Proposed (D-57): the order engine answers `availability` from `stock_balances`, and an optional `inStock` on the
+   claim, with `OrderLineView.inStock`, holds only while the balance is exactly that amount.
 5. **Topic routing in the engine:** `order_status` → `order_status`; `price`/`availability` → `answer`;
    `store_hours` → `store_hours`; `other` → `out_of_scope` (the short redirect); `balance` → unchanged (handoff in
    the pretend engine). A burst that also changes the order gets the order's next step; the question isn't

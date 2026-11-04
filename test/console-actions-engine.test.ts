@@ -4,6 +4,7 @@ import type { MemberContext } from "../src/application/engine";
 import { staffKey } from "../src/application/engine/order-engine";
 import type { ActionEnvelope, ConsoleAction } from "../src/domain/contract/actions";
 import type { Claim, OrderState } from "../src/domain/contract/outcomes";
+import { withLineMark } from "../src/domain/order-total";
 import { addAndPickup, ids, moreSugar, noHayAceite, offerMazola, staleReady } from "./fixtures/contract";
 import { changeAndApprove, count, engine, firstPickupOrder, footprint, newStore, placeFirstOrder, save, store, T0, tap } from "./helpers/orders";
 
@@ -29,7 +30,7 @@ async function cancel(s: Store, orderId: string, version: number) {
   await save(result);
 }
 
-/** No line is priced yet, so a total only exists once a test sets one. */
+/** These products have no confirmed price, so a total only exists once a test sets one. */
 const priceVersion = (orderId: string, version: number, total: number) =>
   env.DB.prepare(`UPDATE order_versions SET total_centavos = ? WHERE order_id = ? AND version = ?`).bind(total, orderId, version).run();
 
@@ -249,12 +250,18 @@ describe("onConsoleAction: staff move an order along the list, every refusal ans
       [noHayAceite.action, offerMazola.action].map((a) => ({ mark: "mark" in a ? a.mark : null, substituteProductId: "substituteProductId" in a ? a.substituteProductId : null })),
     );
     const noticesOf = [] as unknown[];
+    const afterMark: (typeof preparing)[] = [];
     for (const [index, mark] of marks.entries()) {
       const marked = await engine.onConsoleAction(member(s, { nowMs: T0 + 11_000 + index }), staffTap(mark));
-      expect(marked.outcome).toEqual({ type: "action_saved", order: preparing });
+      // Each mark stays on its line, read back and on what the customer hears about.
+      const order = { ...(afterMark.at(-1) ?? preparing) };
+      order.lines = order.lines.map((line) => (line.lineId === mark.lineId ? withLineMark(line, mark.mark) : line));
+      afterMark.push(order);
+      expect(marked.outcome).toEqual({ type: "action_saved", order });
       expect(marked.commits.map((c) => c.post?.length ?? 0)).toEqual([0, 1]);
       noticesOf.push(marked.notices);
       await save(marked);
+      expect((await store.order(s.context(), orderId))?.view).toEqual(order);
       expect(await lastAudit(orderId)).toMatchObject({
         kind: "order_line_marked",
         actor_id: ids.staff,
@@ -262,14 +269,14 @@ describe("onConsoleAction: staff move an order along the list, every refusal ans
       });
     }
     expect(noticesOf).toEqual([
-      [{ customerId: ids.customer, notice: { type: "line_unavailable", order: preparing, lineId: "L2" } }],
-      [{ customerId: ids.customer, notice: { type: "substitute_offered", order: preparing, lineId: "L3" } }],
+      [{ customerId: ids.customer, notice: { type: "line_unavailable", order: afterMark[0], lineId: "L2" } }],
+      [{ customerId: ids.customer, notice: { type: "substitute_offered", order: afterMark[1], lineId: "L3" } }],
       [],
     ]);
     expect(await orderRow(orderId)).toMatchObject({ state: "preparando" });
 
     const ready = await engine.onConsoleAction(member(s, { nowMs: T0 + 20_000 }), staffTap(step("mark_ready", orderId)));
-    const listo = { ...confirmed, state: "listo" as const, queuePosition: null };
+    const listo = { ...afterMark.at(-1)!, state: "listo" as const, queuePosition: null };
     expect(ready).toMatchObject({
       outcome: { type: "action_saved", order: listo },
       notices: [{ customerId: ids.customer, notice: { type: "order_ready", order: listo } }],
@@ -457,9 +464,12 @@ describe("onConsoleAction: staff move an order along the list, every refusal ans
     const before = await footprint(s.businessId);
 
     const again = await engine.onConsoleAction(member(s, { nowMs: T0 + 14_000 }), staffTap(markL2(2)));
-    expect(again.outcome).toEqual({ type: "action_saved", order: v2 });
+    // The tap on v1 died with it, so v2 reads unmarked until this one; its line stays out of the total either way.
+    expect(v2.lines.find((line) => line.lineId === "L2")).toMatchObject({ mark: null, availability: "se_acabo" });
+    const marked = { ...v2, lines: v2.lines.map((line) => (line.lineId === "L2" ? withLineMark(line, "no_hay") : line)) };
+    expect(again.outcome).toEqual({ type: "action_saved", order: marked });
     expect(staffKey(markL2(2))).not.toBe(staffKey(markL2(1)));
-    expect(again.notices).toEqual([{ customerId: ids.customer, notice: { type: "line_unavailable", order: v2, lineId: "L2" } }]);
+    expect(again.notices).toEqual([{ customerId: ids.customer, notice: { type: "line_unavailable", order: marked, lineId: "L2" } }]);
     await save(again);
     expect(await footprint(s.businessId)).toEqual({ ...before, operations: before.operations + 1, audit: before.audit + 1 });
     expect(await count(`operations WHERE business_id = ? AND operation_key = ?`, s.businessId, staffKey(markL2(2)))).toBe(1);

@@ -54,7 +54,7 @@ branding. The other seven can be partial and it is still recognisably Deed.
 | **C8** | **Reliability is measured per (agent id, effect class), under dependence.** Agent errors arrive in bursts, so a Bernoulli interval is mis-specified. | ⚠️ partial: `docs/deed-scale.html`, from harness runs only, not store orders. There the id is sha256(model + brief), not `facts.agent_id`. The page gives counts only; it makes no claim about dependence |
 | **C9** | **Nothing identifies, scores, profiles or tracks a person.** The unit is an agent version and an effect class. | ✅ built and tested |
 | **C10** | **The core is agnostic.** No business nouns inside it; a new business flow is a new policy, never an edit to the core. | ✅ built and tested, with the known limits below |
-| **C11** | **The agent is identified, and the identity travels.** Every fact records which agent version made the claim; every customer-facing output carries a code that resolves to that entry. | ⚠️ partial: every customer fact records the agent version. A sent message that makes an order claim resolves to its entry through the ID WhatsApp gave it, searched at `/console/deed/buscar`, and the customer sees no code. No screen shows that ID yet: it is only in the database. These resolve to nothing: messages with no order claim, including the change approved and declined notices; a safe reply sent in place of a blocked message; a send whose delivery is unknown; and an erased customer's messages |
+| **C11** | **The agent is identified, and the identity travels.** Every fact records which agent version made the claim; every customer-facing output carries a code that resolves to that entry. | ⚠️ partial: every customer fact records the agent version. Every message the agent sends about an order carries an order claim, including the change approved and declined notices, so it resolves to its entry through the ID WhatsApp gave it. The customer sees no code. A member of the store finds that ID in each reply's detail on the order's Libro and posts it to the search at `/console/deed/buscar`; the exported entry leaves it out, because it embeds the phone number. These don't resolve: the owner's own words from Pendientes, which carry no claim and can be about an order, which is why this stays partial; a safe reply sent in place of a blocked message; a send whose delivery is unknown; and an erased customer's messages |
 
 **Known limits of C3.** These have no test:
 
@@ -116,7 +116,7 @@ The store's append-only triggers (C5), signatures, watermarks, C2PA, hash chain.
 
 | Number | Value | Measured |
 |---|---|---|
-| Tests | 1666 passed in 105 files, plus 9 under `node:test`; typecheck exit 0 | `npm test` and `npm run typecheck` on this branch, November 4, 2026 |
+| Tests | 1768 passed in 108 files, plus 9 under `node:test`; typecheck exit 0 | `npm test` and `npm run typecheck` on this branch, November 4, 2026 |
 | Attacks | 9 attacks that reach the engine: 0 false facts admitted. One more attack is intake only and is not counted | `node scripts/adversary.mjs`, exit 0. Removing a defence on purpose turns its row red, except one K12 case noted in the script's review |
 | Harness runs | 125 run names, last attempt of each (at least 61 earlier attempts were overwritten with no verdict): 63 confirmed, 0 contradictions, 62 with no claim | `deed_check_harness.py` on 2026-11-04, Honduras time, rows in `docs/deed-verdicts.csv`, page in `docs/deed-scale.html`. Confirmed only means the commit exists and the runner recorded it for that run; tests are not re-run. Only the first sha on the `RESULT: COMMITTED` line is read, so any other false statement, with a sha or without one, is not detected. A reader re-runs them from the published evidence, and about a quarter of those shas exist only in local copies |
 
@@ -143,7 +143,7 @@ tests run two stores side by side (`test/isolation.test.ts`).
 
 | Who sends what | What happens | Meta model |
 |---|---|---|
-| A customer: a photo of a handwritten list, then "y agregale dos libras de azúcar" | One order. The agent asks only what's missing, one kind of question at a time, then reads back every line and the total (on `DEED_ENGINE`, no line has a price yet, so the reply says "El total te lo confirmo") | Muse Spark (reader and planner) |
+| A customer: a photo of a handwritten list, then "y agregale dos libras de azúcar" | One order. The agent asks only what's missing, one kind of question at a time, then reads back every line and the total (a line has an amount once the owner confirmed its price; the total needs every counted line priced and pickup or a set delivery fee, otherwise the reply says "El total te lo confirmo") | Muse Spark (reader and planner) |
 | A customer: a voice note | Decoded from OGG/Opus to WAV inside the Worker, transcribed, then read like typed text | Muse Voice Transcribe, then Muse Spark |
 | A customer: "¿A cómo está el aceite?" | Answered from the store's records; when they don't know, "te confirmo" and an item for the owner | Muse Spark reads the question; code answers |
 | A customer: "Confirmar" (button or typed) | The order goes on the preparation list once; a second tap is a duplicate | None: code decides |

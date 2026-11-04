@@ -11,10 +11,11 @@ import {
 import type { CatalogProduct } from "../../application/perception/matching";
 import { MAX_CATALOG_LABELS } from "../../application/perception/matching";
 import type { Commit, Tenant } from "../../application/ports";
+import type { LineMark } from "../../domain/contract/actions";
 import type { EngineOutcome, OrderLineView, OrderState, OrderView } from "../../domain/contract/outcomes";
 import { toThousandths } from "../../domain/contract/numbers";
 import type { OrderFact } from "../../domain/order-state";
-import { isExcludedFromTotal } from "../../domain/order-total";
+import { deliveryOf, isExcludedFromTotal, totalOf, withLineMark } from "../../domain/order-total";
 import { labelOf } from "../../domain/orders";
 import type { Guard } from "./fence";
 
@@ -84,6 +85,7 @@ interface LineRow {
   unit_price_centavos: number | null;
   unit: string | null;
   restricted: number;
+  excluded_from_total: number;
 }
 
 const ORDER_SELECT = `SELECT o.id, o.customer_id, o.state, o.current_version, o.first_confirmed_at_ms,
@@ -151,16 +153,28 @@ export class D1OrderStore implements OrderStore {
   }
 
   async orderHead(tenant: Tenant, orderId: string): Promise<OrderHead | null> {
-    const row = await this.db
+    // Through `order`, so a total claim is checked against the total a No hay left, as the customer hears it.
+    const stored = await this.order(tenant, orderId);
+    return stored === null ? null : { version: stored.view.version, state: stored.view.state, total: stored.view.total };
+  }
+
+  async noHayMarked(tenant: Tenant, productId: string): Promise<boolean> {
+    const { results } = await this.db
       .prepare(
-        `SELECT o.current_version AS version, o.state, v.total_centavos AS total
+        `SELECT DISTINCT o.id, o.customer_id, o.state, o.current_version, o.first_confirmed_at_ms,
+           o.version_fact_id, o.confirm_fact_id, v.fulfillment_mode, v.place_id, v.place_text, v.delivery_fee_centavos, v.total_centavos
          FROM orders o
          JOIN order_versions v ON v.business_id = o.business_id AND v.order_id = o.id AND v.version = o.current_version
-         WHERE o.business_id = ? AND o.id = ?`,
+         JOIN order_lines l ON l.business_id = o.business_id AND l.order_id = o.id AND l.version = o.current_version
+         JOIN facts f ON f.business_id = o.business_id AND f.kind = 'order_status' AND json_extract(f.body_json, '$.orderId') = o.id
+           AND json_extract(f.body_json, '$.mark') = 'no_hay'
+         WHERE o.business_id = ? AND l.product_id = ? AND o.${OPEN}`,
       )
-      .bind(tenant.businessId, orderId)
-      .first<OrderHead>();
-    return row ?? null;
+      .bind(tenant.businessId, productId)
+      .all<OrderRow>();
+    // The read decides: only a live mark of the current version, on a line of this product, counts.
+    const orders = await Promise.all(results.map((row) => this.load(tenant, row)));
+    return orders.some(({ view }) => view.lines.some((line) => line.productId === productId && line.mark === "no_hay"));
   }
 
   async orderFacts(tenant: Tenant, orderId: string): Promise<readonly OrderFact[]> {
@@ -192,7 +206,13 @@ export class D1OrderStore implements OrderStore {
       .bind(tenant.businessId, orderId)
       .all<{ id: string; kind: OrderFact["kind"]; body_json: string; depends_json: string; live: number }>();
     return results.map((row) => {
-      const body = JSON.parse(row.body_json) as { version: number; resumeState?: OrderFact["resumeState"]; status?: OrderFact["status"] };
+      const body = JSON.parse(row.body_json) as {
+        version: number;
+        resumeState?: OrderFact["resumeState"];
+        status?: OrderFact["status"];
+        line?: string;
+        mark?: LineMark;
+      };
       return {
         id: row.id,
         kind: row.kind,
@@ -201,6 +221,7 @@ export class D1OrderStore implements OrderStore {
         dependsOn: JSON.parse(row.depends_json) as string[],
         resumeState: body.resumeState ?? null,
         status: body.status ?? null,
+        ...(body.line === undefined || body.mark === undefined ? {} : { lineMark: { line: body.line, mark: body.mark } }),
       };
     });
   }
@@ -459,7 +480,7 @@ export class D1OrderStore implements OrderStore {
     const { results } = await this.db
       .prepare(
         `SELECT l.line_no, l.product_id, p.canonical_name AS product_name, l.customer_text, l.qty_milli,
-           l.unit_price_centavos, l.unit, l.restricted
+           l.unit_price_centavos, l.unit, l.restricted, l.excluded_from_total
          FROM order_lines l
          LEFT JOIN products p ON p.business_id = l.business_id AND p.id = l.product_id
          WHERE l.business_id = ? AND l.order_id = ? AND l.version = ?
@@ -483,21 +504,34 @@ export class D1OrderStore implements OrderStore {
       resumeState = event?.from_state ?? "confirmado";
     }
 
+    // A line mark is a fact on this version; a cancel or a newer version kills it.
+    const marks = new Map(
+      (await this.orderFacts(tenant, row.id)).flatMap((fact) =>
+        fact.live && fact.version === row.current_version && fact.lineMark !== undefined ? [[fact.lineMark.line, fact.lineMark.mark] as const] : [],
+      ),
+    );
+    const lines = results.map(lineView).map((line) => {
+      const mark = marks.get(line.lineId);
+      return mark === undefined ? line : withLineMark(line, mark);
+    });
+
     const changes = await this.changeFacts(tenant, row.id);
     const openRequest = changes.requests.findLast((request) => request.live) ?? null;
     const packing = row.state === "confirmado" || row.state === "preparando";
+    const fulfillment: OrderView["fulfillment"] =
+      row.fulfillment_mode === null
+        ? null
+        : row.fulfillment_mode === "pickup"
+          ? { mode: "pickup" }
+          : { mode: "delivery", placeId: row.place_id, placeText: row.place_text, fee: row.delivery_fee_centavos };
     const view: OrderView = {
       orderId: row.id,
       version: row.current_version,
       state: row.state,
-      lines: results.map(lineView),
-      fulfillment:
-        row.fulfillment_mode === null
-          ? null
-          : row.fulfillment_mode === "pickup"
-            ? { mode: "pickup" }
-            : { mode: "delivery", placeId: row.place_id, placeText: row.place_text, fee: row.delivery_fee_centavos },
-      total: row.total_centavos,
+      lines,
+      fulfillment,
+      // The version keeps the total it was confirmed with; a No hay leaves the customer a smaller one.
+      total: lines.some((line) => line.mark === "no_hay") ? totalOf(lines, deliveryOf(fulfillment)).total : row.total_centavos,
       queuePosition:
         packing && row.first_confirmed_at_ms !== null ? await this.queuePosition(tenant, row.id, row.first_confirmed_at_ms) : null,
       openChangeRequest: openRequest === null ? null : { id: openRequest.id, diff: openRequest.diff },
@@ -524,7 +558,8 @@ function lineView(row: LineRow): OrderLineView {
     quantity: row.qty_milli === null ? null : fromThousandths(row.qty_milli),
     unit: row.unit,
     unitPrice: row.unit_price_centavos,
-    availability: "no_se",
+    // A line is left out of the total for being restricted or out of stock. "Hay" isn't stored: unknown.
+    availability: row.excluded_from_total === 1 && row.restricted === 0 ? "se_acabo" : "no_se",
     restricted: row.restricted === 1,
     mark: null,
     substitute: null,
