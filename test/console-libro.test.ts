@@ -3,7 +3,7 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import type { Claim } from "../src/domain/contract/outcomes";
 import { INVITE_TTL_MS } from "../src/domain/console-auth";
-import { recheckEntry } from "../src/domain/deed-recheck";
+import { type DeedEntry, recheckEntry } from "../src/domain/deed-recheck";
 import { hashToken, newToken } from "../src/infrastructure/tokens";
 import { firstOrder, ids } from "./fixtures/contract";
 import { type Harness, harness } from "./helpers/harness";
@@ -74,6 +74,53 @@ async function storeWithMembers(): Promise<Store & { readonly phones: readonly s
 }
 
 const REPLY_TEXT = "Tu pedido está confirmado, gracias por tu compra.";
+const CUSTOMER_NAME = "Ana Sintética Prueba";
+const MEMBER_NAME = "Dueño Sintético Prueba";
+
+/** The keys each object of the entry may carry. A key the list lacks fails the test, so a new field is listed on purpose. */
+const ENTRY_KEYS = {
+  entry: ["schema", "input", "verdicts"],
+  input: ["orderId", "facts", "lines", "replies", "refusals"],
+  fact: ["id", "kind", "operationKey", "recordedAtMs", "version", "status", "resumeState", "live", "witness"],
+  witness: ["kind", "refId"],
+  line: ["version", "counted", "unitPrice", "quantity"],
+  reply: ["id", "atMs", "status", "providerStatus", "providerStatusAtS", "claims"],
+  check: ["anyOf"],
+  claim: {
+    order_state: ["type", "orderId", "version", "state"],
+    order_total: ["type", "orderId", "version", "total"],
+  },
+  refusal: ["id", "atMs", "reason", "decidingFactId", "operationKey"],
+  verdict: ["rowKey", "state"],
+} as const;
+
+function expectKeys(value: object, allowed: readonly string[]) {
+  expect(Object.keys(value).sort()).toEqual([...allowed].sort());
+}
+
+/** Every object of the entry carries exactly its listed keys; a claim is checked against the list of its own type. */
+function expectOnlyListedKeys(value: unknown) {
+  const entry = value as DeedEntry;
+  expectKeys(entry, ENTRY_KEYS.entry);
+  expectKeys(entry.input, ENTRY_KEYS.input);
+  for (const fact of entry.input.facts) {
+    expectKeys(fact, ENTRY_KEYS.fact);
+    if (fact.witness !== null) expectKeys(fact.witness, ENTRY_KEYS.witness);
+  }
+  for (const line of entry.input.lines) expectKeys(line, ENTRY_KEYS.line);
+  for (const reply of entry.input.replies) {
+    expectKeys(reply, ENTRY_KEYS.reply);
+    for (const check of reply.claims) {
+      expectKeys(check, ENTRY_KEYS.check);
+      for (const claim of check.anyOf) {
+        expect(Object.keys(ENTRY_KEYS.claim)).toContain(claim.type);
+        expectKeys(claim, ENTRY_KEYS.claim[claim.type as keyof typeof ENTRY_KEYS.claim]);
+      }
+    }
+  }
+  for (const refusal of entry.input.refusals) expectKeys(refusal, ENTRY_KEYS.refusal);
+  for (const verdict of entry.verdicts) expectKeys(verdict, ENTRY_KEYS.verdict);
+}
 
 /** An outbox reply carrying `claims`, delivered as `providerStatus` (null: no status yet). */
 async function insertReply(businessId: string, claims: readonly Claim[], over: { status?: string; providerStatus?: string | null } = {}) {
@@ -244,15 +291,25 @@ describe("/console/deed/:orderId/entrada.json: the entry a third party re-judges
     expect(result).toEqual({ ok: true, pairs: entry.verdicts.length, same: entry.verdicts.length, differ: [] });
   });
 
-  it("carries IDs, codes, numbers and claims only: no phone, no message text", async () => {
+  it("carries IDs, codes, numbers and claims only: no name, no phone, no message text, and no key the allow-list lacks", async () => {
     const s = await storeWithMembers();
     const { orderId } = await fourStates(s);
+    // A customer's name and a member's name, saved in this store: neither may reach the entry.
+    const named = await env.DB.prepare(`INSERT INTO customers (id, business_id, name, name_saved_at_ms, created_at_ms) VALUES (?1, ?2, ?3, ?4, ?4)`)
+      .bind(crypto.randomUUID(), s.businessId, CUSTOMER_NAME, T0)
+      .run();
+    const members = await env.DB.prepare(`UPDATE memberships SET display_name = ?1 WHERE business_id = ?2`).bind(MEMBER_NAME, s.businessId).run();
+    expect(named.meta.changes).toBeGreaterThan(0);
+    expect(members.meta.changes).toBeGreaterThan(0);
     const h = harness({ engine });
     const cookie = await login(h, s, "staff");
     const body = await (await get(h, `/console/deed/${encodeURIComponent(orderId)}/entrada.json`, cookie)).text();
+    expect(body).not.toContain(CUSTOMER_NAME);
+    expect(body).not.toContain(MEMBER_NAME);
     expect(body).not.toContain(REPLY_TEXT);
     for (const phone of s.phones) expect(body).not.toContain(phone);
     expect(body).not.toMatch(/(?<![0-9a-zA-Z-])5040\d{8}(?![0-9a-zA-Z-])/);
+    expectOnlyListedKeys(JSON.parse(body));
   });
 
   it("answers 404 for another store's order and for an unknown id", async () => {
