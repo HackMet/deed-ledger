@@ -44,6 +44,7 @@ describe("test environment", () => {
       "0025_dispatch.sql",
       "0026_console_receipts.sql",
       "0027_deed_checks.sql",
+      "0028_agent_id.sql",
     ]);
   });
 

@@ -164,8 +164,8 @@ export class D1FactLedger implements FactLedger {
       this.db
         .prepare(
           `INSERT INTO facts (id, business_id, kind, operation_key, draft_id, draft_revision, actor_user_id,
-             valid_from_ms, recorded_at_ms, body_json)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             valid_from_ms, recorded_at_ms, body_json, agent_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .bind(
           commit.factId,
@@ -178,6 +178,7 @@ export class D1FactLedger implements FactLedger {
           commit.validFromMs,
           nowMs,
           JSON.stringify(commit.body ?? null),
+          commit.agentId ?? null,
         ),
     );
     // S3: what the fact rests on.

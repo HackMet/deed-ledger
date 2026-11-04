@@ -3,7 +3,10 @@
  * DEMO ONLY: run by `./demo.sh` with `demo/wrangler.demo.jsonc`; `src/` never imports this file.
  */
 import { buildRuntime, type Runtime } from "../src/composition";
+import { agentIdOf } from "../src/domain/agent-id";
+import { readerConfiguration } from "../src/application/perception/agent";
 import { OrderEngine } from "../src/application/engine/order-engine";
+import { SPARK_MODEL } from "../src/integrations/meta/spark";
 import { D1CustomerRepository } from "../src/infrastructure/d1/customer-repository";
 import { D1DeedChecks } from "../src/infrastructure/d1/deed-checks";
 import { D1FactLedger } from "../src/infrastructure/d1/fact-ledger";
@@ -15,6 +18,12 @@ import { type Recording, recordedPerceptionHandler, recordingsFromBase64 } from 
 /** The runner passes the recordings in this plain var; the app's own config has no such field. */
 type DemoEnv = Env & { readonly DEMO_RECORDINGS?: string };
 
+/**
+ * The agent id is the hash of the configuration the recordings came from: the app's configuration, but the
+ * model's output here is the recorded one, so the id names what was recorded, not a live call.
+ */
+const DEMO_AGENT_ID = agentIdOf(readerConfiguration(SPARK_MODEL));
+
 /** The real engine on D1 (the one the app's job handler uses), fed by recorded perception. */
 export function demoRuntime(env: Env, recordings: readonly Recording[] = recordingsFromBase64((env as DemoEnv).DEMO_RECORDINGS)): Runtime {
   const orders = new D1OrderStore(env.DB);
@@ -25,6 +34,7 @@ export function demoRuntime(env: Env, recordings: readonly Recording[] = recordi
     checks: new D1DeedChecks(env.DB),
     clock: systemClock,
     log: consoleLogger,
+    agentId: DEMO_AGENT_ID,
   });
   return buildRuntime(env, { engine, jobHandler: recordedPerceptionHandler({ engine, orders, clock: systemClock, recordings, customers: new D1CustomerRepository(env.DB) }) });
 }

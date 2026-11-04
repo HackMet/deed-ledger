@@ -68,4 +68,6 @@ export interface FactCommit {
   readonly sameBatch?: readonly string[];
   readonly closes: { readonly factId: string; readonly reason: "cancelled" | "superseded" } | null;
   readonly movements: readonly StockMovement[];
+  /** C11: the agent configuration's id, on a customer's claim only; absent or null on everything else. */
+  readonly agentId?: string | null;
 }

@@ -7,6 +7,7 @@ import { gatedHandler } from "./application/customer-gate";
 import type { Engine } from "./application/engine";
 import { OrderEngine } from "./application/engine/order-engine";
 import { BusinessService } from "./application/business";
+import { readerConfiguration } from "./application/perception/agent";
 import { CatalogService } from "./application/catalog";
 import type { ModelCallSettings } from "./application/model-settings";
 import { type BurstReader as OrderBurstReader, createOrderHandler } from "./application/order-handler";
@@ -30,6 +31,7 @@ import type {
   PendientesBoard,
   Transcriber,
 } from "./application/ports";
+import { agentIdOf } from "./domain/agent-id";
 import { PRIVACY_PATH } from "./domain/customer-controls";
 import { SEND_TIMEOUT_MS } from "./domain/outbox";
 import { type Config, readConfig } from "./infrastructure/config";
@@ -64,7 +66,7 @@ import { R2MediaStore } from "./infrastructure/r2-media-store";
 import { SimMediaSource } from "./infrastructure/sim-media-source";
 import { consoleLogger, randomIds, realSleep, systemClock } from "./infrastructure/runtime";
 import { OpusAudioDecoder } from "./integrations/audio";
-import { MuseSparkProvider } from "./integrations/meta/spark";
+import { MuseSparkProvider, SPARK_MODEL } from "./integrations/meta/spark";
 import { MuseVoiceTranscriber } from "./integrations/meta/transcribe";
 import { RecordedReceiptReader } from "./integrations/perception/recorded-receipt-reader";
 import { WhatsAppCloudChannel } from "./integrations/whatsapp/client";
@@ -130,6 +132,8 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
   const log = overrides.log ?? consoleLogger;
   // The Deed's record of checks (K20): the order engine writes every claim check and refusal to it.
   const deedChecks = new D1DeedChecks(db);
+  // C11: the id of this deployment's agent configuration, computed once here and stamped on customer facts.
+  const agentId = agentIdOf(readerConfiguration(SPARK_MODEL));
   // DEED_ENGINE: the real order engine on D1 (OrderEngine), which Angel's reader reads through. DEV_CONSOLE:
   // in memory, demo catalog, no login, local simulator only. PRETEND_ENGINE: state in D1, shared by every
   // isolate, each store's own products and hours (#40), console behind login. Both (the simulator's
@@ -137,7 +141,7 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
   const engine =
     overrides.engine ??
     (config.deedEngine
-      ? new OrderEngine({ store: new D1OrderStore(db), ids, ledger: new D1FactLedger(db), checks: deedChecks, clock, log })
+      ? new OrderEngine({ store: new D1OrderStore(db), ids, ledger: new D1FactLedger(db), checks: deedChecks, clock, log, agentId })
       : config.pretendEngine
         ? new D1PretendEngine(db, { setup: storeSetup })
         : config.devConsole

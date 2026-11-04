@@ -296,6 +296,8 @@ export class OrderEngine implements Engine {
   /**
    * `checks` is the Deed's record (K20): optional, written after each decision and never in its batch.
    * `clock` stamps the claim checks, which carry no time of their own; `log` gets a failed record's IDs.
+   * `agentId` (C11) is the runtime's id for the agent configuration; the engine stamps it on each customer
+   * fact and never reads it from a reading.
    */
   constructor(
     private readonly deps: {
@@ -305,6 +307,7 @@ export class OrderEngine implements Engine {
       readonly checks?: DeedChecks;
       readonly clock?: Clock;
       readonly log?: Logger;
+      readonly agentId?: string;
     },
   ) {}
 
@@ -1120,6 +1123,7 @@ export class OrderEngine implements Engine {
       dependsOn: fact.dependsOn,
       closes: fact.closes,
       movements: [],
+      agentId: this.deps.agentId ?? null,
     };
   }
 
