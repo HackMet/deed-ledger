@@ -22,12 +22,14 @@ const fact = (over: Partial<LibroFact> & Pick<LibroFact, "id" | "kind">): LibroF
   ...over,
 });
 
-const reply = (over: Partial<LibroReply> & Pick<LibroReply, "id" | "claims">): LibroReply => ({
+/** A reply whose claims are one check each, as the outbox stores them. */
+const reply = (over: Omit<Partial<LibroReply>, "claims"> & Pick<LibroReply, "id"> & { readonly claims: readonly Claim[] }): LibroReply => ({
   atMs: 2_000,
   status: "sent",
   providerStatus: null,
   providerStatusAtS: null,
   ...over,
+  claims: over.claims.map((claim) => ({ anyOf: [claim] })),
 });
 
 const line = (over: Partial<RecordedLine> = {}): RecordedLine => ({ version: 1, counted: true, unitPrice: 1000, quantity: "2", ...over });
@@ -165,6 +167,36 @@ describe("libroRows: the three lanes, row by row", () => {
     const delivery = rows.find((row) => row.world?.kind === "delivery");
     expect(delivery?.state).toBe("en_duda");
     expect(delivery?.world?.text).toBe("Sin confirmación de entrega todavía");
+  });
+
+  it("holds a check when any one of its alternatives holds: one emparejado row, no red row", () => {
+    const rows = libroRows({
+      orderId,
+      facts: [fact({ id: "f-prep", kind: "order_status", status: "preparing", version: 1 })],
+      lines: [],
+      replies: [
+        {
+          id: "m1",
+          atMs: 2_000,
+          status: "sent",
+          providerStatus: "delivered",
+          providerStatusAtS: null,
+          claims: [
+            {
+              anyOf: [
+                { type: "order_state", orderId, version: 1, state: "confirmado" },
+                { type: "order_state", orderId, version: 1, state: "preparando" },
+              ],
+            },
+          ],
+        },
+      ],
+      refusals: [],
+    });
+    const claim = rows.find((row) => row.agent?.kind === "claim");
+    expect(claim?.state).toBe("emparejado");
+    expect(claim?.agent?.text).toBe("Dijo: confirmado o preparando");
+    expect(rows.some((row) => row.state === "sin_pareja")).toBe(false);
   });
 
   it("never shows a reply that carries no claim about this order", () => {

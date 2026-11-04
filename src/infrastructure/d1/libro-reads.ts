@@ -3,14 +3,14 @@
  * book holds (the order's facts, their lines and refusals) and what the world recorded (delivery statuses and
  * the staff taps). Read-only. Every query is scoped to the store, and an order of another store is null.
  */
-import type { Claim } from "../../domain/contract/outcomes";
 import type { Tenant } from "../../application/ports";
-import type { LibroFact, LibroInput, LibroRefusal, LibroReply, ProviderStatus, RecordedLine } from "../../domain/deed-libro";
+import type { FactKind, LibroFact, LibroInput, LibroRefusal, LibroReply, ProviderStatus, RecordedLine } from "../../domain/deed-libro";
+import type { ClaimCheck } from "../../domain/replies";
 import { FACTS_SQL } from "./order-trail";
 
 interface FactRow {
   id: string;
-  kind: LibroFact["kind"];
+  kind: FactKind;
   operation_key: string;
   body_json: string;
   recorded_at_ms: number;
@@ -100,8 +100,9 @@ export class D1LibroReads {
   }
 
   /**
-   * The replies that carry a claim about this order, found through their claims. A reply whose claims were
-   * blocked at send time is left out: its delivery is of the safe reply, not of what it claimed.
+   * The replies that carry a claim about this order, found through their claims (stored as checks: `anyOf`
+   * lists, outbox-repository.ts `readClaims`). A reply whose claims were blocked at send time is left out: its
+   * delivery is of the safe reply, not of what it claimed.
    */
   private async repliesOf(tenant: Tenant, orderId: string): Promise<LibroReply[]> {
     const { results } = await this.db
@@ -110,7 +111,9 @@ export class D1LibroReads {
            COALESCE(o.sent_at_ms, o.created_at_ms) AS at_ms
          FROM outbound_messages o
          WHERE o.business_id = ?1 AND o.claims_json IS NOT NULL AND o.claims_blocked_at_ms IS NULL
-           AND EXISTS (SELECT 1 FROM json_each(o.claims_json) j WHERE json_extract(j.value, '$.orderId') = ?2)
+           AND EXISTS (
+             SELECT 1 FROM json_each(o.claims_json) c, json_each(c.value, '$.anyOf') a WHERE json_extract(a.value, '$.orderId') = ?2
+           )
          ORDER BY at_ms, o.seq`,
       )
       .bind(tenant.businessId, orderId)
@@ -121,7 +124,7 @@ export class D1LibroReads {
       status: row.status,
       providerStatus: row.provider_status,
       providerStatusAtS: row.provider_status_at_s,
-      claims: JSON.parse(row.claims_json) as Claim[],
+      claims: JSON.parse(row.claims_json) as ClaimCheck[],
     }));
   }
 

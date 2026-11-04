@@ -33,7 +33,7 @@ async function insertReply(
       T0 + 1_000,
       T0 + 1_000,
       T0 + 1_500,
-      claims === null ? null : JSON.stringify(claims),
+      claims === null ? null : JSON.stringify(claims.map((claim) => ({ anyOf: [claim] }))),
       over.providerStatus ?? null,
       over.providerStatus === undefined || over.providerStatus === null ? null : T0 / 1000 + 2,
       over.blockedAtMs ?? null,
@@ -82,7 +82,7 @@ describe("D1LibroReads: the order's replies, found through their claims", () => 
     const input = await new D1LibroReads(env.DB).read({ businessId: s.businessId }, orderId);
     expect(input?.replies.map((r) => r.id)).toEqual(["m-mine"]);
     expect(input?.replies[0]?.providerStatus).toBe("delivered");
-    expect(input?.replies[0]?.claims).toEqual([listo(orderId)]);
+    expect(input?.replies[0]?.claims).toEqual([{ anyOf: [listo(orderId)] }]);
   });
 
   it("leaves out a reply whose claims were blocked at send time: its delivery is of the safe reply", async () => {

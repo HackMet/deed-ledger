@@ -94,7 +94,7 @@ async function insertReply(businessId: string, claims: readonly Claim[], over: {
       T0 + 1_000,
       T0 + 1_000,
       T0 + 1_500,
-      JSON.stringify(claims),
+      JSON.stringify(claims.map((claim) => ({ anyOf: [claim] }))),
       over.providerStatus ?? null,
       over.providerStatus ? T0 / 1000 + 2 : null,
     )
@@ -171,6 +171,21 @@ describe("/console/deed/:orderId/libro: the three lanes", () => {
     expect((await get(h, `/console/deed/${encodeURIComponent(orderId)}/libro`, ownerCookie)).status).toBe(200);
     const theirsCookie = await login(h, theirs, "owner");
     expect((await get(h, `/console/deed/${encodeURIComponent(orderId)}/libro`, theirsCookie)).status).toBe(404);
+  });
+
+  it("paints a reply the provider delivered green and one it failed red (seeded in this test only; the demo has no status webhooks)", async () => {
+    const s = await storeWithMembers();
+    const { orderId } = await confirmedOrder(s);
+    const said: Claim[] = [{ type: "order_state", orderId, version: 1, state: "confirmado" }];
+    await insertReply(s.businessId, said, { providerStatus: "delivered" });
+    await insertReply(s.businessId, said, { providerStatus: "failed" });
+    const h = harness({ engine });
+    const cookie = await login(h, s, "staff");
+    const body = await (await get(h, `/console/deed/${encodeURIComponent(orderId)}/libro`, cookie)).text();
+    expect(body).toMatch(/<rect class="bar s-emparejado"|<line class="bar s-emparejado"/);
+    expect(body).toMatch(/<line class="bar s-sin_pareja"/);
+    expect(body).toContain("Falló el envío");
+    expect(body).toContain("Entregado al teléfono");
   });
 
   it("writes no ACK or NACK, no external URL and no script, and never the text of a message", async () => {

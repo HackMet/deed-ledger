@@ -8,11 +8,15 @@
  */
 import { type Centavos, type DecimalString, formatLempiras } from "./contract/numbers";
 import type { Claim, OrderState } from "./contract/outcomes";
+import type { ClaimCheck } from "./replies";
 import { lineAmount } from "./money";
+
+type StateClaim = Extract<Claim, { type: "order_state" }>;
+type TotalClaim = Extract<Claim, { type: "order_total" }>;
 
 export type PairState = "emparejado" | "sin_pareja" | "en_duda" | "bloqueado";
 
-export type FactKind = "order_version" | "order_confirm" | "order_cancel" | "order_status";
+export type FactKind = "order_version" | "order_confirm" | "order_cancel" | "order_status" | "change_request" | "change_review";
 
 /** One order fact as the book lane needs it. `version` is the order version the fact's body records; null when none. */
 export interface LibroFact {
@@ -38,14 +42,17 @@ export interface RecordedLine {
 
 export type ProviderStatus = "sent" | "delivered" | "read" | "played" | "failed";
 
-/** A reply that carries claims, with its delivery as the outbox recorded it. */
+/**
+ * A reply that carries claims, with its delivery as the outbox recorded it. Each check holds when any one of its
+ * alternatives holds (`anyOf`), so a check is paired as a whole.
+ */
 export interface LibroReply {
   readonly id: string;
   readonly atMs: number;
   readonly status: string;
   readonly providerStatus: ProviderStatus | null;
   readonly providerStatusAtS: number | null;
-  readonly claims: readonly Claim[];
+  readonly claims: readonly ClaimCheck[];
 }
 
 /** A refused check on this order: a gate, never a fact. */
@@ -119,7 +126,7 @@ const REASON_WORDS: Record<string, string> = {
 
 const UNSENT = ["failed", "expired", "unknown_delivery"];
 
-/** The order state a fact records, or null when none does. A confirm records the state it resumed into. */
+/** The order state a fact records, or null when none does (a change, or a product mark). A confirm records the state it resumed into. */
 export function stateOf(fact: LibroFact): OrderState | null {
   switch (fact.kind) {
     case "order_version":
@@ -130,6 +137,9 @@ export function stateOf(fact: LibroFact): OrderState | null {
       return "cancelado";
     case "order_status":
       return fact.status === "preparing" ? "preparando" : fact.status === "ready" ? "listo" : fact.status === "dispatched" ? "en_camino" : fact.status === "delivered" ? "entregado" : null;
+    case "change_request":
+    case "change_review":
+      return null;
   }
 }
 
@@ -177,12 +187,21 @@ export function recordedTotalOf(lines: readonly RecordedLine[]): Centavos | null
   return Number.isSafeInteger(sum) ? sum : null;
 }
 
-const isOrderClaim = (claim: Claim, orderId: string): boolean =>
+const isOrderClaim = (claim: Claim, orderId: string): claim is StateClaim | TotalClaim =>
   (claim.type === "order_state" || claim.type === "order_total") && claim.orderId === orderId;
 
+const KIND_WORDS: Record<FactKind, string> = {
+  order_version: "Pedido",
+  order_confirm: "Confirmado",
+  order_cancel: "Cancelado",
+  order_status: "Cambio de estado",
+  change_request: "Cambio pedido",
+  change_review: "Cambio revisado",
+};
+
 const factLabel = (fact: LibroFact): string => {
-  const what =
-    fact.kind === "order_version" ? `Versión ${fact.version ?? ""}`.trim() : fact.kind === "order_confirm" ? "Confirmado" : fact.kind === "order_cancel" ? "Cancelado" : STATE_WORDS[stateOf(fact) ?? "armando"];
+  const state = stateOf(fact);
+  const what = fact.kind === "order_version" && fact.version !== null ? `${KIND_WORDS.order_version} v${fact.version}` : state === null ? KIND_WORDS[fact.kind] : STATE_WORDS[state];
   return `${what} · ${fact.live ? "Vivo" : "Cerrado"}`;
 };
 
@@ -209,10 +228,13 @@ const tapCell = (fact: LibroFact): LibroCell => ({
   ],
 });
 
-const claimCell = (claim: Claim & { readonly type: "order_state" | "order_total" }, reply: LibroReply): LibroCell =>
-  claim.type === "order_state"
-    ? { kind: "claim", text: `Dijo: ${STATE_WORDS[claim.state]}`, atMs: reply.atMs, factId: null, details: [{ term: "Afirmación", value: "order_state" }, { term: "Versión", value: String(claim.version) }, { term: "Mensaje", value: reply.id }] }
-    : { kind: "claim", text: `Dijo: total ${formatLempiras(claim.total)}`, atMs: reply.atMs, factId: null, details: [{ term: "Afirmación", value: "order_total" }, { term: "Versión", value: String(claim.version) }, { term: "Mensaje", value: reply.id }] };
+/** One check as the agent said it: its alternatives in words ("confirmado o preparando"), its kind, version and reply. */
+const claimCell = (alternatives: readonly (StateClaim | TotalClaim)[], reply: LibroReply): LibroCell => {
+  const states = alternatives.filter((claim): claim is StateClaim => claim.type === "order_state");
+  const first = alternatives[0]!;
+  const text = states.length > 0 ? `Dijo: ${states.map((claim) => STATE_WORDS[claim.state]).join(" o ")}` : `Dijo: total ${formatLempiras(alternatives.find((claim) => claim.type === "order_total")!.total as Centavos)}`;
+  return { kind: "claim", text, atMs: reply.atMs, factId: null, details: [{ term: "Afirmación", value: first.type }, { term: "Versión", value: String(first.version) }, { term: "Mensaje", value: reply.id }] };
+};
 
 const replyCell = (reply: LibroReply): LibroCell => ({
   kind: "reply",
@@ -284,23 +306,33 @@ export function libroRows(input: LibroInput): LibroRow[] {
   const sortedFacts = [...input.facts].sort((a, b) => a.recordedAtMs - b.recordedAtMs || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 
   for (const reply of input.replies) {
-    const claims = reply.claims.filter((claim) => isOrderClaim(claim, input.orderId));
-    if (claims.length === 0) continue;
+    // Each check keeps the alternatives about this order; a check with none about it is not this order's.
+    const checks = reply.claims.map((check) => check.anyOf.filter((claim) => isOrderClaim(claim, input.orderId))).filter((alternatives) => alternatives.length > 0);
+    if (checks.length === 0) continue;
     rows.push({ atMs: reply.atMs, state: pairDelivery(reply), agent: replyCell(reply), book: null, world: deliveryCell(reply) });
-    for (const claim of claims) {
-      if (claim.type === "order_state") {
-        const found = pairOrderState(claim, input.facts);
-        if (found.fact !== null) shown.add(found.fact.id);
+    for (const alternatives of checks) {
+      const states = alternatives.filter((claim): claim is StateClaim => claim.type === "order_state");
+      const totals = alternatives.filter((claim): claim is TotalClaim => claim.type === "order_total");
+      if (states.length > 0) {
+        // The check holds when any alternative does: a live fact for one of its states pairs the whole check.
+        const found = states.map((claim) => ({ claim, ...pairOrderState(claim, input.facts) }));
+        const hit = found.find((entry) => entry.state === "emparejado") ?? found.find((entry) => entry.fact !== null) ?? found[0]!;
+        if (hit.fact !== null) shown.add(hit.fact.id);
         rows.push({
           atMs: reply.atMs,
-          state: found.state,
-          agent: claimCell(claim, reply),
-          book: found.fact === null ? missingCell(claim) : factCell(found.fact),
-          world: found.fact?.witness ? tapCell(found.fact) : null,
+          state: hit.state,
+          agent: claimCell(states, reply),
+          book: hit.fact === null ? missingCell(hit.claim) : factCell(hit.fact),
+          world: hit.fact?.witness ? tapCell(hit.fact) : null,
         });
-      } else if (claim.type === "order_total") {
-        const recorded = recordedTotalOf(input.lines.filter((line) => line.version === claim.version));
-        rows.push({ atMs: reply.atMs, state: pairOrderTotal(claim.total, recorded), agent: claimCell(claim, reply), book: balanceCell(claim.total, recorded, claim.version), world: null });
+      }
+      if (totals.length > 0) {
+        const found = totals.map((claim) => {
+          const recorded = recordedTotalOf(input.lines.filter((line) => line.version === claim.version));
+          return { claim, recorded, state: pairOrderTotal(claim.total, recorded) };
+        });
+        const hit = found.find((entry) => entry.state === "emparejado") ?? found.find((entry) => entry.state === "sin_pareja") ?? found[0]!;
+        rows.push({ atMs: reply.atMs, state: hit.state, agent: claimCell(totals, reply), book: balanceCell(hit.claim.total, hit.recorded, hit.claim.version), world: null });
       }
     }
   }
