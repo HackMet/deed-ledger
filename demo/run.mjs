@@ -358,8 +358,28 @@ export async function login() {
 }
 
 /**
+ * The verdicts each order's entry must carry, as a tally per state (null: a fact with no pair), measured on clean
+ * runs. The rows are sorted by the time of each reply and fact, and the demo's clock moves between runs, so which
+ * row holds which verdict moves too; how many rows hold each verdict does not. The recheck compares an entry with
+ * the same judge's recomputation, so a judge broken in both places still agrees; these tallies are what catch it.
+ */
+const EXPECTED_VERDICTS = {
+  A: "emparejado 4, en_duda 2, null 2",
+  D: "emparejado 2, null 4",
+  E: "bloqueado 1, null 4",
+};
+
+/** Counts the rows per verdict, null as "null", keys sorted, e.g. "emparejado 2, null 4". */
+function tally(states) {
+  const counts = {};
+  for (const state of states) counts[state ?? "null"] = (counts[state ?? "null"] ?? 0) + 1;
+  return Object.keys(counts).sort().map((state) => `${state} ${counts[state]}`).join(", ");
+}
+
+/**
  * The owner's session downloads each order's entry from the running Worker and re-judges it with
- * scripts/deed-recheck.mjs, which needs nothing but the file. Returns how many verdicts differ.
+ * scripts/deed-recheck.mjs, which needs nothing but the file. Each entry's verdicts must also be the literal ones
+ * above, and the published example must recheck with exit 0. Returns how many verdicts differ.
  */
 async function recheckEntries(cookie, orders) {
   const dir = join(dirname(ENV_FILE), "entries");
@@ -373,6 +393,8 @@ async function recheckEntries(cookie, orders) {
     const text = await response.text();
     const file = join(dir, `${who}.json`);
     writeFileSync(file, text);
+    const stored = tally(JSON.parse(text).verdicts.map((verdict) => verdict.state));
+    if (stored !== EXPECTED_VERDICTS[who]) throw new Error(`the verdicts of ${who}'s entry are ${stored}, expected ${EXPECTED_VERDICTS[who]}`);
     const result = spawnSyncNode("scripts/deed-recheck.mjs", [file]);
     const counts = result.stdout.match(/^pairs: (\d+), same: \d+, differ: (\d+)/m);
     if (counts === null) throw new Error(`the recheck could not read ${who}'s entry:\n${result.stdout}${result.stderr}`);
@@ -384,6 +406,8 @@ async function recheckEntries(cookie, orders) {
     pairs += Number(counts[1]);
     differ += Number(counts[2]);
   }
+  const example = spawnSyncNode("scripts/deed-recheck.mjs", ["docs/deed-entry-example.json"]);
+  if (example.status !== 0) throw new Error(`the published example exited ${example.status}, expected 0:\n${example.stdout}${example.stderr}`);
   console.log(`Recheck: ${orders.length} entries, ${pairs} pairs, ${differ} differ`);
   return differ;
 }

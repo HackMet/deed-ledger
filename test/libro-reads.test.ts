@@ -132,6 +132,61 @@ describe("D1LibroReads: the book and the world", () => {
   });
 });
 
+/** One line of an order at a version, as the book records it (quantity in thousandths, price in centavos). */
+async function insertLine(businessId: string, orderId: string, version: number, lineNo: number, unitPrice: number, qtyMilli: number): Promise<void> {
+  await env.DB.prepare(
+    `INSERT INTO order_lines (business_id, order_id, version, line_no, customer_text, qty_milli, unit_price_centavos, excluded_from_total)
+     VALUES (?, ?, ?, ?, 'synthetic line', ?, ?, 0)`,
+  )
+    .bind(businessId, orderId, version, lineNo, qtyMilli, unitPrice)
+    .run();
+}
+
+describe("D1LibroReads: the values the judge decides on, pinned by literal values", () => {
+  it("reads the status, the refusals, the lines and the witness as the book holds them, and no other store's or order's", async () => {
+    const mine = await newStore();
+    const theirs = await newStore();
+    const { orderId, confirmId } = await confirmedOrder(mine);
+    // The order's version 1 lines are removed, so the order's lines are exactly the version 2 line the test records.
+    await env.DB.prepare(`DELETE FROM order_lines WHERE business_id = ? AND order_id = ?`).bind(mine.businessId, orderId).run();
+    await env.DB.prepare(
+      `INSERT INTO facts (id, business_id, kind, operation_key, actor_user_id, valid_from_ms, recorded_at_ms, body_json)
+       VALUES (?, ?, 'order_status', ?, 'x', ?, ?, ?)`,
+    )
+      .bind(crypto.randomUUID(), mine.businessId, `status-${orderId}`, T0 + 2_500, T0 + 2_500, JSON.stringify({ orderId, version: 1, status: "ready" }))
+      .run();
+    await insertCheck(mine.businessId, "chk-passing", { orderId, source: "gate", result: "pass" });
+    await insertLine(mine.businessId, orderId, 2, 1, 700, 1_000);
+    await insertLine(mine.businessId, "order-elsewhere", 2, 1, 700, 1_000);
+    await insertLine(theirs.businessId, orderId, 2, 1, 700, 1_000);
+    await env.DB.prepare(`INSERT INTO fact_evidence (business_id, fact_id, kind, ref_id) VALUES (?, ?, 'member', 'member-elsewhere')`)
+      .bind(theirs.businessId, confirmId)
+      .run();
+    const input = await new D1LibroReads(env.DB).read({ businessId: mine.businessId }, orderId);
+    expect(input?.facts.find((fact) => fact.kind === "order_status")).toMatchObject({ status: "ready" });
+    expect(input?.refusals).toEqual([]);
+    expect(input?.lines).toEqual([{ version: 2, counted: true, unitPrice: 700, quantity: "1" }]);
+    expect(input?.facts.find((fact) => fact.id === confirmId)?.witness).toBeNull();
+  });
+});
+
+describe("D1LibroReads: this order's refusals and each reply's delivery, pinned by literal values", () => {
+  it("reads no other order's refusal, and each reply's outbox status, delivery time and place in the order", async () => {
+    const mine = await newStore();
+    const { orderId } = await confirmedOrder(mine);
+    await insertCheck(mine.businessId, "chk-other-order", { orderId: "order-elsewhere", source: "gate", result: "fail", reason: "invalid_state" });
+    const claim: Claim = { type: "order_state", orderId, version: 1, state: "confirmado" };
+    await insertReply(mine.businessId, "reply-failed", [claim], { status: "failed" });
+    await insertReply(mine.businessId, "reply-read", [claim], { providerStatus: "read" });
+    const input = await new D1LibroReads(env.DB).read({ businessId: mine.businessId }, orderId);
+    expect(input?.refusals).toEqual([]);
+    expect(input?.replies.map((reply) => [reply.id, reply.status, reply.providerStatus, reply.providerStatusAtS, reply.atMs])).toEqual([
+      ["reply-failed", "failed", null, null, T0 + 1_500],
+      ["reply-read", "sent", "read", T0 / 1000 + 2, T0 + 1_500],
+    ]);
+  });
+});
+
 describe("D1LibroReads: isolation and absence", () => {
   it("never shows another store's replies, facts or checks on this order", async () => {
     const mine = await newStore();
