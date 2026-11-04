@@ -192,6 +192,25 @@ describe("the store's D1 ledger on the core (D1LedgerStore)", () => {
     ).toEqual({ admitted: false, reason: "closes_not_live" });
   });
 
+  it("keeps scopes apart: a key, a dependency or a closure in another store is not this store's", async () => {
+    const ours = await seedBusiness();
+    const theirs = await seedBusiness();
+    const store = new D1LedgerStore(env.DB, STORE_LEDGER, STORE_POLICY);
+    const sharedKey = crypto.randomUUID();
+    const foreign = entry({ kind: "price", evidence: [member()], operationKey: sharedKey });
+    expect(await store.admit(theirs, foreign, T)).toEqual({ admitted: true, factId: foreign.factId });
+    // The same key in another scope is a new operation, not a duplicate.
+    const mine = entry({ kind: "price", evidence: [member()], operationKey: sharedKey });
+    expect(await store.admit(ours, mine, T)).toEqual({ admitted: true, factId: mine.factId });
+    expect(await store.admit(ours, entry({ kind: "price", evidence: [member()], dependsOn: [foreign.factId] }), T)).toEqual({
+      admitted: false,
+      reason: "dependency_not_live",
+    });
+    expect(
+      await store.admit(ours, entry({ kind: "cancellation", evidence: [member()], closes: { factId: foreign.factId, reason: "cancelled" } }), T),
+    ).toEqual({ admitted: false, reason: "closes_not_live" });
+  });
+
   it("keeps the guard order: the draft, then the dependency gate, then the closure; the evidence rule after", () => {
     const businessId = "business-order";
     const commit: FactCommit = {

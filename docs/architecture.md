@@ -54,6 +54,13 @@ src/
 - Interfaces exist where they pay for themselves: `ModelProvider`, `Transcriber`, `MessagingChannel`, `MediaStore`
   and the repositories. Tests swap in fakes; nothing else needs one.
 - Only `application/` starts writes. Repository methods require a tenant context argument.
+- `src/deed-core/` is the core: a pure judge, liveness, pairing, re-check and the D1 batch for one entry, over four
+  tables that `LedgerConfig` names. It imports only from its own folder and names no business word. The store is
+  one host, outside the core: its evidence rules are data in `src/domain/store-policy.ts`, and its drafts and stock
+  are a host extension in `src/infrastructure/d1/store-extension.ts`. `D1FactLedger` is the thin adapter.
+- One entry's batch runs in this order (D-53). Guards: the extension's, then the dependency gate, then the closed-fact
+  guard. Statements: the extension's before-statements, the fact, its evidence and dependencies, the closure, the
+  extension's after-statements. Post-guards: the compiled evidence rule, the same-batch gate, the extension's post-guards.
 - Web pages: server-rendered from Hono (no separate frontend build) unless T1 finds a reason otherwise. The PRD asks
   for 360 px screens, large touch targets and Spanish labels.
 

@@ -116,7 +116,7 @@ function writtenLiveSql(config: LedgerConfig): string {
 }
 
 /**
- * Builds the batch for one entry. The order is the order of the checks a caller sees: the extension's guards,
+ * Builds the batch for one entry. The sequence is the sequence of the checks a caller sees: the extension's guards,
  * then the dependency gate and the closed-fact guard; statements: the extension's `statementsBefore`, the fact,
  * its evidence and dependencies, the closure, the extension's `statementsAfter`; post-guards: the evidence
  * rule, the same-batch gate, then the extension's `post`. `refuse` maps a core reason to the host's error.
@@ -260,7 +260,7 @@ async function readClosesState(db: D1Database, config: LedgerConfig, scope: stri
   return target === null ? "missing" : target.closed === 1 ? "closed" : "live";
 }
 
-/** A core refusal raised inside the batch: the store turns it into the verdict it names. */
+/** A core refusal raised inside the batch: the admit call turns it into the verdict it names. */
 class CoreRefusal extends Error {
   constructor(readonly reason: string) {
     super(`refused: ${reason}`);
