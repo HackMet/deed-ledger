@@ -1,7 +1,7 @@
 import { FactRefusedError, PermanentWriteError } from "../../application/errors";
 import type { Commit, Tenant } from "../../application/ports";
-import { type LedgerConfig, type RefusalError } from "../../deed-core/store";
-import { type Entry } from "../../deed-core/types";
+import type { LedgerConfig, RefusalError } from "../../deed-core/store";
+import type { Entry } from "../../deed-core/types";
 import { planEntry, readUsedKey } from "../../deed-core/d1-store";
 import type { FactPrecheckReads } from "../../domain/fact-precheck";
 import type { FactCommit } from "../../domain/facts";
@@ -23,7 +23,7 @@ export interface FactLedger {
 }
 
 /** The store's four core tables, with its own scope and actor columns. */
-const STORE_LEDGER: LedgerConfig = {
+export const STORE_LEDGER: LedgerConfig = {
   tables: { facts: "facts", evidence: "fact_evidence", dependencies: "fact_dependencies", closures: "fact_closures" },
   columns: { scope: "business_id", actor: "actor_user_id" },
 };
