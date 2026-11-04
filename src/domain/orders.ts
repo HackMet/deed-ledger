@@ -44,6 +44,7 @@ const NUMBER_WORDS: ReadonlyMap<string, number> = new Map([
   ["un", 1000],
   ["una", 1000],
   ["veintiun", 21000],
+  ["veintiuna", 21000],
   ["cien", 100000],
   ...UNITS.map((word, i) => [word, (i + 1) * 1000] as const),
   ...TEENS.map((word, i) => [word, (i + 10) * 1000] as const),
@@ -55,7 +56,7 @@ const HALF: ReadonlyMap<string, number> = new Map([["media", 500], ["medio", 500
 const plain = (word: string): string => word.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
 
 const LEADING_NUMBER = /^(?:x\s*)?(?:(\d+)\s+)?(\d+\/\d+|\d+(?:[.,]\d+)?)(?:\s+|(?=\p{L}))(?=\S)/iu;
-const LEADING_WORDS = /^(\p{L}+)(?:\s+y\s+(\p{L}+))?\s+(?=\S)/u;
+const LEADING_WORDS = /^(\p{L}+)(?:\s+y\s+(\p{L}+))?\s+(?=\S)/iu;
 const LEADING_WORD = /^(\p{L}+)\s+(?=\S)/u;
 
 function digitsToThousandths(number: string): number | null {
@@ -82,7 +83,7 @@ function leadingNumber(text: string): { readonly value: number; readonly length:
     const second = NUMBER_WORDS.get(plain(pair[2]));
     const unit = second !== undefined && second < 10000 ? second : undefined;
     if (first !== undefined && half !== undefined) return { value: first + half, length: pair[0].length };
-    if (first !== undefined && first >= 30000 && unit !== undefined) return { value: first + unit, length: pair[0].length };
+    if (first !== undefined && first >= 30000 && first < 100000 && unit !== undefined) return { value: first + unit, length: pair[0].length };
   }
   const word = LEADING_WORD.exec(text);
   if (word === null) return null;

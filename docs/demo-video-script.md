@@ -11,7 +11,7 @@ until Angel records real Muse outputs. The engine, ledger and console are live c
 `./demo.sh` prints). If Angel records real Muse outputs before the cut, change the counts to what `demo.sh` prints
 then.
 
-Don't film "Le pasé tu cambio a la tienda…" (customers D and F): the real product doesn't say it yet. Show the owner's approval instead. Crop the attack run's third line (scene 7): it repeats an older label with `8 fixture`. No order on screen has a total, so don't narrate one.
+Don't film "Le pasé tu cambio a la tienda…" (customers D and F): the real product doesn't say it yet. Show the owner's approval instead. Crop lines 1 and 32 of the attack run (scene 7), the label with `8 fixture`, which sits against the strip's `6 fixture`. No order on screen has a total, so don't narrate one.
 
 | Time | Scene | On screen | Narration | Measured output shown |
 |---|---|---|---|---|
