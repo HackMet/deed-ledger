@@ -45,28 +45,36 @@ describe("the scale's counts and huella", () => {
   });
 });
 
-describe("reviews are not asked to commit", () => {
+describe("the page takes the checker's verdict as written", () => {
   const csv = [
     "run,started,model,status,claimed_sha,sha_exists,claimed_passed,observed_passed,observed_failed,gate_note,verdict",
-    "syn-review-40,2026-10-02T09:00:00,opus,ok,,,140,,,,CONTRADICTED_OK_WITHOUT_COMMIT",
-    "syn-review-41,2026-10-02T09:01:00,opus,ok,a1b2c3290000,False,141,,,,CONTRADICTED_COMMIT_MISSING",
-    "syn-task-42,2026-10-02T09:02:00,haiku,ok,,,142,,,,CONTRADICTED_OK_WITHOUT_COMMIT",
-    "syn-task-43,2026-10-02T09:03:00,haiku,ok,a1b2c32b0000,True,143,,,,CONFIRMED_COMMIT_ONLY",
+    "syn-review-40,2026-10-02T09:00:00,opus,ok,,,140,,,,NO_CLAIM",
+    "syn-review-41,2026-10-02T09:01:00,opus,ok,,,141,,,,CONTRADICTED_OK_WITHOUT_COMMIT",
+    "syn-task-42,2026-10-03T09:02:00,haiku,ok,a1b2c32b0000,False,142,,,,CONTRADICTED_COMMIT_MISSING",
+    "syn-task-43,2026-10-04T09:03:00,haiku,ok,a1b2c32c0000,True,143,,,,CONFIRMED_COMMIT_ONLY",
   ].join("\n");
 
-  it("a review with no commit is NO_CLAIM, not a contradiction, and stays out of the claims", async () => {
+  it("never reclassifies a row, so its counts equal the CSV's verdict column", async () => {
     const scale = await buildScale(parseCsv(csv));
     expect(scale.counts).toEqual({ total: 4, confirmed: 1, contradicted: 2, inDoubt: 0, noClaim: 1 });
     expect(scale.claims.map((r) => r.run)).toEqual(["syn-review-41", "syn-task-42", "syn-task-43"]);
     const html = renderPage(scale);
     expect(html).not.toContain("<code>syn-review-40</code>");
+    expect(rowOf(html, "syn-review-41")).toContain("CONTRADICTED_OK_WITHOUT_COMMIT");
+    expect(rowOf(html, "syn-task-42")).toContain('class="bar unpaired"');
   });
 
-  it("a review that states a commit keeps its verdict, so a missing sha is still a contradiction", async () => {
+  it("states the dates, what a confirmed run means and where its rows are", async () => {
     const html = renderPage(await buildScale(parseCsv(csv)));
-    const row = rowOf(html, "syn-review-41");
-    expect(row).toContain("CONTRADICTED_COMMIT_MISSING");
-    expect(row).toContain('class="bar unpaired"');
+    expect(html).toContain("del 2026-10-02 al 2026-10-04");
+    expect(html).toContain("las pruebas no se volvieron a correr");
+    expect(html).toContain("docs/deed-verdicts.csv");
+  });
+
+  it("says a clean run proves nothing about independence", async () => {
+    const html = renderPage(await buildScale(parseCsv(csv)));
+    expect(html).toContain("no prueban independencia");
+    expect(html).toContain("no es evidencia de nada");
   });
 });
 

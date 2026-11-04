@@ -121,8 +121,8 @@ export function cusumOf(x, h = CUSUM_H) {
 
 function toRow(csv) {
   const effect = effectClass(csv.run);
-  // A review is not asked to commit: without a sha it has no claim, whatever verdict the checker wrote.
-  const kind = effect === "review" && csv.claimed_sha === "" ? "no_claim" : verdictKind(csv.verdict);
+  // The checker's verdict is the only source: the page never reclassifies a row.
+  const kind = verdictKind(csv.verdict);
   return {
     run: csv.run,
     started: csv.started,
@@ -277,10 +277,11 @@ function dependenceSection(scale) {
       : `en la afirmación nº ${cusum.alarm + 1} (<code>${esc(alarmRun.run)}</code>)`;
   return `<h2>Dependencia entre errores</h2>
 ${neffPart}
-<p class="note">n_eff = n / VIF, con VIF = 1 + 2·Σ(1 − h/n)·ρₕ sobre los ρₕ positivos, hasta n/2. Misma aritmética que <code>neff()</code> de <code>deed_check_harness.py</code>.</p>
+<p class="note">n_eff = n / VIF, con VIF = 1 + 2·Σ(1 − h/n)·ρₕ hasta el primer ρₕ no positivo o n/2. Misma aritmética que <code>neff()</code> de <code>deed_check_harness.py</code>. Es un solo agregado, no por (agent_id, clase). Con pocas contradicciones, o ninguna, estos números no prueban independencia.</p>
 <h2>CUSUM de contradicciones</h2>
 <p>S_t = max(0, S_{t−1} + x_t − k), con x_t = 1 si la afirmación es una contradicción, en orden de inicio. k = tasa global = <code>${cusum.k === null ? "—" : cusum.k.toFixed(4)}</code>. Alarma en h = <code>${cusum.h}</code> (S_t ≥ h).</p>
 <p>Alarma: ${alarmPart}. S máximo: <code>${cusum.max.toFixed(3)}</code>.</p>
+<p class="note">Con k = tasa global y pocos eventos, S_t no puede llegar a h: que no haya alarma no es evidencia de nada.</p>
 ${cusumChart(cusum.series, cusum.h)}`;
 }
 
@@ -317,6 +318,8 @@ svg { width:100%; height:auto; background:var(--surface); border:1px solid var(-
 /** The whole page as one self-contained HTML string: inline CSS and SVG, no script, no external URL. */
 export function renderPage(scale) {
   const { counts, huella, huellaRows } = scale;
+  const days = scale.rows.map((r) => r.started.slice(0, 10)).filter(Boolean).sort();
+  const span = days.length ? `del ${days[0]} al ${days[days.length - 1]}` : "sin fechas";
   return `<!doctype html>
 <html lang="es">
 <head>
@@ -328,8 +331,10 @@ export function renderPage(scale) {
 <body>
 <main>
 <h1>Escala del libro Deed</h1>
-<p class="lede">${counts.total} corridas del harness. Cada afirmación del agente se compara con el testigo de git: ¿existe el sha?
+<p class="lede">${counts.total} corridas del harness, ${span} (UTC). Cada afirmación del agente se compara con el testigo de git: ¿existe el sha y es de esa corrida?
 Las confirmadas se cuentan y se resumen en una huella; las contradicciones se muestran completas. Las corridas sin afirmación no cuentan como confirmadas.</p>
+<p class="note"><b>Confirmada</b> solo dice que el commit existe y lo hizo esa corrida: las pruebas no se volvieron a correr. <b>Sin afirmación</b>: una revisión o validación (no se le pide commit), una corrida bloqueada, una que dijo que no hizo commit, una que nombró un commit anterior a su inicio, o una sin sha legible.
+Filas: <code>docs/deed-verdicts.csv</code>.</p>
 
 <section class="counters">
   <div class="counter ok"><b>${counts.confirmed}</b><span>Confirmadas</span></div>
@@ -341,7 +346,7 @@ Las confirmadas se cuentan y se resumen en una huella; las contradicciones se mu
 <span class="note">sha256 (UTF-8) sobre ${huellaRows} filas confirmadas, ordenadas; cada fila es <code>run,model,claimed_sha,verdict</code>, unidas con saltos de línea y sin salto final.</span></p>
 
 <h2>Contradicciones y dudas, fila por fila</h2>
-<p class="note">Cada fila muestra la afirmación entera. La barra es la pareja: verde si el sha de la afirmación existe en git, roja si no hay par.</p>
+<p class="note">Cada fila muestra la afirmación entera. La barra es la pareja: turquesa si el sha de la afirmación existe en git, roja si no hay par.</p>
 ${contradictionRows(scale.rows)}
 
 <h2>Agentes</h2>
