@@ -9,11 +9,15 @@ export interface LedgerStore {
   admit(scope: string, entry: Entry, nowMs: number): Promise<Verdict>;
 }
 
-/** A precondition inside the batch: `holdsSql` selects one row with a non-NULL value when it holds. */
+/**
+ * A precondition inside the batch: `holdsSql` selects one row with a non-NULL value when it holds. `reason`, set by a
+ * host's extension, is the verdict reason its refusal gives on the core's store; the core's own guards leave it unset.
+ */
 export interface CoreGuard {
   readonly holdsSql: string;
   readonly params: readonly unknown[];
   readonly error: () => Error;
+  readonly reason?: string;
 }
 
 /** What one entry becomes on a transactional database. The host runs it as one batch, in this order. */

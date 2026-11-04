@@ -81,8 +81,10 @@ const verdict = await store.admit("tenant-a", declared);
 // verdict: { admitted: true, factId: "f-1" }
 ```
 
-On D1, the host runs `schema.sql` on its database and implements the same port with its own batch. The extension
-point is `HostExtension` (`store.ts`): a host adds guards, statements and columns to the same atomic batch.
+On D1, the host runs `schema.sql` on its database and uses `D1LedgerStore` (`d1-store.ts`) as it is. Its `admit`
+takes an optional `HostExtension` (`store.ts`): guards, statements and columns that join the same atomic batch. A
+guard with a `reason` refuses with that reason as the verdict; a host that writes its own batch calls `planEntry`
+for the core's part and runs it with its own fence.
 
 ## What it does not do
 
@@ -91,4 +93,5 @@ point is `HostExtension` (`store.ts`): a host adds guards, statements and column
 - It does not read a clock, call a model, or do I/O in the judge. The store takes the time it is given.
 - It does not know any kind, evidence kind or reason string of a business. Those belong to the policy and the host.
 - It does not sign, hash-chain or authenticate entries. The host does that if it needs to.
-- Its D1 store is not in this step: `D1LedgerStore` comes from `./d1-store`, written later.
+- It does not validate a host's extension. Its statements run in the batch as written, so an extension can insert a
+  fact with no evidence: the host is trusted with what it writes beside the core's rules.

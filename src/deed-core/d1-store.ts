@@ -4,6 +4,7 @@
  * A host's own work joins the same batch through a `HostExtension`.
  */
 import { judge } from "./judge";
+import { type Closed, type LedgerView, deadForEntry } from "./liveness";
 import type { BatchPlan, CoreGuard, HostExtension, LedgerConfig, LedgerStore, RefusalError } from "./store";
 import type { Closure, Entry, EvidenceRule, JudgeState, Policy, Requirement, Verdict } from "./types";
 
@@ -224,27 +225,50 @@ export async function readUsedKey(db: D1Database, config: LedgerConfig, scope: s
   return row !== null;
 }
 
-/** The dependencies, and their ancestors, that are missing in this scope or closed in a killing way. */
-async function readDeadDependencies(db: D1Database, config: LedgerConfig, scope: string, dependsOn: readonly string[]): Promise<string[]> {
-  if (dependsOn.length === 0) return [];
+/**
+ * The ledger around `ids` in this scope, read in one pass: which ancestors exist, their dependencies and their
+ * closures. liveness.ts decides on this view, so D1 and the memory store judge the same facts the same way.
+ */
+async function readLedger(db: D1Database, config: LedgerConfig, scope: string, ids: readonly string[]): Promise<LedgerView> {
   const column = plain(config.columns.scope);
-  const { results } = await db
+  const facts = plain(config.tables.facts);
+  const dependencies = plain(config.tables.dependencies);
+  const closures = plain(config.tables.closures);
+  const ancestry = await db
     .prepare(
-      `WITH RECURSIVE requested(id) AS (SELECT value FROM json_each(?)),
-         ancestors(id) AS (
-           SELECT id FROM requested
-           UNION
-           SELECT d.depends_on_fact_id FROM ${plain(config.tables.dependencies)} d
-           JOIN ancestors a ON d.fact_id = a.id WHERE d.${column} = ?
-         )
-       SELECT a.id AS id FROM ancestors a
-       WHERE NOT EXISTS (SELECT 1 FROM ${plain(config.tables.facts)} f WHERE f.${column} = ? AND f.id = a.id)
-          OR EXISTS (SELECT 1 FROM ${plain(config.tables.closures)} c WHERE c.${column} = ? AND c.fact_id = a.id
-            AND NOT (c.reason = 'superseded' AND c.closed_by_fact_id IN (SELECT id FROM ancestors)))`,
+      `WITH RECURSIVE ancestors(id) AS (
+         SELECT value FROM json_each(?)
+         UNION
+         SELECT d.depends_on_fact_id FROM ${dependencies} d JOIN ancestors a ON d.fact_id = a.id WHERE d.${column} = ?
+       )
+       SELECT id FROM ancestors`,
     )
-    .bind(JSON.stringify(dependsOn), scope, scope, scope)
+    .bind(JSON.stringify(ids), scope)
     .all<{ id: string }>();
-  return results.map((row) => row.id);
+  const found = JSON.stringify(ancestry.results.map((row) => row.id));
+  const present = await db
+    .prepare(`SELECT id FROM ${facts} WHERE ${column} = ? AND id IN (SELECT value FROM json_each(?))`)
+    .bind(scope, found)
+    .all<{ id: string }>();
+  const edges = await db
+    .prepare(`SELECT fact_id AS id, depends_on_fact_id AS dependsOn FROM ${dependencies} WHERE ${column} = ? AND fact_id IN (SELECT value FROM json_each(?))`)
+    .bind(scope, found)
+    .all<{ id: string; dependsOn: string }>();
+  const closed = await db
+    .prepare(
+      `SELECT fact_id AS id, reason, closed_by_fact_id AS closedBy FROM ${closures} WHERE ${column} = ? AND fact_id IN (SELECT value FROM json_each(?))`,
+    )
+    .bind(scope, found)
+    .all<{ id: string; reason: Closed["reason"]; closedBy: string }>();
+  const has = new Set(present.results.map((row) => row.id));
+  const dependsOn = new Map<string, string[]>();
+  for (const row of edges.results) dependsOn.set(row.id, [...(dependsOn.get(row.id) ?? []), row.dependsOn]);
+  const closure = new Map<string, Closed>(closed.results.map((row) => [row.id, { reason: row.reason, closedBy: row.closedBy }]));
+  return {
+    has: (id) => has.has(id),
+    dependsOn: (id) => dependsOn.get(id) ?? [],
+    closure: (id) => closure.get(id) ?? null,
+  };
 }
 
 /** The state of the fact an entry closes: "missing" when absent in this scope, "closed" when already closed. */
@@ -267,7 +291,10 @@ class CoreRefusal extends Error {
   }
 }
 
-/** Runs the plan as one D1 batch. A guard that fails after the batch throws its own error, first one first. */
+/**
+ * Runs the plan as one D1 batch. A guard that fails after the batch throws its refusal, first one first: a host
+ * guard with a `reason` refuses with that reason, any other with its own error. Rethrows when every guard holds.
+ */
 async function runPlan(db: D1Database, plan: BatchPlan): Promise<void> {
   const all = [...plan.guards, ...plan.post];
   const ids = all.map(() => crypto.randomUUID());
@@ -287,13 +314,17 @@ async function runPlan(db: D1Database, plan: BatchPlan): Promise<void> {
         .prepare(`SELECT (${guard.holdsSql}) AS ok`)
         .bind(...guard.params)
         .first<{ ok: number | null }>();
-      if (row?.ok !== 1) throw guard.error();
+      if (row?.ok !== 1) throw guard.reason === undefined ? guard.error() : new CoreRefusal(guard.reason);
     }
     throw error;
   }
 }
 
-/** A host with no extension: admits entries on a D1 database, judged first, then written in one batch. */
+/**
+ * Admits entries on a D1 database: judged first on the reads, then written in one batch. A host's extension joins
+ * that batch; its guards refuse with their own reasons. Concurrent callers settle on the UNIQUE keys, and the loser
+ * gets `duplicate`, the verdict the read would have given.
+ */
 export class D1LedgerStore implements LedgerStore {
   constructor(
     private readonly db: D1Database,
@@ -301,24 +332,20 @@ export class D1LedgerStore implements LedgerStore {
     private readonly policy: Policy,
   ) {}
 
-  async admit(scope: string, entry: Entry, nowMs: number): Promise<Verdict> {
-    const sameBatch = entry.sameBatch ?? [];
+  async admit(scope: string, entry: Entry, nowMs: number, extension: HostExtension = {}): Promise<Verdict> {
     const state: JudgeState = {
       keyUsed: await readUsedKey(this.db, this.config, scope, entry.operationKey, entry.factId),
-      deadDependencies: await readDeadDependencies(
-        this.db,
-        this.config,
-        scope,
-        entry.dependsOn.filter((id) => !sameBatch.includes(id)),
-      ),
+      deadDependencies: deadForEntry(entry, await readLedger(this.db, this.config, scope, entry.dependsOn)),
       closes: entry.closes === null ? null : await readClosesState(this.db, this.config, scope, entry.closes),
     };
     const verdict = judge(entry, state, this.policy);
     if (!verdict.admitted) return verdict;
     try {
-      await runPlan(this.db, planEntry(this.db, this.config, this.policy, scope, entry, nowMs, (reason) => new CoreRefusal(reason)));
+      await runPlan(this.db, planEntry(this.db, this.config, this.policy, scope, entry, nowMs, (reason) => new CoreRefusal(reason), extension));
     } catch (error) {
       if (error instanceof CoreRefusal) return { admitted: false, reason: error.reason };
+      // Every guard held, so the batch failed on a UNIQUE key: a concurrent admit took it first.
+      if (await readUsedKey(this.db, this.config, scope, entry.operationKey, entry.factId)) return { admitted: false, reason: "duplicate" };
       throw error;
     }
     return verdict;

@@ -169,6 +169,110 @@ export const cases: readonly Case[] = [
     policy: "clinic",
     steps: [{ entry: correction("s1", [], [ev("clinician", "c5")], { factId: "s1", reason: "cancelled" }), expect: "closes_not_live" }],
   },
+  {
+    name: "clinic: admits a fact that closes a dependency it rests on, before the batch",
+    policy: "clinic",
+    steps: [
+      { entry: sample("s1"), expect: "admitted" },
+      { entry: result("r1", ["s1"]), expect: "admitted" },
+      { entry: correction("c1", ["s1"], [ev("clinician", "c5")], { factId: "s1", reason: "cancelled" }), expect: "admitted" },
+    ],
+  },
+  {
+    name: "clinic: refuses a sameBatch dependency that is not written",
+    policy: "clinic",
+    steps: [
+      {
+        entry: entry({ factId: "r1", kind: "result_reported", operationKey: "op-r1", dependsOn: ["s9"], sameBatch: ["s9"], evidence: [ev("lab_device", "d1")] }),
+        expect: "dependency_not_live",
+      },
+    ],
+  },
+  {
+    name: "clinic: refuses a sameBatch dependency that was cancelled",
+    policy: "clinic",
+    steps: [
+      { entry: sample("s1"), expect: "admitted" },
+      { entry: result("r1", ["s1"]), expect: "admitted" },
+      { entry: correction("c1", [], [ev("clinician", "c5")], { factId: "s1", reason: "cancelled" }), expect: "admitted" },
+      {
+        entry: entry({ factId: "r2", kind: "result_reported", operationKey: "op-r2", dependsOn: ["s1"], sameBatch: ["s1"], evidence: [ev("lab_device", "d2")] }),
+        expect: "dependency_not_live",
+      },
+    ],
+  },
+  {
+    name: "clinic: refuses a sameBatch dependency superseded by a fact it does not rest on",
+    policy: "clinic",
+    steps: [
+      { entry: sample("s1"), expect: "admitted" },
+      { entry: result("r1", ["s1"]), expect: "admitted" },
+      { entry: sample("s2"), expect: "admitted" },
+      { entry: correction("r2", [], [ev("clinician", "c3")], { factId: "r1", reason: "superseded" }), expect: "admitted" },
+      {
+        entry: entry({ factId: "r3", kind: "result_reported", operationKey: "op-r3", dependsOn: ["r1"], sameBatch: ["r1"], evidence: [ev("lab_device", "d3")] }),
+        expect: "dependency_not_live",
+      },
+    ],
+  },
+  {
+    name: "clinic: refuses a sameBatch dependency that the entry closes itself",
+    policy: "clinic",
+    steps: [
+      { entry: sample("s1"), expect: "admitted" },
+      { entry: result("r1", ["s1"]), expect: "admitted" },
+      {
+        entry: entry({
+          factId: "r2",
+          kind: "result_corrected",
+          operationKey: "op-r2",
+          dependsOn: ["r1"],
+          sameBatch: ["r1"],
+          evidence: [ev("clinician", "c3")],
+          closes: { factId: "r1", reason: "cancelled" },
+        }),
+        expect: "dependency_not_live",
+      },
+    ],
+  },
+  {
+    name: "clinic: admits a sameBatch dependency that is live",
+    policy: "clinic",
+    steps: [
+      { entry: sample("s1"), expect: "admitted" },
+      { entry: result("r1", ["s1"]), expect: "admitted" },
+      {
+        entry: entry({ factId: "r2", kind: "result_reported", operationKey: "op-r2", dependsOn: ["r1"], sameBatch: ["r1"], evidence: [ev("lab_device", "d2")] }),
+        expect: "admitted",
+      },
+    ],
+  },
+  {
+    name: "clinic: refuses a fact that depends on itself, in its own batch",
+    policy: "clinic",
+    steps: [
+      {
+        entry: entry({ factId: "r1", kind: "result_reported", operationKey: "op-r1", dependsOn: ["r1"], sameBatch: ["r1"], evidence: [ev("lab_device", "d1")] }),
+        expect: "dependency_not_live",
+      },
+    ],
+  },
+  {
+    name: "clinic: refuses a dependency listed twice",
+    policy: "clinic",
+    steps: [
+      { entry: sample("s1"), expect: "admitted" },
+      { entry: result("r1", ["s1", "s1"]), expect: "dependency_not_live" },
+    ],
+  },
+  {
+    name: "clinic: one lab device recorded twice counts once, so the two-device rule is not met",
+    policy: "clinic",
+    steps: [
+      { entry: sample("s1"), expect: "admitted" },
+      { entry: correction("r1", ["s1"], [ev("lab_device", "d1"), ev("lab_device", "d1"), ev("clinician", "c1")]), expect: "evidence_incomplete" },
+    ],
+  },
 
   // Freight
   { name: "freight: admits a shipment with a carrier scan", policy: "freight", steps: [{ entry: shipment("s1"), expect: "admitted" }] },

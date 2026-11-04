@@ -33,12 +33,12 @@ describe("MemoryLedgerStore", () => {
     );
   });
 
-  it("a fact that cancels its own dependency is refused, and the cancellation is not written", async () => {
+  it("a fact that cancels its own dependency is admitted, as D1 admits it: the dependency is judged before the write", async () => {
     const store = new MemoryLedgerStore(policy);
     await store.admit("t", entryOf({ factId: "f1", operationKey: "op-1" }));
     const cancel = entryOf({ factId: "f2", operationKey: "op-2", dependsOn: ["f1"], closes: { factId: "f1", reason: "cancelled" } });
-    expect(reasonOf(await store.admit("t", cancel))).toBe("dependency_not_live");
-    expect(reasonOf(await store.admit("t", entryOf({ factId: "f3", operationKey: "op-3", dependsOn: ["f1"] })))).toBe("admitted");
+    expect(reasonOf(await store.admit("t", cancel))).toBe("admitted");
+    expect(reasonOf(await store.admit("t", entryOf({ factId: "f3", operationKey: "op-3", dependsOn: ["f1"] })))).toBe("dependency_not_live");
   });
 
   it("a fact that supersedes its own dependency keeps itself live", async () => {

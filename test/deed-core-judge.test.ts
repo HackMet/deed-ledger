@@ -78,4 +78,36 @@ describe("judge", () => {
     });
     expect(judge(entryOf({ evidence: ref("ref", 1) }), { ...clear, closes: "live" }, policy)).toEqual({ admitted: true, factId: "f1" });
   });
+
+  it("refuses a dead dependency before a closure that is not live, and before evidence that is missing", () => {
+    const dead = { ...clear, deadDependencies: ["x"] };
+    expect(judge(entryOf({ evidence: ref("ref", 1) }), { ...dead, closes: "closed" }, policy)).toEqual({
+      admitted: false,
+      reason: "dependency_not_live",
+    });
+    expect(judge(entryOf({ evidence: [] }), dead, policy)).toEqual({ admitted: false, reason: "dependency_not_live" });
+  });
+
+  it("refuses a kind that only the prototype chain names, whatever the policy holds", () => {
+    for (const kind of ["__proto__", "constructor", "toString", "hasOwnProperty"]) {
+      expect(judge(entryOf({ kind, evidence: ref("ref", 1) }), clear, policy), kind).toEqual({ admitted: false, reason: "unknown_kind" });
+    }
+  });
+
+  it("counts one witness once: a repeated (kind, refId) is evidence_incomplete, not two witnesses", () => {
+    const [witness] = ref("ref", 1);
+    expect(judge(entryOf({ evidence: [witness!, witness!] }), clear, policy)).toEqual({ admitted: false, reason: "evidence_incomplete" });
+    expect(evidenceHolds([witness!, witness!], policy.kinds.k!.evidence)).toBe(false);
+  });
+
+  it("refuses a dependency listed twice, and an entry that depends on itself", () => {
+    expect(judge(entryOf({ dependsOn: ["x", "x"], evidence: ref("ref", 1) }), { ...clear, deadDependencies: [] }, policy)).toEqual({
+      admitted: false,
+      reason: "dependency_not_live",
+    });
+    expect(judge(entryOf({ dependsOn: ["f1"], evidence: ref("ref", 1) }), { ...clear, deadDependencies: [] }, policy)).toEqual({
+      admitted: false,
+      reason: "dependency_not_live",
+    });
+  });
 });

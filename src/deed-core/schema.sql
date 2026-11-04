@@ -87,6 +87,32 @@ BEGIN
   SELECT RAISE(ABORT, 'fact closures are append-only');
 END;
 
+-- INSERT OR REPLACE deletes the old row without firing a delete trigger (recursive_triggers is off), so an insert
+-- that would replace a row is refused here, before the replace happens.
+CREATE TRIGGER facts_are_never_replaced BEFORE INSERT ON facts
+WHEN EXISTS (SELECT 1 FROM facts WHERE scope_id = NEW.scope_id AND (id = NEW.id OR operation_key = NEW.operation_key))
+BEGIN
+  SELECT RAISE(ABORT, 'facts are append-only');
+END;
+
+CREATE TRIGGER fact_evidence_is_never_replaced BEFORE INSERT ON fact_evidence
+WHEN EXISTS (SELECT 1 FROM fact_evidence WHERE scope_id = NEW.scope_id AND fact_id = NEW.fact_id AND kind = NEW.kind AND ref_id = NEW.ref_id)
+BEGIN
+  SELECT RAISE(ABORT, 'fact evidence is append-only');
+END;
+
+CREATE TRIGGER fact_dependencies_are_never_replaced BEFORE INSERT ON fact_dependencies
+WHEN EXISTS (SELECT 1 FROM fact_dependencies WHERE scope_id = NEW.scope_id AND fact_id = NEW.fact_id AND depends_on_fact_id = NEW.depends_on_fact_id)
+BEGIN
+  SELECT RAISE(ABORT, 'fact dependencies are append-only');
+END;
+
+CREATE TRIGGER fact_closures_are_never_replaced BEFORE INSERT ON fact_closures
+WHEN EXISTS (SELECT 1 FROM fact_closures WHERE scope_id = NEW.scope_id AND fact_id = NEW.fact_id)
+BEGIN
+  SELECT RAISE(ABORT, 'fact closures are append-only');
+END;
+
 -- Batch guards: a D1 batch inserts one row per guard, whose `ok` is NULL unless the guard holds; NOT NULL then aborts
 -- the whole batch. The batch deletes its guard rows as its last statement, so the table stays empty.
 CREATE TABLE batch_guards (

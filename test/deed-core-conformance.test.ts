@@ -4,7 +4,7 @@
  */
 import { env } from "cloudflare:workers";
 import { beforeAll, describe, expect, it } from "vitest";
-import { type Closed, D1LedgerStore, DEFAULT_LEDGER_CONFIG, type Entry, type JudgeState, type LedgerView, MemoryLedgerStore, type Policy, type Verdict, deadAncestors, judge } from "../src/deed-core";
+import { type Closed, D1LedgerStore, DEFAULT_LEDGER_CONFIG, type Entry, type JudgeState, type LedgerView, MemoryLedgerStore, type Policy, type Verdict, deadForEntry, judge } from "../src/deed-core";
 import schemaSql from "../src/deed-core/schema.sql?raw";
 import { cases } from "./helpers/deed-core-cases";
 import { policies } from "./helpers/deed-core-policies";
@@ -34,11 +34,10 @@ function pureVerdicts(policy: Policy, entries: readonly Entry[]): string[] {
     closure: (factId) => closures.get(factId) ?? null,
   };
   return entries.map((entry) => {
-    const sameBatch = entry.sameBatch ?? [];
     const target = entry.closes?.factId;
     const state: JudgeState = {
       keyUsed: keys.has(entry.operationKey) || dependsOn.has(entry.factId),
-      deadDependencies: deadAncestors(entry.dependsOn.filter((id) => !sameBatch.includes(id)), view),
+      deadDependencies: deadForEntry(entry, view),
       closes: target === undefined ? null : closures.has(target) ? "closed" : dependsOn.has(target) ? "live" : "missing",
     };
     const verdict = judge(entry, state, policy);
