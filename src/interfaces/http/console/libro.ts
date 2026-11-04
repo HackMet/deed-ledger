@@ -145,7 +145,7 @@ ${rows.map((row, index) => rowSvg(row, index))}
     return c.html(
       await shell(c, {
         title: `Libro ${trail?.code ?? "—"}`,
-        subtitle: "Deed · lo que se dijo y lo que pasó",
+        subtitle: "Cómo se armó · lo que se dijo y lo que pasó",
         back: `/console/deed/${encodeURIComponent(orderId)}`,
         path: `/console/deed/${encodeURIComponent(orderId)}/libro`,
         tab: "/console/mas",
@@ -163,7 +163,7 @@ ${rows.map((row) => panelOf(row, rows))}
 
 const STYLE = `
 .libro{--claim:#3A4BC8;--witness:#0E7C86;--ok:#1F8A4C;--doubt:#B7791F;--bad:#C2362F;--muted:#5B6578;--ink:#141C2E;
-  display:block;width:calc(100% - 24px);max-width:420px;height:auto;margin:8px 12px;background:#fff;border:1px solid var(--line);border-radius:10px}
+  display:block;width:calc(100% - 24px);max-width:420px;height:auto;margin:8px 12px;background:#fff;border:1px solid var(--line);border-radius:18px}
 .libro .lane{font:600 11px system-ui,sans-serif;fill:var(--muted)}
 .libro .box{fill:#fff;stroke-width:1.6}
 .libro .c-claim{stroke:var(--claim)}
@@ -177,13 +177,13 @@ const STYLE = `
 .libro .s-en_duda{stroke:var(--doubt)}
 .libro .s-bloqueado{stroke:var(--muted);stroke-dasharray:4 3}
 .libro a:focus-visible .box{stroke-width:3}
-.legend{list-style:none;display:flex;flex-wrap:wrap;gap:6px 14px;margin:8px 12px;padding:0;font-size:13px}
+.legend{list-style:none;display:flex;flex-wrap:wrap;gap:6px 14px;margin:10px 14px;padding:0;font-size:14px}
 .legend li{display:flex;align-items:center;gap:6px}
 .legend i{display:inline-block;width:18px;height:4px;border-radius:2px;background:var(--line)}
 .legend .s-emparejado{background:#1F8A4C}.legend .s-sin_pareja{background:#C2362F}
 .legend .s-en_duda{background:#B7791F}.legend .s-bloqueado{background:#5B6578}
-.hint{font-size:13px;color:var(--mute);margin:0 12px}
-.panel{display:none;margin:8px 12px;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:var(--card)}
+.hint{font-size:14px;color:var(--mute);margin:0 14px}
+.panel{display:none;margin:12px 14px;padding:16px;border:1px solid var(--line);border-radius:18px;background:var(--card)}
 .panel:target{display:block}
 .panel h2{font-size:16px;margin:0 0 6px}
 .panel dl{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;margin:4px 0;font-size:13px}

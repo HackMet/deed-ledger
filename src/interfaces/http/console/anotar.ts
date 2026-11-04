@@ -20,11 +20,14 @@ import {
 import { describeError } from "../../../application/errors";
 import { formatLempiras } from "../../../domain/contract/numbers";
 import type { Observation, ObservationIssue, PricedLine, ItemLine } from "../../../domain/contract/observation";
-import type { ConsoleEnv } from "./auth";
+import { type ConsoleEnv, INVOICE_UPLOAD_PATH } from "./auth";
 import { csrfField, shell } from "./layout";
 
 const PATH = "/console/anotar";
-const SUBTITLE = "Ventas, fiado y pedidos a mano";
+/** Honest about what the screen does today: it reads and shows, it doesn't save. */
+const SUBTITLE = "Te muestro lo que entendí. Todavía no se guarda nada.";
+/** A supplier's invoice goes to its own upload and review (Facturas), owner only. */
+const INVOICE_PATH = INVOICE_UPLOAD_PATH;
 
 /** A photo, a note and the form's own fields; anything bigger is refused before it's parsed. */
 export const MAX_ANOTAR_BODY_BYTES = MAX_PHOTO_BYTES + 64 * 1024;
@@ -117,6 +120,7 @@ ${csrfField(c.get("csrf"))}
 <label><input type="radio" name="para" value="tienda"${purpose === "report" ? html` checked` : ""}> Venta, fiado o producto nuevo</label>
 <label><input type="radio" name="para" value="pedido"${purpose === "order" ? html` checked` : ""}> Pedido a mano</label>
 </fieldset>
+${c.get("member").role === "owner" ? html`<a class="choice" href="${INVOICE_PATH}">Factura de proveedor<span class="go" aria-hidden="true">›</span></a>` : ""}
 <label for="texto">Escribilo aquí</label>
 <textarea id="texto" name="texto" rows="4" maxlength="${MAX_TEXT_CHARS}" placeholder="Vendí tres refrescos a veinte cada uno"></textarea>
 <label for="foto">Foto (si querés)</label>
@@ -179,11 +183,23 @@ function issueText(issue: ObservationIssue, observation: Observation): string {
   return named === undefined ? `${ISSUE_TEXT[issue.code]}.` : `${ISSUE_TEXT[issue.code]}: ${named}.`;
 }
 
+/** The form reads like the mock's capture card; the reading is a draft card with a mango edge. */
 const STYLE = `
-fieldset{border:0;padding:0;margin:10px 0}fieldset label{display:block;padding:8px 0}
-label{display:block;margin-top:10px;font-weight:600}fieldset label{font-weight:400}
-textarea{width:100%;font:16px system-ui,sans-serif;padding:8px;border-radius:8px;border:1px solid #aaa}
-input[type=file]{margin-top:6px;width:100%}
-.reading{border-top:1px solid #eee;padding:8px 0}.reading h3{margin:4px 0;font-size:16px}
-.issues li{color:#8a5a00}.hint{color:#666}.tag{font-size:13px;color:#b33}
+form.card>p:first-of-type{margin:2px 0 6px;font-size:21px;font-weight:800;line-height:1.25;letter-spacing:-.4px}
+fieldset{display:grid;gap:8px;border:0;padding:0;margin:16px 0 4px}
+legend{margin-bottom:8px;padding:0;font-size:15px}
+fieldset label{display:flex;align-items:center;min-height:56px;margin:0;padding:10px 14px;border:1.5px solid var(--line);border-radius:14px;background:var(--paper);font-size:17px;font-weight:600}
+fieldset label:has(input:checked){border-color:var(--ink);background:var(--soft)}
+a.choice{display:flex;align-items:center;justify-content:space-between;min-height:56px;margin:8px 0 0;padding:10px 14px;border:1.5px dashed var(--btn-line);border-radius:14px;background:var(--paper);color:var(--ink);font-size:17px;font-weight:600;text-decoration:none}
+a.choice .go{font-size:26px;line-height:1}
+label{margin-top:18px}
+textarea{min-height:120px;border-color:var(--field);border-radius:18px;background:var(--cream)}
+textarea:focus{background:#fff;border-color:var(--ink)}
+section.card{border:2px solid #d7a24b;background:#fffdf5}
+.reading{border-top:1px solid var(--line);padding:12px 0}
+.reading h3{margin:4px 0 6px;font-size:19px;font-weight:800}
+.reading li{padding:5px 0;font-size:17px}
+.issues li{margin:6px 0;padding:8px 12px;border-left:3px solid #d8bb72;border-radius:0 10px 10px 0;background:#f3efdf;color:#5b3f08;font-size:15px;font-weight:600}
+.hint{color:var(--mute)}
+.tag{display:inline-block;padding:1px 7px;border-radius:7px;background:#ffe6de;color:#8a3429;font-size:12px;font-weight:800}
 `;

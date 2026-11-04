@@ -33,6 +33,30 @@ Last updated: Wed Nov 4, 2026, morning Honduras time, by Claude Code.
     and a safe reply don't (`docs/handoff-pr-71.md`, item 10).
   - **Short stock (D-57 proposed):** a short line asks "¿Te mando 2 o lo quitamos?", and its written answer makes a new version the customer confirms. An unreadable answer asks again. An order with nothing to prepare can't be confirmed. Still open: a typed "confirmar" under the stock question commits the full amount.
   - **Waiting on Angel:** append-only triggers in the store's migrations (C5), `saidName`, and the real order with Muse.
+    stays out of the video until Angel matches it.
+  - **Waiting on Angel:** the `statusReply` copy for a pending change, not committed; append-only triggers in the
+    store's migrations (C5).
+- **On top of PR #71 (Nov 4):** the planner on the Deed engine (below), one product list (`CatalogService` the
+  only writer, the same ID in `products` and `store_products`, migration `0031`), the console's new look (Inicio,
+  five tabs, Pendientes as the one inbox), long price pastes saved 25 products per batch, and the demo runner
+  closing each connection. Review fixes: staff see delivery totals with the fee, the planner path reads stock, and
+  the planner quotes only confirmed prices. Eval on the combined copy: 28/31, zero truth failures.
+  - **After this deploy (Angel):** in Productos, tap "Confirmar precio" on each demo product. A price typed in the
+    old Tienda screen has no price fact, so the bot treats it as unknown until it's confirmed. Then one real order
+    from a phone: order, readback, Confirmar, Listo, "listo".
+- **Planner on the Deed engine (`claude/planner-on-deed`, on top of PR #71, Nov 4, uncommitted):** closes the handoff's
+  known gap 1. With `DEED_ENGINE=1` and `CONVERSATION=planner` the app runs `PlannedDeedEngine` (D-59, proposed): the
+  planner's conversation per customer in `planner_memory` (migration `0030`, additive), `OrderEngine` as the only writer
+  of orders through one new entry, `onDecidedChange`. Classic on the Deed engine is unchanged. Simulator:
+  `npm run dev:sim -- --ai --store --planner --deed …`, then `npm run eval -- --planner --deed …`. Under `--deed`,
+  E14, E16, E16a and E16b add the owner's approval (K12) instead of a second Confirmar. Eval on the Deed engine
+  (Nov 4): 25/32 and 27/32, zero truth failures. E02 and E04 failed the first run only on a stale expectation
+  («acabo»; the copy says "ahorita no hay" since 9ca625a), fixed before the second. E08b and E11 fail the same way
+  on the pretend engine at the same code; E21's expectation is known wrong; E16b in the second run hit the sim
+  store's US$2 daily model cap.
+  - **Open for Angel:** after a change on a confirmed order, the ledger saves a K12 request, but the planner's
+    phrase still says "Va, le agrego eso." before "Vas cuarto en la fila…". It reads as done while it waits for the
+    store (same gap as the pending `statusReply` copy).
 - **Deed core (`src/deed-core/`, in PR #71):** the fact batch lives in `src/deed-core/d1-store.ts`. The store's evidence
   rules are policy data (`src/domain/store-policy.ts`), its drafts and stock a host extension
   (`src/infrastructure/d1/store-extension.ts`) (D-53, D-54). The store's tables keep their kind CHECKs: they are the
@@ -246,6 +270,9 @@ Gate: Saturday Oct 31, 8:00 PM Honduras time.
   off, classic fallback). Keep `PLANNER_REASONING_EFFORT` at `minimal` or `low`. Reader `minimal` misread "5 consome"
   as a product name; `low` is the floor.
 - A photo's caption never reaches the reader: `resolveBurst` (`order-reading.ts`) sends only the image for photo jobs.
+- During `npm run eval`, don't edit `src/` (the simulator's `wrangler dev` reloads mid-conversation) and don't query
+  the simulator's local D1 from another process: one `SQLITE_BUSY` in the Worker deferred a job past the eval's 45 s
+  wait (E01a, Nov 4).
 
 - Claude Code skips `AGENTS.md` in this folder unless `CLAUDE.md` imports it (`~/angel/CLAUDE.md` is above the
   repo). Keep the import.

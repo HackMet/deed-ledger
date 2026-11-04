@@ -11,6 +11,7 @@ import type { ConsoleReceiptDraft } from "../../../application/receipts";
 import { formatLempiras } from "../../../domain/contract/numbers";
 import type { CatalogEntry, DraftLine, LineEdit } from "../../../domain/receipt-draft";
 import { type ConsoleEnv, INVOICE_UPLOAD_PATH, memberContext, requireOwner } from "./auth";
+import { PAGE_STYLE, styleTag } from "./layout";
 
 const NOTICES = {
   tamano: "La foto pesa más de 10 MB. Mandá una más liviana.",
@@ -181,7 +182,7 @@ function shell(title: string, notice: string | null, body: unknown) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${title}</title>
-<style>${STYLE}</style>
+${styleTag(STYLE)}
 </head>
 <body>
 <header><h1>${title}</h1><a href="/console/facturas">Facturas</a></header>
@@ -295,21 +296,21 @@ function decisionForms(draft: ConsoleReceiptDraft, csrf: string) {
 </div>`;
 }
 
-const STYLE = `
-*{box-sizing:border-box}body{margin:0;font:16px/1.4 system-ui,sans-serif;background:#f4f4f2;color:#1b1b1b}
-header{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;background:#1f3d2b;color:#fff}
-h1{font-size:18px;margin:0}header a{color:#fff}
-.notice{margin:10px;padding:10px;border-radius:8px;background:#fff3cd;border:1px solid #e0c060}
-.empty{padding:20px;text-align:center;color:#666}.meta{font-size:14px;color:#555}
-.card,.cards li{margin:10px;padding:12px;border-radius:10px;background:#fff}.cards{list-style:none;margin:0;padding:0}
-.cards a{display:flex;justify-content:space-between;gap:8px;color:inherit;text-decoration:none}
-.review{display:flex;flex-wrap:wrap}.photo{flex:1 1 320px;margin:10px}.photo img{width:100%;border-radius:10px;background:#ddd}
-.review .card{flex:1 1 320px}.status{font-weight:600}
-fieldset{border:1px solid #ddd;border-radius:8px;margin:8px 0}fieldset.bad{border-color:#b33;background:#fdf0f0}
-em{font-style:normal;font-size:12px;background:#f0b400;color:#000;padding:1px 6px;border-radius:4px}
-label{display:block;margin:6px 0}.check{display:flex;gap:6px;align-items:center}.pair{display:flex;gap:8px}.pair label{flex:1}
-input:not([type=checkbox]),select{display:block;width:100%;min-height:44px;font-size:16px;padding:6px;border:1px solid #888;border-radius:8px}
-.lines{padding-left:18px}.decide{display:flex;flex-direction:column;gap:10px;margin-top:12px}form{margin:0}
-button,.button{display:inline-block;min-height:44px;min-width:88px;font-size:16px;border-radius:8px;border:1px solid #888;background:#fff;padding:8px 12px;text-align:center;text-decoration:none;color:inherit}
-.primary{width:100%;background:#2f6f45;color:#fff;border:0}.danger{width:100%;border-color:#b33;color:#b33}
+/** The shared console look (`PAGE_STYLE`) plus the invoice list and the photo-beside-form review. */
+const STYLE = `${PAGE_STYLE}
+.meta{font-size:15px;color:var(--mute)}
+body>p{margin:14px}
+.cards li{margin:12px 14px;border:1px solid var(--line);border-radius:18px;background:var(--card)}
+.cards a{display:flex;justify-content:space-between;align-items:center;gap:8px;min-height:64px;padding:14px 16px;color:inherit;text-decoration:none}
+.cards a strong{font-size:18px;font-weight:800}.cards a span{color:var(--mute);font-size:15px;text-align:right}
+.review{display:flex;flex-wrap:wrap}.photo{flex:1 1 320px;margin:12px 14px}.photo img{width:100%;border-radius:18px;background:var(--cream)}
+.review .card{flex:1 1 320px}.status{font-weight:800;font-size:18px}
+fieldset.bad{border-color:var(--warn);background:var(--redsoft)}
+em{font-style:normal;font-size:12px;font-weight:800;background:var(--mango);color:var(--ink);padding:2px 7px;border-radius:7px}
+.check{display:flex;align-items:center;min-height:48px}.pair{display:flex;gap:8px}.pair label{flex:1}
+.lines{padding-left:4px}.lines li{padding:6px 0;border-bottom:1px solid var(--line)}
+.decide{display:flex;flex-direction:column;gap:10px;margin-top:14px}
+a.button.primary{display:flex}
+button.danger,a.button.danger{width:100%}
+form>button:not(.primary):not(.danger){width:100%;margin-top:12px}
 `;

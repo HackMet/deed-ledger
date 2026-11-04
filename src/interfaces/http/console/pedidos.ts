@@ -29,6 +29,7 @@ import { wordsWithoutQuantity } from "../../../domain/orders";
 import type { ActionEnvelope, ConsoleAction } from "../../../domain/contract/actions";
 import type { EngineOutcome, LineDiff, OrderLineView, OrderState } from "../../../domain/contract/outcomes";
 import { type ConsoleEnv, memberContext } from "./auth";
+import { PAGE_STYLE, styleTag } from "./layout";
 
 const STATE_LABELS: Record<OrderState, string> = {
   por_confirmar: "Por confirmar",
@@ -235,7 +236,7 @@ function trailBody(trail: OrderTrail, orderId: string, csrf: string, notice: str
   const names = new Map(trail.facts.map((entry, n) => [entry.factId, `${KIND_LABELS[entry.kind]} (paso ${n + 1})`]));
   return html`${notice === null ? "" : html`<p class="notice">${notice}</p>`}
 <p class="meta">${STATE_LABELS[trail.state]} · Versión ${trail.version}${marks === "" ? "" : ` · ${marks}`}</p>
-<p class="meta"><a href="/console/deed/${encodeURIComponent(orderId)}">Ver en Deed</a> · <a href="/console/deed/${encodeURIComponent(orderId)}/libro">Ver libro</a></p>
+<p class="meta"><a href="/console/deed/${encodeURIComponent(orderId)}">Cómo se armó</a> · <a href="/console/deed/${encodeURIComponent(orderId)}/libro">Ver libro</a></p>
 ${trail.courier === null || trail.delivered ? "" : html`<p class="meta">Lo lleva ${courierName(trail.courier)}</p>`}
 ${trail.openRequest === null ? "" : changeBox(trail.openRequest, orderId, csrf)}
 ${stepBox(trail, orderId, csrf, members)}
@@ -328,7 +329,7 @@ function page(title: string, body: unknown, back = false) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${title}</title>
-<style>${STYLE}</style>
+${styleTag(STYLE)}
 </head>
 <body>
 <header><h1>${title}</h1>${back ? html`<a href="/console/pedidos">Todos</a>` : html`<a href="/console/preparacion">Preparación</a>`}</header>
@@ -337,28 +338,30 @@ ${body}
 </html>`;
 }
 
-const STYLE = `
-*{box-sizing:border-box}body{margin:0;font:16px/1.4 system-ui,sans-serif;background:#f4f4f2;color:#1b1b1b}
-header{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;background:#1f3d2b;color:#fff}
-h1{font-size:18px;margin:0}header a{color:#fff}
-ul,ol{list-style:none;margin:0;padding:0}p{margin:4px 0}.meta{font-size:14px;color:#555}.empty{padding:20px;text-align:center;color:#666}
-.orders li{margin:10px;border-radius:10px;background:#fff;border-left:6px solid #bbb}
-.orders li a{display:block;padding:12px;color:inherit;text-decoration:none}
-.orders .yellow{border-left-color:#f0b400}.orders .red{border-left-color:#b33}.orders .check{border-left-color:#2f6f45}
-.orders .blue{border-left-color:#2563c9}.courier{color:#2563c9;font-weight:600}
-.step{margin:10px 14px;padding:12px;border-radius:10px;background:#fff;border-left:6px solid #2563c9}
-.step form{display:flex;flex-direction:column;gap:6px}.step select{width:100%;padding:8px;font:inherit;border:1px solid #bbb;border-radius:6px}
-.step button{padding:10px;font:inherit;font-weight:600;border:0;border-radius:8px;color:#fff;background:#2563c9}
-.head{display:flex;justify-content:space-between;gap:8px}
-.trail{margin:10px 14px;border-left:3px solid #2f6f45}.trail li{margin:0 0 12px 12px;padding:10px;border-radius:8px;background:#fff}
-.chip{font-size:12px;background:#e3efe6;padding:1px 8px;border-radius:10px;margin-right:4px}
-.closed{color:#b33;font-weight:600}.closed a{color:#b33}
-.notice{margin:10px 14px;padding:10px;border-radius:8px;background:#fff6d6}
-.change{margin:10px 14px;padding:12px;border-radius:10px;background:#fff;border-left:6px solid #f0b400}
-.change h2{font-size:16px;margin:0 0 6px}.diff li{padding:2px 0}.diff .added{color:#2f6f45}.diff .removed{color:#b33}
-.change form{display:flex;flex-direction:column;gap:6px;margin-top:10px}
-.change input[name=motivo]{width:100%;padding:8px;font:inherit;border:1px solid #bbb;border-radius:6px}
-.change button{padding:10px;font:inherit;font-weight:600;border:0;border-radius:8px;color:#fff}
-.change .approve button{background:#2f6f45}.change .decline button{background:#b33}
-.review.decline{color:#b33}
+/** The shared console look (`PAGE_STYLE`) plus this screen's cards: a colored edge per order's state. */
+const STYLE = `${PAGE_STYLE}
+ul,ol{list-style:none;margin:0;padding:0}p{margin:4px 0}.meta{font-size:15px;color:var(--mute)}
+body>p{margin:12px 18px}
+.orders li{margin:12px 14px;border:1px solid var(--line);border-left:6px solid #c9c2ab;border-radius:18px;background:var(--card);box-shadow:0 1px 0 #193d350d}
+.orders li a{display:block;padding:14px 16px;color:inherit;text-decoration:none}
+.orders li a strong{font-size:19px;font-weight:800}
+.orders .yellow{border-left-color:#e0a030}.orders .red{border-left-color:var(--warn)}.orders .check{border-left-color:var(--green)}
+.orders .blue{border-left-color:#2a5db0}.courier{color:#2a5db0;font-weight:700}
+.step{margin:12px 14px;padding:16px;border:1px solid var(--line);border-left:6px solid #2a5db0;border-radius:18px;background:var(--card)}
+.step form{display:flex;flex-direction:column;gap:8px}
+.step button{border:0;color:#fff;background:#2a5db0;font-size:18px;font-weight:800;min-height:56px}
+.head{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.head span{flex:none;font-size:13px;font-weight:800;color:#6f490d}
+.trail{margin:14px 14px 14px 22px;border-left:3px solid var(--green)}
+.trail li{position:relative;margin:0 0 12px 14px;padding:12px 14px;border:1px solid var(--line);border-radius:14px;background:var(--card)}
+.trail li::before{content:"";position:absolute;left:-23px;top:18px;width:13px;height:13px;border:3px solid var(--green);border-radius:50%;background:var(--paper)}
+.trail time{flex:none;font-size:14px;color:var(--mute);font-variant-numeric:tabular-nums}
+.chip{margin-right:4px}
+.closed{color:var(--warn);font-weight:700}.closed a{color:var(--warn)}
+.change{margin:12px 14px;padding:16px;border:2px solid #d7a24b;border-radius:18px;background:#fffdf5}
+.change h2{margin:0 0 8px}.diff li{padding:4px 0;font-weight:600}.diff .added{color:var(--green)}.diff .removed{color:var(--warn)}
+.change form{display:flex;flex-direction:column;gap:8px;margin-top:12px}
+.change button{border:0;color:#fff;font-size:18px;font-weight:800;min-height:56px}
+.change .approve button{background:var(--ink)}.change .decline button{background:var(--warn)}
+.review.decline{color:var(--warn)}
 `;

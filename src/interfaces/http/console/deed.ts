@@ -102,9 +102,9 @@ export function deedScreen(app: Hono<ConsoleEnv>) {
     const [counters, rows] = await Promise.all([reads.counters(tenant), reads.feed(tenant, 100)]);
     return c.html(
       await shell(c, {
-        title: "Deed",
+        title: "Cómo se armó",
         subtitle: "Verificaciones",
-        back: "/console/mas",
+        back: "/console/preparacion",
         path: VERIFICATIONS,
         tab: "/console/mas",
         refreshSeconds: REFRESH_SECONDS,
@@ -122,7 +122,7 @@ ${rows.length === 0 ? html`<p class="empty">Todavía no hay verificaciones.</p>`
     const orderId = c.req.param("orderId");
     const tenant = { businessId: c.get("member").businessId };
     const trail = await new D1OrderTrail(c.env.DB).trail(tenant, orderId);
-    if (trail === null) return c.html(simplePage("Deed", html`<p class="empty">Ese pedido no está en la lista.</p>`), 404);
+    if (trail === null) return c.html(simplePage("Cómo se armó", html`<p class="empty">Ese pedido no está en la lista.</p>`), 404);
     const at = replayTime(c.req.query("t"));
     const everything = trail.facts.map(toDeedFact);
     const refusals = await new D1DeedReads(c.env.DB).refusalsOf(tenant, orderId);
@@ -137,14 +137,14 @@ ${rows.length === 0 ? html`<p class="empty">Todavía no hay verificaciones.</p>`
     return c.html(
       await shell(c, {
         title: `Pedido ${trail.code ?? "—"}`,
-        subtitle: at === null ? "Deed" : `Deed · como estaba a las ${formatTime(at)}`,
+        subtitle: at === null ? "Cómo se armó" : `Cómo se armó · como estaba a las ${formatTime(at)}`,
         back: `/console/pedidos/${encodeURIComponent(orderId)}`,
         path: `/console/deed/${encodeURIComponent(orderId)}`,
         tab: "/console/mas",
         // No refresh here: a reload drops the fact panel that is open (`#f-…`) and the `?foco=` path.
         style: STYLE,
         body: html`${REPLAY_SLIDER ? replayForm(times, at) : ""}
-<p class="meta"><a href="/console/deed/${encodeURIComponent(orderId)}/libro">Ver libro</a></p>
+<p class="meta"><a href="/console/deed/${encodeURIComponent(orderId)}/libro">Ver libro</a> · <a href="/console/deed/verificaciones">Todas las verificaciones</a></p>
 ${graphSvg(graph, onPath)}
 <p class="hint">Tocá un hecho para ver su detalle.</p>
 ${shownEntries.map((entry) => panelOf(entry, graph, facts))}`,
@@ -291,18 +291,19 @@ function actionLabel(key: string | null): string {
 }
 
 const STYLE = `
-.counters{margin:10px 12px;font-size:16px}
-.reasons{margin:0 12px 8px;padding-left:18px;font-size:14px;color:var(--mute)}
-.feed{list-style:none;margin:8px 10px;padding:0;border:1px solid var(--line);border-radius:10px;background:var(--card);overflow:hidden}
-.feed li{display:grid;grid-template-columns:24px 1fr auto;gap:2px 8px;padding:10px 12px;border-top:1px solid #eee;font-size:15px}
+main>p.meta{margin:14px 18px 0}
+.counters{margin:12px 14px;padding:12px 16px;border-radius:14px;background:var(--soft);font-size:17px;font-weight:700;font-variant-numeric:tabular-nums}
+.reasons{margin:0 14px 8px;padding-left:22px;font-size:15px;color:var(--mute)}
+.feed{list-style:none;margin:12px 14px;padding:0;border:1px solid var(--line);border-radius:18px;background:var(--card);overflow:hidden}
+.feed li{display:grid;grid-template-columns:24px 1fr auto;gap:2px 8px;padding:12px 14px;border-top:1px solid var(--line);font-size:15px}
 .feed li:first-child{border-top:0}
 .feed .mark{font-weight:700}.feed .pass .mark{color:#2e7d32}.feed .fail .mark{color:#c62828}
 .feed .why{grid-column:2;font-size:13px;color:var(--mute)}
 .feed time{font-size:12px;color:var(--mute)}
 .feed a{grid-column:3;grid-row:1;font-size:13px}
-.replay{margin:8px 12px;font-size:14px}
-.replay input{width:100%;margin:4px 0}
-.graph{display:block;width:100%;height:auto;margin:8px 0;background:var(--card)}
+.replay{margin:12px 14px;font-size:15px}
+.replay input{width:100%;margin:6px 0}
+.graph{display:block;width:calc(100% - 28px);height:auto;margin:12px 14px;border:1px solid var(--line);border-radius:18px;background:var(--card)}
 .graph line{stroke:#9e9e9e;stroke-width:1.5}
 .graph path.closes{fill:none;stroke:#c62828;stroke-width:1.5;stroke-dasharray:2 4}
 .graph line.refused{stroke:#9e9e9e;stroke-dasharray:3 3}
@@ -316,8 +317,8 @@ const STYLE = `
 .graph .refusal{fill:#fafafa;stroke:#757575;stroke-dasharray:4 3}
 .graph .label{font-size:13px;font-weight:600;fill:#222}
 .graph .status{font-size:11px;fill:#555}
-.hint{font-size:14px;color:var(--mute);margin:0 12px}
-.panel{display:none;margin:8px 10px;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:var(--card)}
+.hint{font-size:15px;color:var(--mute);margin:0 14px}
+.panel{display:none;margin:12px 14px;padding:16px;border:1px solid var(--line);border-radius:18px;background:var(--card)}
 .panel:target{display:block}
 .panel h2{font-size:17px;margin:0 0 6px}
 .panel .closed{color:#c62828}.panel .blocked{color:#616161}

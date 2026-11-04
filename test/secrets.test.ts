@@ -45,6 +45,8 @@ describe("test environment", () => {
       "0026_console_receipts.sql",
       "0027_deed_checks.sql",
       "0028_agent_id.sql",
+      "0030_planner_memory.sql",
+      "0031_one_product_list.sql",
     ]);
   });
 

@@ -356,6 +356,49 @@ export class OrderEngine implements Engine {
     return decided;
   }
 
+  /**
+   * A burst whose lines the conversation already decided, line by line (the planner on this engine,
+   * `PlannedDeedEngine`): the same reads as a burst (its key, the open order) and the same commit path
+   * as a burst's change (versions, K12 requests, facts, guards). Only the content comes from the
+   * caller: a product must resolve in this store, or the line stays unmatched and unpriced.
+   */
+  async onDecidedChange(context: CustomerContext, lines: readonly OrderLineView[], fulfillment: OrderView["fulfillment"]): Promise<EngineResult> {
+    const decided = await this.decideChange(context, lines, fulfillment);
+    await this.recordRefusal(context, decided.outcome, {
+      operationKey: burstKey(context.jobId),
+      orderId: null,
+      atMs: context.nowMs,
+      resolved: async () => true,
+    });
+    return decided;
+  }
+
+  private async decideChange(context: CustomerContext, lines: readonly OrderLineView[], fulfillment: OrderView["fulfillment"]): Promise<EngineResult> {
+    const { store } = this.deps;
+    const operationKey = burstKey(context.jobId);
+    const first = await store.firstOutcome(context, operationKey);
+    if (first !== null) return result({ type: "duplicate", first });
+    const open = await store.openOrder(context, context.customerId);
+    const ids = [...new Set(lines.flatMap((line) => (line.productId === null ? [] : [line.productId])))];
+    const names = await store.productNames(context, ids);
+    // Priced as a burst prices a line: the live confirmed price, never the caller's figure. A proposal, a
+    // legacy price with no fact, or no price at all is unknown; a restricted line is never quoted.
+    const prices = new Map(
+      await Promise.all([...names.keys()].map(async (id) => [id, (await store.priceState(context, id, "")).confirmed?.price ?? null] as const)),
+    );
+    const resolved = lines.map((line): OrderLineView =>
+      line.productId !== null && names.has(line.productId)
+        ? {
+            ...line,
+            quantity: canonicalQuantity(line.quantity),
+            productName: names.get(line.productId) ?? line.productName,
+            unitPrice: line.restricted ? null : (prices.get(line.productId) ?? null),
+          }
+        : { ...line, quantity: canonicalQuantity(line.quantity), productId: null, productName: null, unitPrice: null, availability: "no_se" },
+    );
+    return this.change(context, operationKey, open, resolved, fulfillment);
+  }
+
   private async decideBurst(context: CustomerContext, reading: BurstReading, matches: readonly LineMatch[]): Promise<EngineResult> {
     const { store } = this.deps;
     const operationKey = burstKey(context.jobId);
@@ -1002,7 +1045,9 @@ export class OrderEngine implements Engine {
         case "short":
           return { ...line, availability: "hay", inStock: fromThousandths(balance!) };
         default:
-          return { ...line, availability: "no_se" };
+          // No record says otherwise: a line the store already marked sold out (the planner path's "No
+          // hay") stays sold out; anything else is unknown.
+          return { ...line, availability: line.availability === "se_acabo" ? "se_acabo" : "no_se" };
       }
     });
   }

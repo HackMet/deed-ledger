@@ -1,6 +1,8 @@
 /**
- * Más (wireframe C7): everything that isn't a daily screen. Staff see it without the pause switch
- * and Empleados. Options whose screens aren't built yet are listed, marked "Pronto", and not links.
+ * Más (wireframe C7): what isn't a daily screen, one entry per job. Anotar is where things are
+ * entered, the tabs hold the lists, and Pendientes (the bell) is the one inbox, so nothing here
+ * repeats them: prices live in the Productos tab, a new invoice photo starts in Anotar, and how an
+ * order came together is reached from that order. Staff see only what isn't the owner's.
  */
 import type { Hono } from "hono";
 import { html } from "hono/html";
@@ -14,29 +16,16 @@ const PATH = "/console/mas";
 interface Option {
   readonly label: string;
   readonly hint: string;
-  /** Null while the screen isn't built. */
-  readonly href: string | null;
+  readonly href: string;
   readonly ownerOnly: boolean;
 }
 
-/** The pause switch (#32) and its paused conversations come here first, for the owner. */
-const PAUSE: Option = {
-  label: "Asistente en pausa",
-  hint: "Para atender vos los mensajes en un día difícil.",
-  href: null,
-  ownerOnly: true,
-};
-
 const OPTIONS: readonly Option[] = [
-  { label: "Pedido a mano", hint: "Pedidos que te llegan a otro WhatsApp.", href: null, ownerOnly: false },
+  // Name, address and notes, with the hours and delivery the assistant answers from (Tienda's setup).
+  { label: "Mi tienda", hint: "Nombre, horario, envío, dirección y notas.", href: "/console/negocio", ownerOnly: true },
   { label: "Empleados", hint: "Invitar, permisos y quitar.", href: "/console/empleados", ownerOnly: true },
-  { label: "Preparar la tienda", hint: "Productos, precios, horario y envío.", href: "/console/tienda", ownerOnly: true },
-  // K6 and K14: staff propose prices for the owner to confirm; the business info and invoices are the owner's.
-  { label: "Precios", hint: "Proponer y confirmar precios.", href: "/console/productos", ownerOnly: false },
-  { label: "Datos del negocio", hint: "Nombre, horario, dirección y zonas.", href: "/console/negocio", ownerOnly: true },
-  { label: "Facturas", hint: "Subir y aprobar facturas de proveedores.", href: "/console/facturas", ownerOnly: true },
-  { label: "Deed", hint: "Cómo se armó cada pedido y cada verificación.", href: "/console/deed/verificaciones", ownerOnly: false },
-  { label: "Cierre del día", hint: "Cuadrar la caja al cerrar.", href: null, ownerOnly: false },
+  // The list to review and approve; a new invoice photo is taken from Anotar.
+  { label: "Facturas", hint: "La lista de facturas de proveedores.", href: "/console/facturas", ownerOnly: true },
   { label: "Aviso de privacidad", hint: "Lo que ven los clientes.", href: PRIVACY_PATH, ownerOnly: false },
 ];
 
@@ -51,28 +40,23 @@ export function masScreen(app: Hono<ConsoleEnv>) {
         title: "Más",
         path: PATH,
         style: STYLE + TRY_STYLE,
-        body: html`${tryCard(numbers)}${isOwner ? html`<ul class="options">${row(PAUSE)}</ul>` : ""}
-<h2 class="section">Más opciones</h2>
-<ul class="options">${options.map(row)}</ul>`,
+        body: html`${tryCard(numbers)}<ul class="options">${options.map(row)}</ul>`,
       }),
     );
   });
 }
 
 function row(option: Option) {
-  const text = html`<span class="label">${option.label}</span><span class="hint">${option.hint}</span>`;
-  return option.href === null
-    ? html`<li class="soon">${text}<span class="chip">Pronto</span></li>`
-    : html`<li><a href="${option.href}">${text}<span class="go" aria-hidden="true">›</span></a></li>`;
+  return html`<li><a href="${option.href}"><span class="label">${option.label}</span><span class="hint">${option.hint}</span><span class="go" aria-hidden="true">›</span></a></li>`;
 }
 
-/** Rows inside one card, as in the wireframe; chips and section titles come from the shared layout. */
+/** One tile per option, as in the concept; chips and section titles come from the shared layout. */
 const STYLE = `
-.options{margin:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--card);overflow:hidden}
-.options li{position:relative;border-top:1px solid #eee}.options li:first-child{border-top:0}
-.options a,.options li.soon{display:block;min-height:56px;padding:12px 48px 12px 14px;color:inherit;text-decoration:none}
-.label{display:block;font-weight:600}.hint{display:block;font-size:14px;color:var(--mute)}
-.soon .label{color:var(--mute)}
-.go{position:absolute;right:16px;top:50%;transform:translateY(-50%);font-size:24px;color:var(--accent)}
-.soon .chip{position:absolute;right:12px;top:14px}
+.options{display:grid;gap:10px;margin:12px 16px}
+.options li{position:relative;border:1px solid var(--line);border-radius:12px;background:var(--card);box-shadow:var(--shadow)}
+.options a{display:block;min-height:72px;padding:16px 60px 16px 18px;border-radius:12px;color:inherit;text-decoration:none}
+.options a:hover{background:#f6f6ed}
+.label{display:block;font-size:18px;font-weight:700}.hint{display:block;margin-top:2px;font-size:14px;color:var(--mute)}
+.go{position:absolute;right:16px;top:50%;transform:translateY(-50%);display:flex;align-items:center;justify-content:center;width:34px;height:34px;color:var(--ink);font-size:28px;line-height:1}
+@media (min-width:1024px){.options{grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;max-width:900px}}
 `;

@@ -19,7 +19,8 @@ import type { OpenPendiente } from "../../../application/ports";
 import type { ProposedAlias } from "../../../infrastructure/d1/retrieval-repository";
 import { formatStoreTime } from "../../../domain/store-time";
 import { type ConsoleEnv, requireOwner } from "./auth";
-import { csrfField, shell } from "./layout";
+import { approvals, inboxCards } from "./inbox";
+import { csrfField, INICIO_PATH, shell } from "./layout";
 
 const PATH = "/console/pendientes";
 
@@ -47,7 +48,13 @@ const GROUPS: readonly { readonly kind: OpenPendiente["kind"]; readonly title: s
 export function pendientesScreen(app: Hono<ConsoleEnv>) {
   app.get("/pendientes", requireOwner, async (c) => {
     const { deps, retrieval } = c.get("runtime");
-    const [items, names] = await Promise.all([deps.pendientesBoard.listOpen(c.get("member")), retrieval.listProposed(c.get("member"))]);
+    const [items, names, waiting] = await Promise.all([
+      deps.pendientesBoard.listOpen(c.get("member")),
+      retrieval.listProposed(c.get("member")),
+      approvals(c),
+    ]);
+    // Change requests and invoices are answered on their own pages; here they are links. Unread: none shown.
+    const toApprove = waiting ?? [];
     const notice = c.req.query("aviso");
     const nowMs = deps.clock.now();
     const csrf = c.get("csrf");
@@ -59,13 +66,16 @@ export function pendientesScreen(app: Hono<ConsoleEnv>) {
         title: "Pendientes",
         subtitle: "Lo que solo vos decidís",
         path: PATH,
+        // Reached from the bell and the Inicio card, so Inicio lights.
+        tab: INICIO_PATH,
         notice: notice !== undefined && Object.hasOwn(NOTICES, notice) ? NOTICES[notice as NoticeKey] : null,
         style: STYLE,
         body:
-          groups.length === 0 && names.length === 0
+          groups.length === 0 && names.length === 0 && toApprove.length === 0
             ? html`<section class="card"><p class="empty">No hay nada pendiente.</p>
-<p class="hint">Aquí aparecen los clientes que piden hablar con vos, las preguntas que quedaron en «te confirmo» y los mensajes que no salieron.</p></section>`
-            : html`${groups.map(
+<p class="hint">Aquí aparecen los clientes que piden hablar con vos, las preguntas que quedaron en «te confirmo», los mensajes que no salieron, y los cambios y facturas por aprobar.</p></section>`
+            : html`${toApprove.length === 0 ? "" : html`<h2 class="section">Para aprobar (${toApprove.length})</h2>
+${inboxCards(toApprove)}`}${groups.map(
                 (group) => html`<h2 class="section">${group.title} (${group.items.length})</h2>
 ${group.items.map((item) => card(item, nowMs, csrf))}`,
               )}${names.length === 0 ? "" : html`<h2 class="section">Cómo piden los clientes (${names.length})</h2>
@@ -187,12 +197,15 @@ export function whatHappened(item: Pick<OpenPendiente, "kind" | "detail" | "coun
 /** The cards, chips and section titles come from the shared layout. */
 const STYLE = `
 .pendiente p{margin:6px 0}.pendiente .muted{margin-top:2px}
-.pendiente .name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.pendiente form{display:flex;justify-content:flex-end}
-.pendiente form.answer{display:block;margin-top:8px}.pendiente form.answer textarea{width:100%;box-sizing:border-box}
-.pendiente form.answer button{margin-top:6px;width:100%}
-.pendiente .said{margin:6px 0;padding:6px 10px;border-left:3px solid var(--line,#ddd);color:var(--ink,#222);overflow-wrap:anywhere}
-.hint{font-size:14px;color:var(--mute)}
-.pendiente .ask{overflow-wrap:anywhere}
+.pendiente .name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:18px;font-weight:800}
+.pendiente form{display:flex;justify-content:flex-end;margin-top:10px}
+.pendiente form.answer{display:block;margin-top:10px}.pendiente form.answer textarea{width:100%;box-sizing:border-box}
+.pendiente form.answer button{margin-top:8px;width:100%}
+.pendiente .said{margin:8px 0;padding:8px 12px;border-left:3px solid #d8bb72;border-radius:0 10px 10px 0;background:#f3efdf;color:var(--ink);overflow-wrap:anywhere}
+.hint{font-size:15px;color:var(--mute)}
+.pendiente .ask{font-size:18px;font-weight:700;overflow-wrap:anywhere}
 .pendiente form.yes-no{gap:8px}.pendiente form.yes-no button{flex:1}
+.inbox{position:relative;padding-right:52px}.inbox strong{display:block;font-size:18px}.inbox .muted{display:block;margin-top:2px}
+.inbox .go{position:absolute;right:18px;top:50%;transform:translateY(-50%);font-size:28px;color:var(--ink)}
+.inbox.change{border-left:5px solid #e0a030}.inbox.invoice{border-left:5px solid var(--green)}
 `;

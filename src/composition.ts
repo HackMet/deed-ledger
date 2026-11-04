@@ -50,6 +50,7 @@ import { D1FactLedger, D1FactPrecheck } from "./infrastructure/d1/fact-ledger";
 import { D1IntakeRepository } from "./infrastructure/d1/intake-repository";
 import { D1JobRepository } from "./infrastructure/d1/job-repository";
 import { D1OrderStore } from "./infrastructure/d1/order-store";
+import { PlannedDeedEngine, SetupCatalogOrderStore } from "./infrastructure/d1/planned-deed-engine";
 import { D1ButtonsShown, D1OutboxRepository } from "./infrastructure/d1/outbox-repository";
 import { D1Pendientes } from "./infrastructure/d1/pendientes-repository";
 import { D1RetrievalRepository } from "./infrastructure/d1/retrieval-repository";
@@ -143,7 +144,9 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
   const engine =
     overrides.engine ??
     (config.deedEngine
-      ? new OrderEngine({ store: new D1OrderStore(db), ids, ledger: new D1FactLedger(db), checks: deedChecks, stock: new D1StockBalances(db), clock, log, agentId: AGENT_ID })
+      ? config.conversation === "planner"
+        ? plannedDeedEngine(db, storeSetup, { ids, checks: deedChecks, clock, log })
+        : new OrderEngine({ store: new D1OrderStore(db), ids, ledger: new D1FactLedger(db), checks: deedChecks, stock: new D1StockBalances(db), clock, log, agentId: AGENT_ID })
       : config.pretendEngine
         ? new D1PretendEngine(db, { setup: storeSetup })
         : config.devConsole
@@ -209,7 +212,8 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
     simMedia,
     engine,
     deedChecks,
-    catalog: new CatalogService({ catalog: new D1CatalogStore(db), ledger, runner, ids, engine }),
+    // One product list whichever engine runs the chat: a price is always the order engine's price fact (K6).
+    catalog: new CatalogService({ catalog: new D1CatalogStore(db), ledger, runner, ids, engine: new OrderEngine({ store: new D1OrderStore(db), ids, ledger, checks: deedChecks, clock, log }) }),
     business: { service: new BusinessService({ store: businessInfo, ledger, runner, ids }), context: businessInfo },
     receipts: new ReceiptService({
       store: new D1ConsoleReceipts(db, env.MEDIA),
@@ -269,6 +273,31 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
       mediaEraser: overrides.mediaEraser ?? new R2MediaEraser(env.MEDIA),
     },
   };
+}
+
+/**
+ * DEED_ENGINE=1 with CONVERSATION=planner: the planner's conversation over the real order engine, which
+ * stays the only writer of orders. The order engine's store resolves the store's Tienda products too,
+ * since the planner path matches against them (`SetupCatalogOrderStore`).
+ */
+function plannedDeedEngine(
+  db: D1Database,
+  setup: D1StoreSetupRepository,
+  deps: { readonly ids: Deps["ids"]; readonly checks: DeedChecks; readonly clock: Clock; readonly log: Logger },
+): PlannedDeedEngine {
+  const store = new SetupCatalogOrderStore(new D1OrderStore(db), setup);
+  // The store's stock, as the classic Deed branch reads it (D-57): each readback and availability claim.
+  const ledger = new OrderEngine({
+    store,
+    ids: deps.ids,
+    ledger: new D1FactLedger(db),
+    checks: deps.checks,
+    stock: new D1StockBalances(db),
+    clock: deps.clock,
+    log: deps.log,
+    agentId: AGENT_ID,
+  });
+  return new PlannedDeedEngine({ db, ledger, store, setup });
 }
 
 /**

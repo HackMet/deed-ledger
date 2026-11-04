@@ -19,6 +19,7 @@ import { deedScreen } from "./deed";
 import { libroScreen } from "./libro";
 import { empleadosScreen } from "./empleados";
 import { facturasScreen } from "./facturas";
+import { inicioScreen } from "./inicio";
 import { masScreen } from "./mas";
 import { negocioScreen } from "./negocio";
 import { pedidosScreen } from "./pedidos";
@@ -40,10 +41,11 @@ export function consoleRoutes() {
   app.use("/facturas/nueva", invoiceUploadLimit);
   app.use("*", requireCsrf);
 
-  app.get("/", (c) => c.redirect("/console/preparacion", 302));
+  app.get("/", (c) => c.redirect("/console/inicio", 302));
 
   // One line per screen.
   bienvenidaScreen(app);
+  inicioScreen(app);
   preparacionScreen(app);
   empleadosScreen(app);
   anotarScreen(app);

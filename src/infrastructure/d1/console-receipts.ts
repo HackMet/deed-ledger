@@ -3,6 +3,7 @@ import { FactRefusedError, PermanentWriteError } from "../../application/errors"
 import type { Commit, Tenant } from "../../application/ports";
 import { isUnderStorePrefix } from "../../domain/media";
 import { CONSOLE_CONVERSATION, type CatalogEntry, type ReceiptDraftBody } from "../../domain/receipt-draft";
+import { productNameKey } from "../../domain/store-setup";
 
 /** Console invoice drafts (`drafts` rows in the 'console' conversation) and what the ledger says of them. */
 export class D1ConsoleReceipts implements ReceiptDraftStore {
@@ -108,11 +109,21 @@ export class D1ConsoleReceipts implements ReceiptDraftStore {
           error: () => new PermanentWriteError("a matched product is not the store's"),
         },
       ],
-      statements: created.map((product) =>
+      // One product list (0031): a product an invoice creates gets its Productos row too, same ID, no
+      // price (an invoice's cost is not the selling price). Skipped, never failing the invoice, when the
+      // name is too long for it or another product has the name; the list still reads it from `products`.
+      statements: created.flatMap((product) => [
         this.db
           .prepare(`INSERT INTO products (id, business_id, canonical_name, created_at_ms) VALUES (?, ?, ?, ?)`)
           .bind(product.id, tenant.businessId, product.name, nowMs),
-      ),
+        this.db
+          .prepare(
+            `INSERT OR IGNORE INTO store_products
+               (id, business_id, name, name_key, other_names_json, price_centavos, no_hay, created_at_ms, updated_at_ms)
+             VALUES (?, ?, ?, ?, '[]', NULL, 0, ?, ?)`,
+          )
+          .bind(product.id, tenant.businessId, product.name, productNameKey(product.name), nowMs, nowMs),
+      ]),
     };
   }
 

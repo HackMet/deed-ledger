@@ -241,15 +241,17 @@ describe("/console/deed/:orderId: the order's facts as a graph", () => {
     expect((await get(h, `/console/deed/${encodeURIComponent(orderId)}`, ownerCookie)).status).toBe(200);
   });
 
-  it("is linked from the Pedidos trail and from Más", async () => {
+  it("is linked from the Pedidos trail as 'Cómo se armó', and leads on to every verification; Más doesn't list it", async () => {
     const s = await storeWithMembers();
     const { orderId } = await cancelledWithChange(s);
     const h = harness({ engine: checkedEngine });
     const cookie = await login(h, s, "staff");
     const trail = await (await get(h, `/console/pedidos/${encodeURIComponent(orderId)}`, cookie)).text();
-    expect(trail).toContain(`href="/console/deed/${encodeURIComponent(orderId)}"`);
+    expect(trail).toContain(`href="/console/deed/${encodeURIComponent(orderId)}">Cómo se armó</a>`);
+    const deed = await (await get(h, `/console/deed/${encodeURIComponent(orderId)}`, cookie)).text();
+    expect(deed).toContain(`href="/console/deed/verificaciones"`);
     const more = await (await get(h, "/console/mas", cookie)).text();
-    expect(more).toContain(`href="/console/deed/verificaciones"`);
+    expect(more).not.toContain(`href="/console/deed/verificaciones"`);
   });
 });
 

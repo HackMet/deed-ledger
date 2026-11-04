@@ -4,6 +4,7 @@ import { type Centavos, toThousandths } from "../../domain/contract/numbers";
 import type { StoreHours, StoreHoursEntry } from "../../domain/contract/outcomes";
 import { isUsableStoreHours } from "../../domain/store-hours";
 import { type ProductSelling, productNameKey, type StoreProduct, type StoreSetup } from "../../domain/store-setup";
+import { liveConfirmedPriceSql } from "./catalog-store";
 
 export interface ProductFields {
   readonly name: string;
@@ -21,13 +22,29 @@ interface ProductRow {
   usual_quantity_milli: number | null;
 }
 
-/** A product with how it's sold (0011): no selling row reads as both unknown. */
-const PRODUCT_COLUMNS = `p.id, p.name, p.other_names_json, p.price_centavos, p.no_hay, s.sold_by, s.usual_quantity_milli
+/**
+ * The store's one product list (0031, `CatalogService`): every `store_products` row with how it's sold
+ * (0011: no selling row reads as both unknown), and every `products` row that has no `store_products`
+ * row yet (an invoice's product, or one from before 0031) by its canonical name, with its live
+ * confirmed price fact as its price (none: unknown) and no "No hay" mark. ?1 is the store, ?2 one
+ * product or NULL for all.
+ */
+const PRODUCTS = `SELECT * FROM (
+  SELECT p.id, p.name, p.name_key AS sort_key, p.other_names_json, p.price_centavos, p.no_hay, s.sold_by, s.usual_quantity_milli
   FROM store_products p
-  LEFT JOIN store_product_selling s ON s.business_id = p.business_id AND s.product_id = p.id`;
+  LEFT JOIN store_product_selling s ON s.business_id = p.business_id AND s.product_id = p.id
+  WHERE p.business_id = ?1 AND (?2 IS NULL OR p.id = ?2)
+  UNION ALL
+  SELECT pr.id, pr.canonical_name, lower(pr.canonical_name), '[]', ${liveConfirmedPriceSql("pr")}, 0, NULL, NULL
+  FROM products pr
+  WHERE pr.business_id = ?1 AND (?2 IS NULL OR pr.id = ?2)
+    AND NOT EXISTS (SELECT 1 FROM store_products p WHERE p.business_id = pr.business_id AND p.id = pr.id)
+) ORDER BY sort_key, id`;
 
 /**
- * The store's own setup (#40, migration 0019): products, hours and delivery fee. Every read and
+ * The store's own setup (#40, migration 0019): products, hours and delivery fee. Products are written
+ * only by `CatalogService` (the Productos screen), which keeps `products` and `store_products` one
+ * list; the product writes below are kept for tests that seed a store directly. Every read and
  * write takes the tenant and is scoped to its store; a product ID from a form only ever matches a
  * row of that store, so another store's ID finds nothing and changes nothing.
  */
@@ -44,18 +61,12 @@ export class D1StoreSetupRepository {
   }
 
   async listProducts(tenant: Tenant): Promise<StoreProduct[]> {
-    const { results } = await this.db
-      .prepare(`SELECT ${PRODUCT_COLUMNS} WHERE p.business_id = ? ORDER BY p.name_key, p.id`)
-      .bind(tenant.businessId)
-      .all<ProductRow>();
+    const { results } = await this.db.prepare(PRODUCTS).bind(tenant.businessId, null).all<ProductRow>();
     return results.map(productOf);
   }
 
   async product(tenant: Tenant, productId: string): Promise<StoreProduct | null> {
-    const row = await this.db
-      .prepare(`SELECT ${PRODUCT_COLUMNS} WHERE p.business_id = ? AND p.id = ?`)
-      .bind(tenant.businessId, productId)
-      .first<ProductRow>();
+    const row = await this.db.prepare(PRODUCTS).bind(tenant.businessId, productId).first<ProductRow>();
     return row === null ? null : productOf(row);
   }
 

@@ -23,6 +23,14 @@ const tabsOf = (page: string) =>
     ),
   ].map(([, href, current, label, badge]) => ({ href, label, current: current !== undefined, badge: badge ?? null }));
 
+/** The owner's bell in the top bar, with its count if any; undefined when the page has no bell. */
+const bellOf = (page: string) => {
+  const bell = /<a class="bell" href="\/console\/pendientes"[^>]*>([\s\S]*?)<\/a>/.exec(page)?.[1];
+  return bell === undefined ? undefined : { badge: /<span class="badge">([^<]+)<\/span>/.exec(bell)?.[1] ?? null };
+};
+
+const FIVE_TABS = ["Inicio", "Pedidos", "Anotar", "Productos", "Más"];
+
 /** The chip on the right of the top bar, as text. */
 const whoOn = (page: string) => /<span class="who">([\s\S]*?)<\/span><\/header>/.exec(page)?.[1]?.replace(/<[^>]+>/g, "");
 
@@ -70,27 +78,30 @@ async function sessions() {
 }
 
 describe("the console menu", () => {
-  it("shows the owner Pedidos, Anotar, Pendientes and Más, in that order, at the bottom", async () => {
+  it("shows the owner Inicio, Pedidos, Anotar, Productos and Más, in that order, at the bottom", async () => {
     const { owner, page } = await sessions();
     const html = await (await page("/console/preparacion", owner)).text();
-    expect(tabsOf(html).map((t) => t.label)).toEqual(["Pedidos", "Anotar", "Pendientes", "Más"]);
+    expect(tabsOf(html).map((t) => t.label)).toEqual(FIVE_TABS);
     // After the screen's content, so it sits at the bottom of a phone screen.
     expect(html.indexOf('<nav class="tabs">')).toBeGreaterThan(html.indexOf("</main>"));
   });
 
-  it("shows staff everything but Pendientes", async () => {
+  it("shows staff the same five tabs, and no Pendientes bell", async () => {
     const { staff, page } = await sessions();
     const html = await (await page("/console/preparacion", staff)).text();
-    expect(tabsOf(html).map((t) => t.label)).toEqual(["Pedidos", "Anotar", "Más"]);
+    expect(tabsOf(html).map((t) => t.label)).toEqual(FIVE_TABS);
+    expect(bellOf(html)).toBeUndefined();
   });
 
-  it("lights the tab of the screen you're on, and Más on Empleados", async () => {
+  it("lights the tab of the screen you're on, Más on Empleados, and Inicio on Pendientes", async () => {
     const { owner, page } = await sessions();
     for (const [path, tab] of [
+      ["/console/inicio", "Inicio"],
       ["/console/preparacion", "Pedidos"],
       ["/console/preparacion/demo-order-1", "Pedidos"],
       ["/console/anotar", "Anotar"],
-      ["/console/pendientes", "Pendientes"],
+      ["/console/productos", "Productos"],
+      ["/console/pendientes", "Inicio"],
       ["/console/mas", "Más"],
       ["/console/empleados", "Más"],
     ] as const) {
@@ -107,19 +118,25 @@ describe("the console menu", () => {
     expect(await response.text()).toContain("Esta parte es solo para el dueño.");
   });
 
-  it("lists Más with Empleados and the pause for the owner only; unbuilt options say Pronto and aren't links", async () => {
+  it("lists Más short, one entry per job: Mi tienda, Empleados and Facturas for the owner only, no Pronto entries", async () => {
     const { owner, staff, page } = await sessions();
     const forOwner = await (await page("/console/mas", owner)).text();
+    const labels = (html: string) => [...html.matchAll(/<span class="label">([^<]+)<\/span>/g)].map(([, label]) => label);
+    expect(labels(forOwner)).toEqual(["Mi tienda", "Empleados", "Facturas", "Aviso de privacidad"]);
+    expect(forOwner).toContain('<a href="/console/negocio">');
     expect(forOwner).toContain('<a href="/console/empleados">');
-    expect(forOwner).toContain("Asistente en pausa");
+    expect(forOwner).toContain('<a href="/console/facturas">');
     expect(forOwner).toContain('<a href="/privacidad">');
-    expect(forOwner).toMatch(/<li class="soon"><span class="label">Pedido a mano<\/span>.*Pronto/);
-    expect(forOwner).not.toMatch(/<a [^>]*>[^<]*<span class="label">Pedido a mano/);
+    // Each of these lives somewhere else now: the Productos tab, Anotar and the order's own page.
+    for (const gone of ["/console/productos\"><span", "/console/tienda\"", "/console/deed/verificaciones", "Pronto", "Asistente en pausa", "Pedido a mano", "Cierre del día"]) {
+      expect(forOwner).not.toContain(gone);
+    }
 
     const forStaff = await (await page("/console/mas", staff)).text();
+    expect(labels(forStaff)).toEqual(["Aviso de privacidad"]);
     expect(forStaff).not.toContain("/console/empleados");
-    expect(forStaff).not.toContain("Asistente en pausa");
-    expect(forStaff).toContain("Pedido a mano");
+    expect(forStaff).not.toContain("/console/negocio");
+    expect(forStaff).not.toContain("/console/facturas");
   });
 
   it("offers 'Probar como cliente' with the store's own number once a webhook has said it, to owner and staff", async () => {
@@ -147,7 +164,7 @@ describe("the top bar", () => {
     for (const [path, title, subtitle] of [
       ["/console/preparacion", "Pedidos", "Hoy · 3 por preparar"],
       ["/console/preparacion/demo-order-1", "Carla", "Versión 2 · Recoge en tienda"],
-      ["/console/anotar", "Anotar", "Ventas, fiado y pedidos a mano"],
+      ["/console/anotar", "Anotar", "Te muestro lo que entendí. Todavía no se guarda nada."],
       ["/console/pendientes", "Pendientes", "Lo que solo vos decidís"],
       ["/console/mas", "Más", null],
       ["/console/empleados", "Empleados", "Quién entra a la consola"],
@@ -179,7 +196,7 @@ describe("the top bar", () => {
   });
 });
 
-describe("the Pendientes count on the tab", () => {
+describe("the Pendientes count on the bell", () => {
   it("shows the owner's open count on every screen; staff pages never read it", async () => {
     const store = await storeWithStaff();
     const other = await storeWithStaff();
@@ -190,8 +207,7 @@ describe("the Pendientes count on the tab", () => {
     const h = consoleHarness(undefined, board);
     const owner = await login(h, store.businessId, store.members[0]!.userId);
     const staff = await login(h, store.businessId, store.members[1]!.userId);
-    const pendientesTab = async (path: string, cookie: string) =>
-      tabsOf(await (await send(h, path, { cookie })).text()).find((tab) => tab.label === "Pendientes");
+    const pendientesTab = async (path: string, cookie: string) => bellOf(await (await send(h, path, { cookie })).text());
 
     for (const path of ["/console/preparacion", "/console/preparacion/demo-order-1", "/console/anotar", "/console/pendientes", "/console/mas"]) {
       expect(await pendientesTab(path, owner), path).toMatchObject({ badge: "3" });
@@ -217,7 +233,7 @@ describe("the Pendientes count on the tab", () => {
       const h = consoleHarness(undefined, board);
       const cookie = await login(h, store.businessId, store.members[0]!.userId);
       const response = await send(h, "/console/preparacion", { cookie });
-      return { h, response, tab: tabsOf(await response.text()).find((tab) => tab.label === "Pendientes") };
+      return { h, response, tab: bellOf(await response.text()) };
     };
     expect((await ownerOf(fixedCount(0))).tab).toMatchObject({ badge: null });
     expect((await ownerOf(fixedCount(120))).tab).toMatchObject({ badge: "99+" });
@@ -237,7 +253,7 @@ describe("the dev console (local simulator)", () => {
     await storeWithStaff(); // another store, never shown
     const h = consoleHarness(devEnv(store.phoneNumberId));
     const html = await (await send(h, "/console/empleados")).text();
-    expect(tabsOf(html).map((t) => t.label)).toContain("Pendientes");
+    expect(bellOf(html)).toBeDefined();
     // Empleados lists this store's people: the seeded store is the one shown.
     expect(html).toContain(store.members[1]!.userId);
     await setName("memberships", "Johan", store.businessId, store.members[0]!.userId);
@@ -248,7 +264,8 @@ describe("the dev console (local simulator)", () => {
     await storeWithStaff();
     const h = consoleHarness(devEnv("100000000000999"));
     const html = await (await send(h, "/console/preparacion")).text();
-    expect(tabsOf(html).map((t) => t.label)).toEqual(["Pedidos", "Anotar", "Más"]);
+    expect(tabsOf(html).map((t) => t.label)).toEqual(FIVE_TABS);
+    expect(bellOf(html)).toBeUndefined();
     expect(whoOn(html)).toBe("Rosa · Empleado");
   });
 });

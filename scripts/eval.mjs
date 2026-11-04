@@ -9,6 +9,7 @@
 //   npm run eval -- --judge                 also score language with the Meta Model API
 //   npm run eval -- --compare a.json,b.json compare two runs (classic vs planner)
 //   npm run eval -- --no-seed               skip seeding the eval store
+//   npm run eval -- --deed                  read orders from the order engine (sim started with --deed)
 //
 // Default runs never call paid APIs. --judge spends a little (one short call per scenario
 // with bot texts only); the simulator itself spends only when started with --ai.
@@ -37,7 +38,7 @@ import {
 
 const args = parseArgs(process.argv.slice(2));
 const url = typeof args.url === "string" ? args.url : `http://127.0.0.1:${SIM.port}`;
-const PATH_LABEL = args.planner === true ? "planner" : "classic";
+const PATH_LABEL = `${args.planner === true ? "planner" : "classic"}${args.deed === true ? "+deed" : ""}`;
 const QUIET_MS = 5_000;
 const MAX_WAIT_MS = 45_000;
 const POLL_MS = 1_200;
@@ -242,6 +243,7 @@ class Customer {
       this.log.push({ who: "note", text: `(la tienda no encontró pedido para ${step.do})` });
       return;
     }
+    if (step.do === "approve_change") return this.approveChange(order);
     const fields = { type: step.do === "no_hay" ? "mark_line" : step.do, orderId: order.orderId, version: String(order.version), operationKey: `eval-${randomUUID()}` };
     let label = { start_preparing: "Preparando", mark_ready: "Listo", mark_delivered: "Entregado" }[step.do] ?? step.do;
     if (step.do === "no_hay") {
@@ -254,8 +256,30 @@ class Customer {
       Object.assign(fields, { lineId: line.lineId, mark: "no_hay" });
       label = `No hay: ${line.productName ?? line.text}`;
     }
+    // The order engine takes only the key it derives for a tap, as the console's own buttons carry it (D-44).
+    if (args.deed === true) fields.operationKey = `staff:${order.orderId}:${order.version}:${fields.type}${fields.lineId === undefined ? "" : `:${fields.lineId}`}`;
     const response = await consolePost("/acciones", fields);
     this.log.push({ who: "store", text: `[la tienda toca ${label}] → ${response.status}` });
+    await this.collect(false);
+  }
+
+  /**
+   * --deed (K12): the owner approves the customer's change after confirming, on Pedidos. The newest
+   * change request of the order; the engine checks that it's still live and answers once.
+   */
+  async approveChange(order) {
+    const business = await storeId();
+    const request = (
+      await query(
+        `SELECT id FROM facts WHERE business_id = ${sql(business)} AND kind = 'change_request' AND json_extract(body_json, '$.orderId') = ${sql(order.orderId)} ORDER BY rowid DESC LIMIT 1`,
+      )
+    )[0];
+    if (!request) {
+      this.log.push({ who: "note", text: "(la tienda no encontró un cambio por aprobar)" });
+      return;
+    }
+    const response = await consolePost(`/pedidos/${encodeURIComponent(order.orderId)}/revision`, { cambio: request.id, decision: "approve", motivo: "Sí hay, va" });
+    this.log.push({ who: "store", text: `[la tienda aprueba el cambio] → ${response.status}` });
     await this.collect(false);
   }
 
@@ -291,12 +315,75 @@ function orderSignature(order) {
 }
 
 async function latestOrder(phone) {
+  if (args.deed === true) return latestDeedOrder(phone);
   const business = await storeId();
   const customer = (await query(`SELECT id FROM customers WHERE business_id = ${sql(business)} AND phone = ${sql(phone)}`))[0];
   const state = (await query(`SELECT state_json FROM pretend_engine_state WHERE business_id = ${sql(business)}`))[0];
   if (!customer || !state) return null;
   const orders = JSON.parse(state.state_json).orders.map(([, stored]) => stored).filter((stored) => stored.customerId === customer.id);
   return orders.at(-1)?.order ?? null;
+}
+
+/** 1500 -> "1.5", as the engine reads a stored quantity back. */
+function fromThousandths(milli) {
+  const whole = Math.floor(milli / 1000);
+  const fraction = String(milli % 1000).padStart(3, "0").replace(/0+$/, "");
+  return fraction === "" ? String(whole) : `${whole}.${fraction}`;
+}
+
+/**
+ * --deed (the sim's --deed): the order engine's records. An order still being put together lives in
+ * the planner's conversation memory (planner_memory) until its readback; every version read back,
+ * confirmation and cancel is in the ledger's tables. Totals are shown as the pretend engine kept them,
+ * without the delivery fee (the ledger's version total includes it).
+ */
+async function latestDeedOrder(phone) {
+  const business = await storeId();
+  const customer = (await query(`SELECT id FROM customers WHERE business_id = ${sql(business)} AND phone = ${sql(phone)}`))[0];
+  if (!customer) return null;
+  let memory = [];
+  try {
+    memory = await query(`SELECT state_json FROM planner_memory WHERE business_id = ${sql(business)} AND customer_id = ${sql(customer.id)}`);
+  } catch {
+    memory = [];
+  }
+  const draft = memory[0] ? JSON.parse(memory[0].state_json).snapshot.orders.map(([, stored]) => stored).find((stored) => stored.order.state === "armando") : undefined;
+  if (draft) return draft.order;
+  const order = (
+    await query(
+      `SELECT o.id, o.state, o.current_version AS version, v.total_centavos AS total, v.fulfillment_mode AS mode, v.place_text, v.delivery_fee_centavos AS fee
+       FROM orders o JOIN order_versions v ON v.business_id = o.business_id AND v.order_id = o.id AND v.version = o.current_version
+       WHERE o.business_id = ${sql(business)} AND o.customer_id = ${sql(customer.id)} ORDER BY o.created_at_ms DESC, o.rowid DESC LIMIT 1`,
+    )
+  )[0];
+  if (!order) return null;
+  const lines = await query(
+    `SELECT l.line_no, l.product_id, COALESCE(p.canonical_name, sp.name) AS product_name, l.customer_text, l.qty_milli, l.unit_price_centavos, l.unit, l.restricted, l.excluded_from_total
+     FROM order_lines l
+     LEFT JOIN products p ON p.business_id = l.business_id AND p.id = l.product_id
+     LEFT JOIN store_products sp ON sp.business_id = l.business_id AND sp.id = l.product_id
+     WHERE l.business_id = ${sql(business)} AND l.order_id = ${sql(order.id)} AND l.version = ${order.version} ORDER BY l.line_no`,
+  );
+  const fee = order.mode === "delivery" ? order.fee : null;
+  return {
+    orderId: order.id,
+    version: order.version,
+    state: order.state,
+    total: order.total === null || fee === null ? order.total : order.total - fee,
+    fulfillment: order.mode === null ? null : order.mode === "pickup" ? { mode: "pickup" } : { mode: "delivery", placeText: order.place_text, fee },
+    lines: lines.map((line) => ({
+      lineId: `L${line.line_no}`,
+      text: line.customer_text,
+      productId: line.product_id,
+      productName: line.product_name,
+      quantity: line.qty_milli === null ? null : fromThousandths(line.qty_milli),
+      unit: line.unit,
+      unitPrice: line.unit_price_centavos,
+      availability: line.excluded_from_total === 1 && line.restricted !== 1 ? "se_acabo" : "no_se",
+      restricted: line.restricted === 1,
+      mark: null,
+    })),
+  };
 }
 
 async function pendientesOf(phone) {
@@ -324,7 +411,9 @@ async function run(scenario, phones, facts) {
   const signatures = [];
   const orderSnapshots = [];
   let runnerError = null;
-  for (const [stepIndex, step] of scenario.steps.entries()) {
+  // --deed: a change after confirming waits for the store's approval (K12) instead of a second Confirmar.
+  const steps = args.deed === true && scenario.deedSteps !== undefined ? scenario.deedSteps : scenario.steps;
+  for (const [stepIndex, step] of steps.entries()) {
     const seen = customer.botTexts.length;
     try {
       if (step.say !== undefined) await customer.say(step.say);
@@ -362,7 +451,7 @@ async function run(scenario, phones, facts) {
     }
   }
   const verdict = gradeScenario({
-    expect: scenario.expect,
+    expect: args.deed === true && scenario.deedExpect !== undefined ? scenario.deedExpect : scenario.expect,
     order,
     pendientes,
     botTexts: customer.botTexts,

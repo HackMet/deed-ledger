@@ -332,14 +332,15 @@ describe("Pendientes: the owner says if the words are the product, with one tap"
   });
 });
 
-describe("Tienda: how a product is sold", () => {
+describe("Productos: how a product is sold", () => {
   it("the owner sets por libra and a usual amount; a bad amount is refused and nothing changes", async () => {
     const h = harness({ env: testEnv({ PRETEND_ENGINE: "1" } as unknown as Partial<Env>) });
     const { store, pollo } = await storeWithCatalog();
     const s = await owners(h, store);
     const base = { producto: pollo, nombre: "Pollo entero", precio: "60" };
 
-    const form = await s.get(`/console/tienda/editar?producto=${pollo}`);
+    // Tienda's edit screen sends the owner to the product's page on Productos, the one list.
+    const form = await s.get(`/console/productos/${pollo}`);
     expect(form).toContain("Cómo se vende");
     expect(form).toContain(`name="vende" value="" checked`);
 
@@ -347,8 +348,7 @@ describe("Tienda: how a product is sold", () => {
     expect(await rows(`SELECT sold_by, usual_quantity_milli FROM store_product_selling WHERE product_id = ?`, pollo)).toEqual([
       { sold_by: "weight", usual_quantity_milli: 500 },
     ]);
-    expect(await s.get("/console/tienda")).toContain("Se vende por libra · De siempre: 0.5 lb");
-    expect(await s.get(`/console/tienda/editar?producto=${pollo}`)).toContain(`name="vende" value="libra" checked`);
+    expect(await s.get(`/console/productos/${pollo}`)).toContain(`name="vende" value="libra" checked`);
 
     for (const usual of ["1,5", "0", "media"]) {
       const refused = await s.post("/console/tienda/editar", { ...base, precio: "99", vende: "unidad", usual });
@@ -360,7 +360,7 @@ describe("Tienda: how a product is sold", () => {
     // Back to not said.
     await s.post("/console/tienda/editar", { ...base, vende: "", usual: "" });
     expect((await setup().product(store, pollo))!).toMatchObject({ soldBy: null, usualQuantity: null });
-    expect(await s.get("/console/tienda")).not.toContain("Se vende por");
+    expect(await s.get(`/console/productos/${pollo}`)).toContain(`name="vende" value="" checked`);
   });
 });
 

@@ -37,7 +37,9 @@ ${numbers.map(
 }
 
 export const TRY_STYLE = `
-.try{display:block;margin:8px 10px;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:var(--card)}
-.try .number{display:block;margin-top:2px;font-size:20px;font-weight:600;letter-spacing:.5px}
-.try-go{display:block;margin:10px 0 8px;min-height:48px;line-height:48px;border-radius:10px;background:var(--accent);color:#fff;text-align:center;font-weight:600;text-decoration:none}
+.try{display:block;margin:12px 14px;padding:16px;border:1px solid #cfddce;border-radius:18px;background:var(--soft)}
+.try .label{display:block;font-weight:700}
+.try .number{display:block;margin-top:4px;font-size:28px;font-weight:800;letter-spacing:-.3px;line-height:1.2}
+.try-go{display:flex;align-items:center;justify-content:center;margin:12px 0 8px;min-height:56px;border-radius:14px;background:var(--ink);color:#fff;text-align:center;font-size:17px;font-weight:800;text-decoration:none}
+.try .hint{display:block;font-size:14px;color:var(--mute)}
 `;

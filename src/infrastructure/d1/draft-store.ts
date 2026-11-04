@@ -1,4 +1,5 @@
 import type { ReceiptDrafts, StoredReceiptDraft } from "../../application/engine/receipt-handler";
+import { productNameKey } from "../../domain/store-setup";
 import type { Lease } from "../../application/ports";
 import type { ReceiptClaim } from "../../domain/receipt";
 
@@ -89,6 +90,17 @@ export class D1ReceiptDrafts implements ReceiptDrafts {
         .prepare(`SELECT id FROM products WHERE business_id = ? AND canonical_name = ? ORDER BY created_at_ms, id LIMIT 1`)
         .bind(lease.businessId, name)
         .first<{ id: string }>();
+      // One product list (0031): its Productos row too, same ID, no price. Skipped when it can't be made
+      // (a name too long for it, or another product has the name); the list still reads it from `products`.
+      await this.db
+        .prepare(
+          `INSERT OR IGNORE INTO store_products
+             (id, business_id, name, name_key, other_names_json, price_centavos, no_hay, created_at_ms, updated_at_ms)
+           SELECT id, business_id, canonical_name, ?, '[]', NULL, 0, created_at_ms, created_at_ms FROM products
+           WHERE business_id = ? AND id = ?`,
+        )
+        .bind(productNameKey(name), lease.businessId, row!.id)
+        .run();
       found.set(name, row!.id);
     }
     return found;
