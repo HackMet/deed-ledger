@@ -316,7 +316,7 @@ export function typedDecision(text: string): Decision | null {
 const NO_REPLY = null;
 
 /** An order is open until it's delivered or cancelled. */
-const OPEN_STATES: readonly OrderState[] = ["armando", "por_confirmar", "confirmado", "preparando", "listo"];
+export const OPEN_STATES: readonly OrderState[] = ["armando", "por_confirmar", "confirmado", "preparando", "listo", "en_camino"];
 
 /**
  * The reply to a customer for an engine outcome, or null when the outcome gets none (a console
@@ -421,11 +421,12 @@ export function renderNotice(notice: CustomerNotice["notice"]): RenderedReply {
       // rejected payment (only payment_confirmed). The copy claims no state either.
       return reply("notice_payment_rejected", COPY.paymentRejected);
     // Proposed (K12, K13), pending Angel's OK on the copy. The contract has no claim for a reviewed
-    // change, so those two claim nothing; the dispatch claims en_camino.
+    // change, so those two claim where the order stands, which also resolves them to it (C11); the
+    // dispatch claims en_camino.
     case "change_approved":
-      return reply("notice_change_approved", "Tu cambio fue aprobado. Tu pedido ya quedó actualizado ✅");
+      return reply("notice_change_approved", "Tu cambio fue aprobado. Tu pedido ya quedó actualizado ✅", [standsOrMovedOn(notice.order)]);
     case "change_declined":
-      return reply("notice_change_declined", `No pudimos hacer el cambio: ${notice.reason}. Tu pedido sigue como estaba.`);
+      return reply("notice_change_declined", `No pudimos hacer el cambio: ${notice.reason}. Tu pedido sigue como estaba.`, [standsOrMovedOn(notice.order)]);
     case "order_dispatched":
       return reply(
         "notice_order_dispatched",
@@ -455,8 +456,17 @@ function one(claim: Claim): ClaimCheck {
   return { anyOf: [claim] };
 }
 
-function stateIn(order: OrderView, states: readonly OrderState[]): ClaimCheck {
+export function stateIn(order: { readonly orderId: string; readonly version: number }, states: readonly OrderState[]): ClaimCheck {
   return { anyOf: states.map((state) => ({ type: "order_state", orderId: order.orderId, version: order.version, state })) };
+}
+
+/** The steps a staff tap moves an order through while a notice waits to go out. */
+const STAFF_STEPS: readonly OrderState[] = ["confirmado", "preparando", "listo"];
+
+/** The version is where the notice found it, or a staff step further on: a tap in between must not block the notice. */
+function standsOrMovedOn(order: OrderView): ClaimCheck {
+  const at = STAFF_STEPS.indexOf(order.state);
+  return stateIn(order, at === -1 ? [order.state] : STAFF_STEPS.slice(at));
 }
 
 function soldOut(line: OrderLineView | undefined): ClaimCheck[] {
@@ -1047,8 +1057,8 @@ function substituteReply(order: OrderView, lineId: string): RenderedReply {
   const line = order.lines.find((l) => l.lineId === lineId);
   const substitute = line?.substitute ?? null;
   if (line === undefined || substitute === null) {
-    // Nothing to offer after all: say only what's certain.
-    return reply("notice_substitute_offered", COPY.safeReply);
+    // Nothing to offer after all: say only what's certain. It is still about this order (C11).
+    return reply("notice_substitute_offered", COPY.safeReply, [standsOrMovedOn(order)]);
   }
   const claims: ClaimCheck[] = [stateIn(order, ["confirmado", "preparando"]), ...soldOut(line)];
   const offered = quote(substitute.productName);

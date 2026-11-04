@@ -20,6 +20,8 @@ Last updated: Wed Nov 4, 2026, morning Honduras time, by Claude Code.
     stays out of the video.
   - **Decided (D-55, D-56):** the contract additions are accepted, and C11's code stays invisible. Angel also says the
     customer doesn't need the quantity shown while a change waits, so the `statusReply` diff is dropped.
+  - **C11 stays partial:** the Libro shows each reply's WhatsApp ID, the search is a POST, and the order notices resolve. The owner's words from Pendientes
+    and a safe reply don't, and a "no hay" notice on a catalog line always goes as the safe reply (`docs/handoff-pr-71.md`, item 10).
   - **New request, not built:** when the stock is short, offer what there is. The engine has no stock read yet.
   - **Waiting on Angel:** append-only triggers in the store's migrations (C5), `saidName`, and the real order with Muse.
 - **Deed core (`src/deed-core/`, in PR #71):** the fact batch lives in `src/deed-core/d1-store.ts`. The store's evidence

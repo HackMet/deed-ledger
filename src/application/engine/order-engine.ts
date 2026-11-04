@@ -678,6 +678,12 @@ export class OrderEngine implements Engine {
     };
   }
 
+  /** The customer's open order and its version, or null. */
+  async openOrderRef(context: CustomerContext): Promise<OrderRef | null> {
+    const open = await this.deps.store.openOrder(context, context.customerId);
+    return open === null ? null : { orderId: open.view.orderId, version: open.view.version };
+  }
+
   async verifyClaims(tenant: Tenant, claims: readonly Claim[]): Promise<readonly boolean[]> {
     const answers = await Promise.all(claims.map((claim) => this.verifyClaim(tenant, claim)));
     await this.recordClaims(tenant, claims, answers);

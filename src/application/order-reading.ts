@@ -8,6 +8,7 @@
  * rules, only says what was said; then the planner decides the turn (application/planner) and the
  * reading comes back with its plan. A planner failure leaves the plan out: the classic path.
  */
+import type { OrderRef } from "../domain/contract/actions";
 import type { BurstReading, Observation, PerceptionContext } from "../domain/contract/observation";
 import { type BurstMessage, isSupportedImage } from "../domain/perception/burst";
 import { LEASE_TTL_MS, READING_MAX_MS, TRANSCRIBE_MAX_MS } from "../domain/processing";
@@ -43,6 +44,11 @@ export interface OrderReadingSource {
 }
 
 /** The engine's reads for perception, when it has them. */
+/** The engine's read of which order is the customer's open one, for a line about it that names none. */
+export interface OpenOrderSource {
+  openOrderRef(context: CustomerContext): Promise<OrderRef | null>;
+}
+
 export function readingSourceOf(engine: Engine): OrderReadingSource | null {
   const candidate = engine as Partial<OrderReadingSource>;
   return typeof candidate.perceptionContext === "function" && typeof candidate.catalog === "function"

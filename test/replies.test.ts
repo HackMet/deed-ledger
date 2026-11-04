@@ -253,7 +253,7 @@ describe("templates", () => {
     const about = render({ type: "ask", question: "quantity", line: 1, order: readbackOrder });
     expect(about.claims).toEqual([
       {
-        anyOf: (["armando", "por_confirmar", "confirmado", "preparando", "listo"] as const).map((state) => ({
+        anyOf: (["armando", "por_confirmar", "confirmado", "preparando", "listo", "en_camino"] as const).map((state) => ({
           type: "order_state",
           orderId: ids.order,
           version: 1,

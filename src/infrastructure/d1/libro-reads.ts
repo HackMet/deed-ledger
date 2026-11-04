@@ -128,6 +128,24 @@ export class D1LibroReads {
     }));
   }
 
+  /**
+   * The ID WhatsApp gave each of those replies, by reply. Read apart from `read`, so it can't reach the exported
+   * entry: these IDs embed the phone number, and they are for the store's logged-in members only (D-56).
+   */
+  async whatsappIds(tenant: Tenant, orderId: string): Promise<ReadonlyMap<string, string>> {
+    const { results } = await this.db
+      .prepare(
+        `SELECT o.id, o.provider_message_id FROM outbound_messages o
+         WHERE o.business_id = ?1 AND o.provider_message_id IS NOT NULL AND o.claims_json IS NOT NULL AND o.claims_blocked_at_ms IS NULL
+           AND EXISTS (
+             SELECT 1 FROM json_each(o.claims_json) c, json_each(c.value, '$.anyOf') a WHERE json_extract(a.value, '$.orderId') = ?2
+           )`,
+      )
+      .bind(tenant.businessId, orderId)
+      .all<{ id: string; provider_message_id: string }>();
+    return new Map(results.map((row) => [row.id, row.provider_message_id]));
+  }
+
   /** The refused attempts on this order: refusal rows only, never the claim checks. */
   private async refusalsOf(tenant: Tenant, orderId: string): Promise<LibroRefusal[]> {
     const { results } = await this.db

@@ -355,9 +355,18 @@ describe("/console/deed/:orderId/entrada.json: the entry a third party re-judges
     const members = await env.DB.prepare(`UPDATE memberships SET display_name = ?1 WHERE business_id = ?2`).bind(MEMBER_NAME, s.businessId).run();
     expect(named.meta.changes).toBeGreaterThan(0);
     expect(members.meta.changes).toBeGreaterThan(0);
+    // The ID WhatsApp gave a reply embeds the phone number: the screen shows it, the entry never holds it.
+    const whatsappId = `wamid.${crypto.randomUUID()}`;
+    await env.DB.prepare(
+      `UPDATE outbound_messages SET provider_message_id = ?1 WHERE id = (SELECT id FROM outbound_messages WHERE business_id = ?2 AND provider_status = 'delivered')`,
+    )
+      .bind(whatsappId, s.businessId)
+      .run();
     const h = harness({ engine });
     const cookie = await login(h, s, "staff");
+    expect(await (await get(h, `/console/deed/${encodeURIComponent(orderId)}/libro`, cookie)).text()).toContain(whatsappId);
     const body = await (await get(h, `/console/deed/${encodeURIComponent(orderId)}/entrada.json`, cookie)).text();
+    expect(body).not.toContain(whatsappId);
     expect(body).not.toContain(CUSTOMER_NAME);
     expect(body).not.toContain(MEMBER_NAME);
     expect(body).not.toContain(REPLY_TEXT);
