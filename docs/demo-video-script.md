@@ -1,0 +1,38 @@
+# Demo video script (3:00)
+
+Every line of output shown on screen below was measured, with its source. A scene marked **[TBD]** may be shot only
+after `./demo.sh` shows its step green (✓) on the recording machine; until then the scene is not in the cut. Spanish
+appears only where it quotes the product's own copy.
+
+**Status (2026-11-03).** `./demo.sh` is on the local branches `claude/demo-on-main` and `claude/owner-on-main`, not
+on `main`. It exits 0 there: 29 steps, 29 passed (`claude/demo-on-main` at `47a2d5c`, twice; `claude/owner-on-main`
+at `e446233`, `DEMO_PORT=8795 ./demo.sh`). The staff-side steps that failed on `claude/demo-env` at `cbce8de` (A's
+start, ready, dispatch and delivered; D's Aprobar; F's Rechazar; C's and E's refused taps) all pass, so scenes 5
+and 6 can be shot. K8's attack run passed review: 9 attacks, 0 false facts (`claude/adversary` at `dd3a342`).
+
+**On screen for the whole video, bottom strip, never hidden:** `PERCEPTION: RECORDED (6 fixture, 0 muse) — fixtures
+until Angel records real Muse outputs. The engine, ledger and console are live code.` (the exact first line
+`./demo.sh` prints). If Angel records real Muse outputs before the cut, change the counts to what `demo.sh` prints
+then.
+
+| Time | Scene | On screen | Narration | Measured output shown |
+|---|---|---|---|---|
+| 0:00-0:15 | 1. The problem | The pilot store's paper notebook; a WhatsApp chat | "A mercadito in Tocoa keeps its orders in a notebook. The owner already lives on WhatsApp, so the assistant works there. Customers ask in their own words, and the assistant never says something the records can't back up." | none |
+| 0:15-0:35 | 2. One command | Terminal: `./demo.sh`, first line (the PERCEPTION label) in a highlight box | "One command runs six synthetic customers through the real engine and ledger. Perception is recorded fixtures until Angel records real Muse outputs; everything after it is live code." | The label line, verbatim, as `demo.sh` prints it |
+| 0:35-1:05 | 3. Exactly once (customer B) | Terminal lines for B; then the fact count | "Customer B says confirm three times. The engine derives the operation key itself, so the second and third answers are the first outcome. One confirm fact, not three." | `✓ B · says “confirmar” → “Quedó confirmado tu pedido. Te aviso cuando esté listo.” · [order_confirm +1]`, then twice `→ “Tu pedido ya estaba confirmado.” · [no facts]`, then `✓ B · check: order_confirm facts from B's three confirms → 1 order_confirm fact(s)` (K10 report, run 1, `3912a38`; RK10 reran at `cbce8de`) |
+| 1:05-1:30 | 4. The trail (customer E) | Browser, `/console/pedidos/<E's order>`: the header reads "Cancelado · Versión 2 · Cancelado"; in the trail list, version 1 shows "cerrado por … (reemplazado)" and the confirm shows "cerrado por … (cancelado)", both in red text | "E ordered, changed it to three pounds of sugar, confirmed, then cancelled. Version 1 was superseded, not erased. The confirm is closed by the cancellation. Nothing was edited; each step is a fact that points at what it came from." | `✓ E · check: trail at /console/pedidos/<E> → trail: reemplazado, cancelado` (K10 report, runs 1 and 2). The red text is the page's `.closed` style, which applies to both closed lines (`src/interfaces/http/console/pedidos.ts` at `cbce8de`). E's row in the Pedidos list also has a red border, because a cancelled order is red. |
+| 1:30-1:50 | 4b. The Deed view (customer E) | Browser, "Ver en Deed" from E's trail: `/console/deed/<E's order>`, the facts as a graph, closed ones red, the refused "Intento rechazado" box beside the fact that decided it; then `/console/deed/verificaciones` | "Every fact is a node; a cancellation closes what rests on it. The staff tap that came after is refused, and the engine records why." | Measured on `claude/deed-on-main` (`8ec9f87`), `DEMO_PORT=8795 ./demo.sh --serve`, 2026-11-03. Graph: 2 closed nodes, 2 live, 1 "Intento rechazado". Feed: "Intentos rechazados 4", by reason "ya se hizo antes" 2 and "el estado no lo permite" 2; row "✗ Intentó marcar listo · ancestro cancelado". The feed shows "Afirmaciones verificadas 0": never narrate claim checks over it. Don't film the replay slider as "now": it stops short of the last event. |
+| 1:50-2:15 | 5. Owner decides a change (D and F) | D: owner taps "Aprobar" on the change request, the customer hears "Tu cambio fue aprobado". F: owner taps "Rechazar" with the reason "ya no hay azúcar", the customer hears "No pudimos hacer el cambio: ya no hay azúcar" | "A confirmed order can't be silently edited. The customer asks for a change; the owner approves it, or declines it with a reason the customer hears." | `✓ D · owner taps Aprobar (“Sí hay, va”) → /console/pedidos/<D>?aviso=aprobado · [order_confirm +1, order_version +1, change_review +1]` and `✓ F · owner taps Rechazar (“ya no hay azúcar”) → /console/pedidos/<F>?aviso=rechazado · [change_review +1]` (`claude/owner-on-main` at `e446233`). The step passes only when D's outbox has "Tu cambio fue aprobado" and F's has "No pudimos hacer el cambio: ya no hay azúcar" (`demo/run.mjs`). |
+| 2:15-2:30 | 6. Dispatch (customer A) | A's order in **blue** "en camino" with the courier's name (Mario) | "Staff send the order out with a courier; the customer hears 'va en camino con Mario'. The dispatch fact rests on the confirm." | `✓ A · staff dispatches with Mario → /console/pedidos/<A>?aviso=despachado · [order_status +1]`, then `✓ A · staff taps Entregado (mark_delivered) → … · [order_status +1]` (`claude/owner-on-main` at `e446233`). The dispatch step passes only when the order is `en_camino` and A's outbox matches /va en camino con Mario/i (`demo/run.mjs`). |
+| 2:30-2:48 | 7. We attacked it | The attack table from the K8 run, one row per attack with "refused" | "We wrote attacks: stale versions, replays, facts resting on cancelled ones, claims that outlive a cancel. Here is how many we ran and how many false facts got in." | `Attacks: 9 (reaching the engine) · false facts 0 · missing expected facts 0 · wrong notices 0 · intake only, not counted: 1` then `RESULT: no false fact; every attack refused for the right reason.` (`node scripts/adversary.mjs` on `claude/adversary` `dd3a342`, exit 0, 2026-11-03). Say "nine attacks", not ten: one is intake-only. |
+| 2:48-3:00 | 8. Built during the hackathon | `docs/built-during-hackathon.md` scrolling; the README top block | "Everything here was built after the kickoff on October 26; every commit and pull request is listed with its date. The live link and the repo are below." | `146 commits, 0 dated before kickoff, on origin/main 7bec048` (`node scripts/built-during.mjs`, 2026-11-03); [TBD: regenerate before recording and use that number]; [TBD: live link]; [TBD: video link] |
+
+## Recording checklist
+
+1. Run `./demo.sh` on the machine that records. Use only scenes whose steps are ✓. A run takes about 4.5 minutes
+   (K10 report), so record the terminal once and cut it.
+2. Keep the PERCEPTION strip on screen in every scene.
+3. Never say "live Muse" or "reads photos" about the demo: perception is recorded fixtures.
+4. Regenerate the numbers right before recording: `node scripts/built-during.mjs`, `npm test`.
+5. If scene 7 is not ready, or a scene's step is ✗ on the recording machine, cut it: the cut is the remaining scenes, stretched to 3:00, with the failing steps named
+   in the narration as not done yet. A shorter honest video beats a long one that shows a step that fails.
