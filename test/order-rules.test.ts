@@ -56,6 +56,7 @@ describe("changing an unmatched line's quantity", () => {
     ["1/0 aceite", "1", "1/0 aceite"],
     ["treinta y media libra", "30", "treinta y media libra"],
     ["dos y tres panes", "2", "y tres panes"],
+    ["ciento veinte huevos", "100", "ciento veinte huevos"],
     ["Tres Rosas", "1", "Tres Rosas"],
     ["7 up", "2", "7 up"],
     ["2 litros de coca", "3", "2 litros de coca"],

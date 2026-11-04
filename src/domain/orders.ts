@@ -45,7 +45,6 @@ const NUMBER_WORDS: ReadonlyMap<string, number> = new Map([
   ["una", 1000],
   ["veintiun", 21000],
   ["cien", 100000],
-  ["ciento", 100000],
   ...UNITS.map((word, i) => [word, (i + 1) * 1000] as const),
   ...TEENS.map((word, i) => [word, (i + 10) * 1000] as const),
   ...TWENTIES.map((word, i) => [word, (i + 21) * 1000] as const),
