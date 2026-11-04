@@ -22,6 +22,9 @@
     // "1" turns on the pretend engine with its state in D1 (migration 0016), for a deployed demo until
     // the real engine lands. The console still needs login. DEV_CONSOLE wins when both are set.
     "PRETEND_ENGINE": "",
+    // "1" runs the order engine on D1 (OrderEngine), with Angel's reader reading customers' messages. Off
+    // by default. It wins over PRETEND_ENGINE and DEV_CONSOLE.
+    "DEED_ENGINE": "1",
     // "planner" lets the planner (a second Muse Spark call per burst) decide each conversation step
     // (D-45); "classic" (the default) keeps the engine's own questions. The simulator's --planner sets it.
     "CONVERSATION": "classic",

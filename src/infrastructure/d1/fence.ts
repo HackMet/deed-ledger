@@ -7,6 +7,15 @@ export const DB_NOW_MS = "CAST(unixepoch('subsec') * 1000 AS INTEGER)";
 /** A precondition that must hold inside the batch, and how to re-check it after a failure. */
 export type Guard = BatchGuard;
 
+/** Guard rows deleted per statement, under D1's limit of 100 bound values per statement. */
+export const GUARD_CLEANUP_CHUNK = 90;
+
+function chunks<T>(items: readonly T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let start = 0; start < items.length; start += size) out.push(items.slice(start, start + size));
+  return out;
+}
+
 /**
  * Runs statements as one D1 batch (one transaction) that applies only while `lease` is held,
  * by the database's clock, and every extra guard holds.
@@ -43,12 +52,13 @@ export async function guardedBatch(
     db.prepare(`INSERT INTO batch_guards (guard_id, ok) VALUES (?, (${guard.holdsSql}))`).bind(ids[n], ...guard.params);
   const guardStatements = guards.map((guard, n) => insertGuard(guard, n));
   const postStatements = post.map((guard, n) => insertGuard(guard, guards.length + n));
-  const cleanup = db
-    .prepare(`DELETE FROM batch_guards WHERE guard_id IN (${ids.map(() => "?").join(", ")})`)
-    .bind(...ids);
+  // D1 binds at most 100 values per statement, so a batch with many guards cleans up in chunks.
+  const cleanup = chunks(ids, GUARD_CLEANUP_CHUNK).map((chunk) =>
+    db.prepare(`DELETE FROM batch_guards WHERE guard_id IN (${chunk.map(() => "?").join(", ")})`).bind(...chunk),
+  );
 
   try {
-    const results = await db.batch([...guardStatements, ...statements, ...postStatements, cleanup]);
+    const results = await db.batch([...guardStatements, ...statements, ...postStatements, ...cleanup]);
     return results.slice(guards.length, guards.length + statements.length);
   } catch (error) {
     for (const guard of all) {

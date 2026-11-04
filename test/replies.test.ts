@@ -109,6 +109,12 @@ function sampleNotice(kind: CustomerNotice["notice"]["type"]): CustomerNotice["n
       return { type: "payment_confirmed", paymentClaimId: "claim-1", amount: 31500 };
     case "payment_rejected":
       return { type: "payment_rejected", paymentClaimId: "claim-1" };
+    case "change_approved":
+      return { type: "change_approved", order: soldOutLine1 };
+    case "change_declined":
+      return { type: "change_declined", order: soldOutLine1, reason: "ya está empacado" };
+    case "order_dispatched":
+      return { type: "order_dispatched", order: { ...soldOutLine1, state: "en_camino" }, courierName: "Marvin" };
     default: {
       const missing: never = kind;
       throw new Error(`no sample for ${String(missing)}`);
@@ -247,7 +253,7 @@ describe("templates", () => {
     const about = render({ type: "ask", question: "quantity", line: 1, order: readbackOrder });
     expect(about.claims).toEqual([
       {
-        anyOf: (["armando", "por_confirmar", "confirmado", "preparando", "listo"] as const).map((state) => ({
+        anyOf: (["armando", "por_confirmar", "confirmado", "preparando", "listo", "en_camino"] as const).map((state) => ({
           type: "order_state",
           orderId: ids.order,
           version: 1,
@@ -546,3 +552,23 @@ const _claimKinds: Record<Claim["type"], true> = {
   store_hours: true,
 };
 void _claimKinds;
+
+describe("saidName: a line's words show its quantity once", () => {
+  const base = (readback as Extract<EngineOutcome, { type: "readback" }>).order;
+  const order = (text: string, quantity: string, unit: string | null = null): EngineOutcome => ({
+    type: "readback",
+    order: { ...base, lines: [{ ...base.lines[0]!, productId: null, productName: null, text, quantity, unit }] },
+  } as EngineOutcome);
+  const bullet = (outcome: EngineOutcome) => renderOutcome(outcome, {} as never)?.body.split("\n").find((line) => line.startsWith("• "));
+
+  it.each([
+    ["doce panes", "12", "• 12 "],
+    ["2lb frijol", "2", "• 2 "],
+    ["Tres Rosas", "1", "• 1 "],
+  ])("reads %s × %s", (text, quantity, lead) => {
+    const shown = bullet(order(text, quantity))!;
+    expect(shown.startsWith(lead)).toBe(true);
+    expect(shown.toLowerCase()).not.toMatch(/• 12 doce|• 2 2lb/);
+    if (text === "Tres Rosas") expect(shown).toContain("Tres Rosas");
+  });
+});

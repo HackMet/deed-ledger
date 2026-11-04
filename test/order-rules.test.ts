@@ -1,11 +1,82 @@
 import { describe, expect, it } from "vitest";
 import { totalOf } from "../src/domain/order-total";
-import { labelOf, lineByLabel, nextVersion } from "../src/domain/orders";
+import { labelOf, lineByLabel, nextVersion, wordsWithoutQuantity } from "../src/domain/orders";
 import type { OrderLineView } from "../src/domain/contract/outcomes";
 import { changedOrder, readbackOrder } from "./fixtures/contract";
 
 const [aceite, arroz, azucar, jabon] = readbackOrder.lines as [OrderLineView, OrderLineView, OrderLineView, OrderLineView];
 const priced = (over: Partial<OrderLineView>): OrderLineView => ({ ...aceite, ...over });
+
+describe("changing an unmatched line's quantity", () => {
+  const unmatched = priced({ productId: null, productName: null, text: "1 aceite clover", quantity: "1" });
+
+  it("drops the old quantity from its words, so the line shows one number", () => {
+    const next = nextVersion({ version: 1, lines: [unmatched] }, { op: "set_quantity", label: "L1", quantity: "3" });
+    expect(next?.lines[0]).toMatchObject({ text: "aceite clover", quantity: "3" });
+  });
+
+  it("keeps a matched line's words", () => {
+    const next = nextVersion({ version: 1, lines: [{ ...aceite, text: "2 aceite" }] }, { op: "set_quantity", label: "L1", quantity: "3" });
+    expect(next?.lines[0]?.text).toBe("2 aceite");
+  });
+
+  it("keeps a number that isn't the quantity, so brands and sizes survive", () => {
+    const line = priced({ productId: null, productName: null, text: "Tres Rosas", quantity: "1" });
+    const next = nextVersion({ version: 1, lines: [line] }, { op: "set_quantity", label: "L1", quantity: "2" });
+    expect(next?.lines[0]?.text).toBe("Tres Rosas");
+  });
+
+  it.each([
+    ["1 aceite clover", "1", "aceite clover"],
+    ["2,5 libras de queso", "2.5", "libras de queso"],
+    ["2.5 libras de queso", "2.5", "libras de queso"],
+    ["dos libras de azúcar", "2", "libras de azúcar"],
+    ["Una bolsa", "1", "bolsa"],
+    ["uno de arroz", "1", "de arroz"],
+    ["un jabón", "1", "jabón"],
+    ["tres tomates", "3", "tomates"],
+    ["diez huevos", "10", "huevos"],
+    ["2lb azucar", "2", "lb azucar"],
+    ["1/2 libra de queso", "0.5", "libra de queso"],
+    ["media libra de queso", "0.5", "libra de queso"],
+    ["doce huevos", "12", "huevos"],
+    ["x2 aceite", "2", "aceite"],
+    ["catorce huevos", "14", "huevos"],
+    ["dieciséis panes", "16", "panes"],
+    ["veintidós panes", "22", "panes"],
+    ["treinta y dos panes", "32", "panes"],
+    ["dos y medio de pollo", "2.5", "de pollo"],
+    ["una y media libra", "1.5", "libra"],
+    ["2 1/2 libras de pollo", "2.5", "libras de pollo"],
+    ["1/3 libra de queso", "0.333", "libra de queso"],
+    ["x 2 aceite", "2", "aceite"],
+    ["02 aceite", "2", "aceite"],
+    [" 2 aceite", "2", "aceite"],
+    ["2 3 huevos", "3", "2 3 huevos"],
+    ["1/0 aceite", "1", "1/0 aceite"],
+    ["treinta y media libra", "30", "treinta y media libra"],
+    ["dos y tres panes", "2", "y tres panes"],
+    ["ciento veinte huevos", "100", "ciento veinte huevos"],
+    ["treinta y una libras de azucar", "31", "libras de azucar"],
+    ["treinta y un huevos", "31", "huevos"],
+    ["cuarenta y uno huevos", "41", "huevos"],
+    ["treinta y diez huevos", "40", "treinta y diez huevos"],
+    ["veintiuna libras", "21", "libras"],
+    ["TREINTA Y DOS huevos", "32", "huevos"],
+    ["cien y dos huevos", "102", "cien y dos huevos"],
+    ["Tres Rosas", "1", "Tres Rosas"],
+    ["7 up", "2", "7 up"],
+    ["2 litros de coca", "3", "2 litros de coca"],
+    ["aceite 2", "2", "aceite 2"],
+    ["1/3 libra", "1", "1/3 libra"],
+    ["constructor uno", "1", "constructor uno"],
+    ["aceite", "1", "aceite"],
+    ["2", "2", "2"],
+    ["2 aceite", null, "2 aceite"],
+  ])("reads %s × %s as %s", (text, quantity, words) => {
+    expect(wordsWithoutQuantity(text, quantity)).toBe(words);
+  });
+});
 
 describe("totalOf", () => {
   it("matches the readback fixture: L 315 pickup, L 345 after the change", () => {

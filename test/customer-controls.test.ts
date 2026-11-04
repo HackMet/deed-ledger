@@ -526,6 +526,32 @@ describe("deletion", () => {
     expect(await rows(`SELECT 1 FROM customer_tombstones WHERE business_id = ?`, other.businessId)).toEqual([]);
   });
 
+  it("removes that customer's planner memory (words, name, places) and no one else's", async () => {
+    const { store, other, h, a, ids } = await threeCustomers();
+    const remember = (businessId: string, customerId: string) =>
+      env.DB.prepare(
+        `INSERT INTO planner_memory (business_id, customer_id, order_id, version, state_json, updated_at_ms) VALUES (?, ?, NULL, 1, ?, 1)`,
+      )
+        .bind(businessId, customerId, JSON.stringify({ said: "frente a la iglesia, casa verde" }))
+        .run();
+    await remember(store.businessId, ids.a);
+    await remember(store.businessId, ids.b);
+    await remember(other.businessId, ids.aElsewhere);
+
+    await a.say("Borren mis datos");
+    await h.runCron();
+
+    const left = await rows<{ business_id: string; customer_id: string }>(
+      `SELECT business_id, customer_id FROM planner_memory WHERE business_id IN (?, ?) ORDER BY customer_id`,
+      store.businessId,
+      other.businessId,
+    );
+    expect(left).toHaveLength(2);
+    expect(left).not.toContainEqual({ business_id: store.businessId, customer_id: ids.a });
+    expect(left).toContainEqual({ business_id: store.businessId, customer_id: ids.b });
+    expect(left).toContainEqual({ business_id: other.businessId, customer_id: ids.aElsewhere });
+  });
+
   it("a late webhook doesn't recreate the deleted customer; a new message later starts a new one", async () => {
     const store = await storeWithOwner();
     const h = gatedHarness();

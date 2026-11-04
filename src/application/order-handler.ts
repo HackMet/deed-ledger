@@ -46,9 +46,11 @@ import {
   decisionKey,
   greetingLine,
   joinBlocks,
+  OPEN_STATES,
   questionText,
   type RenderedReply,
   safeReply,
+  stateIn,
   unansweredCount,
   WHAT_TO_ORDER,
 } from "../domain/replies";
@@ -56,7 +58,7 @@ import { type CustomerGateDeps, gateCustomerJob } from "./customer-gate";
 import type { AnsweredQuestion, CustomerContext, Engine, EngineResult, LineMatch } from "./engine";
 import { BurstMediaUnreadableError, describeError } from "./errors";
 import { type AliasBook, aliasProposalCommits } from "./learned-aliases";
-import { readingSourceOf } from "./order-reading";
+import { type OpenOrderSource, readingSourceOf } from "./order-reading";
 import { plannerSourceOf } from "./planner/source";
 import { handleTestCommand, type TestCommandDeps } from "./test-commands";
 import { CUSTOMER_REPLY_TTL_MS, type ReplyContext, replyForOutcome } from "./replies";
@@ -199,7 +201,7 @@ async function handleJob(deps: OrderHandlerDeps, { lease, job, isNewestOfBurst }
   const placeTap = placeAction(job);
   if (placeTap !== null) return handlePlaceTap(deps, lease, job, facts, placeTap);
   const answer = await readbackAnswer(deps, lease, job, customer);
-  if (answer === "unseen_readback") return handleUnseenReadback(deps, lease, job);
+  if (answer === "unseen_readback") return handleUnseenReadback(deps, lease, job, customer);
   if (answer !== null) return handleAnswer(deps, lease, job, facts, answer);
 
   if (!isNewestOfBurst) {
@@ -236,12 +238,29 @@ async function asTappedNumber(deps: OrderHandlerDeps, lease: Lease, job: Job): P
 async function neverSilent(deps: OrderHandlerDeps, { lease, job, isNewestOfBurst }: JobInput, run: () => Promise<JobOutcome>): Promise<JobOutcome> {
   const outcome = await run();
   if (outcome.replies.length > 0 || !isNewestOfBurst) return outcome;
-  const body = await fallbackLine(deps, lease, job);
+  const stockAsked = await stockQuestionAgain(deps, lease, job);
+  if (stockAsked.length > 0) return { ...outcome, replies: stockAsked };
+  const line = await fallbackLine(deps, lease, job);
   deps.log.info("silent_reply_filled", { businessId: lease.businessId, conversationId: lease.conversationId, inboundId: job.id });
-  return { ...outcome, replies: [{ body, ttlMs: ORDER_REPLY_TTL_MS, closesBurst: true }] };
+  return { ...outcome, replies: [{ ...line, ttlMs: ORDER_REPLY_TTL_MS, closesBurst: true }] };
 }
 
-async function fallbackLine(deps: OrderHandlerDeps, lease: Lease, job: Job): Promise<string> {
+/** Stock's question restated with its amount and its claim: "¿Cuántos querés?" alone would lose the offer. */
+async function stockQuestionAgain(deps: OrderHandlerDeps, lease: Lease, job: Job): Promise<ReplyDraft[]> {
+  const source = readingSourceOf(deps.engine);
+  const customer = source?.shortOrder === undefined ? null : await deps.customers.ofConversation(lease);
+  if (customer === null) return [];
+  const order = await source!.shortOrder!({
+    businessId: lease.businessId,
+    conversationId: lease.conversationId,
+    customerId: customer.id,
+    jobId: job.id,
+    nowMs: deps.clock.now(),
+  });
+  return order === null ? [] : replyForOutcome(deps, { ...lease, customerId: customer.id }, { type: "readback", order });
+}
+
+async function fallbackLine(deps: OrderHandlerDeps, lease: Lease, job: Job): Promise<Pick<ReplyDraft, "body" | "claims">> {
   const source = readingSourceOf(deps.engine);
   const customer = source === null ? null : await deps.customers.ofConversation(lease);
   const perception =
@@ -254,9 +273,23 @@ async function fallbackLine(deps: OrderHandlerDeps, lease: Lease, job: Job): Pro
           jobId: job.id,
           nowMs: deps.clock.now(),
         });
-  if (perception?.pendingQuestion != null) return questionText(perception.pendingQuestion);
-  if (job.kind === "interactive") return COPY.welcome;
-  return perception?.openOrder != null ? COPY.anythingElse : WHAT_TO_ORDER;
+  // A line that keeps the open order going is about that order, so it resolves to it (C11).
+  const aboutOpenOrder = async (body: string): Promise<Pick<ReplyDraft, "body" | "claims">> => {
+    const order =
+      customer === null
+        ? null
+        : ((await (deps.engine as Partial<OpenOrderSource>).openOrderRef?.({
+            businessId: lease.businessId,
+            conversationId: lease.conversationId,
+            customerId: customer.id,
+            jobId: job.id,
+            nowMs: deps.clock.now(),
+          })) ?? null);
+    return order === null ? { body } : { body, claims: [stateIn(order, OPEN_STATES)] };
+  };
+  if (perception?.pendingQuestion != null) return aboutOpenOrder(questionText(perception.pendingQuestion));
+  if (job.kind === "interactive") return { body: COPY.welcome };
+  return perception?.openOrder != null ? aboutOpenOrder(COPY.anythingElse) : { body: WHAT_TO_ORDER };
 }
 
 function isHoursTap(job: Job): boolean {
@@ -324,6 +357,9 @@ async function handlePlaceTap(deps: OrderHandlerDeps, lease: Lease, job: Job, fa
  * A typed yes is Confirmar only when the last message the customer was sent before writing it
  * carried that readback's Confirmar button: after any other message (a question, an answer) the
  * yes may answer that one, so it's read instead.
+ *
+ * Typed, it only answers that readback while its order is still the open one. A finished order keeps
+ * the pointer until the next readback goes out, which an ask holds back: the message is read as usual.
  */
 async function readbackAnswer(deps: OrderHandlerDeps, lease: Lease, job: Job, customer: ConversationCustomer): Promise<Answer | "unseen_readback" | null> {
   if (job.kind === "interactive") {
@@ -333,8 +369,20 @@ async function readbackAnswer(deps: OrderHandlerDeps, lease: Lease, job: Job, cu
   if (job.kind !== "text" || customer.lastReadback === null) return null;
   const { orderId, version, queuedAtMs } = customer.lastReadback;
   const word = typedReadbackWord(job.textBody);
+  if (word === null && !isTypedYes(job.textBody)) return null;
+  const openOrder = (deps.engine as Partial<OpenOrderSource>).openOrderRef;
+  if (openOrder !== undefined) {
+    const open = await openOrder.call(deps.engine, {
+      businessId: lease.businessId,
+      conversationId: lease.conversationId,
+      customerId: customer.id,
+      jobId: job.id,
+      nowMs: deps.clock.now(),
+    });
+    if (open?.orderId !== orderId) return null;
+  }
   if (word !== null) return job.receivedAtMs <= queuedAtMs ? "unseen_readback" : { word, orderId, version };
-  if (!isTypedYes(job.textBody) || job.receivedAtMs <= queuedAtMs || deps.buttonsShown == null) return null;
+  if (job.receivedAtMs <= queuedAtMs || deps.buttonsShown == null) return null;
   const confirmId = decisionKey("confirm", { orderId, version });
   const shown = await deps.buttonsShown.lastButtons(lease, job.receivedAtMs);
   return confirmId !== null && shown.some((button) => button.id === confirmId)
@@ -346,7 +394,7 @@ async function readbackAnswer(deps: OrderHandlerDeps, lease: Lease, job: Job, cu
  * A typed answer that crossed a newer readback in flight. Nothing is decided: the customer is
  * asked to answer the readback just queued, which goes out before this reply.
  */
-function handleUnseenReadback(deps: OrderHandlerDeps, lease: Lease, job: Job): JobOutcome {
+function handleUnseenReadback(deps: OrderHandlerDeps, lease: Lease, job: Job, customer: ConversationCustomer): JobOutcome {
   deps.log.info("customer_action_handled", {
     businessId: lease.businessId,
     conversationId: lease.conversationId,
@@ -354,7 +402,7 @@ function handleUnseenReadback(deps: OrderHandlerDeps, lease: Lease, job: Job): J
     outcome: "unseen_readback",
   });
   return {
-    replies: [{ body: ANSWER_NEW_READBACK, ttlMs: ORDER_REPLY_TTL_MS }],
+    replies: [{ body: ANSWER_NEW_READBACK, ttlMs: ORDER_REPLY_TTL_MS, ...(customer.lastReadback === null ? {} : { claims: [stateIn(customer.lastReadback, ["por_confirmar"])] }) }],
     commits: [deps.jobs.markReadCommit(lease, job.id, [job.id], deps.clock.now())],
   };
 }
@@ -382,7 +430,7 @@ async function handleAnswer(deps: OrderHandlerDeps, lease: Lease, job: Job, fact
     return { replies: [{ body: COPY.welcome, ttlMs: ORDER_REPLY_TTL_MS }], commits: [deps.jobs.markReadCommit(lease, job.id, [job.id], nowMs), ...result.commits] };
   }
   // The answer's own reply goes out even if more messages follow: it is never a burst-closing one.
-  return complete(deps, lease, job, facts, [job], result, answer.word, false, nowMs);
+  return complete(deps, lease, job, facts, [job], result, answer, false, nowMs);
 }
 
 async function handleBurst(deps: OrderHandlerDeps, lease: Lease, job: Job, facts: JobFacts, closesBurst: boolean): Promise<JobOutcome> {
@@ -605,7 +653,7 @@ async function complete(
   facts: JobFacts,
   read: readonly Job[],
   result: EngineResult,
-  answered: ReadbackAnswer["word"] | null,
+  answered: ReadbackAnswer | null,
   closesBurst: boolean,
   nowMs: number,
   extra: readonly Commit[] = [],
@@ -683,12 +731,15 @@ async function repliesFor(
   lease: Lease,
   facts: JobFacts,
   outcome: EngineOutcome,
-  answered: ReadbackAnswer["word"] | null,
+  answered: ReadbackAnswer | null,
   closesBurst: boolean,
   instead: RenderedReply | null = null,
 ): Promise<ReplyDraft[]> {
-  if (outcome.type === "nothing" && answered === "correct") {
-    return [{ body: WHAT_TO_CORRECT, ttlMs: ORDER_REPLY_TTL_MS }];
+  if (outcome.type === "nothing" && answered?.word === "correct") {
+    // The engine reads no version for a Corregir: a tap on an older readback is about the one shown since.
+    const shown = facts.customer.lastReadback;
+    const version = shown?.orderId === answered.orderId ? Math.max(shown.version, answered.version) : answered.version;
+    return [{ body: WHAT_TO_CORRECT, ttlMs: ORDER_REPLY_TTL_MS, claims: [stateIn({ orderId: answered.orderId, version }, OPEN_STATES)] }];
   }
   const drafts = await replyForOutcome(deps, replyContext(lease, facts), outcome, instead);
   return drafts.map(({ closesBurst: _closes, ...draft }) => (closesBurst ? { ...draft, closesBurst } : draft));

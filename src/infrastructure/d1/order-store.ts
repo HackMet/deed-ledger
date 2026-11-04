@@ -1,9 +1,21 @@
 import { OrderMovedError } from "../../application/errors";
-import { fromThousandths, type OrderStore, type OrderWrite, type StoredOrder } from "../../application/engine/order-engine";
+import {
+  fromThousandths,
+  type OrderHead,
+  type PriceState,
+  type OrderStore,
+  type OrderWrite,
+  type StoredChangeRequest,
+  type StoredOrder,
+} from "../../application/engine/order-engine";
+import type { CatalogProduct } from "../../application/perception/matching";
+import { MAX_CATALOG_LABELS } from "../../application/perception/matching";
 import type { Commit, Tenant } from "../../application/ports";
+import type { LineMark } from "../../domain/contract/actions";
 import type { EngineOutcome, OrderLineView, OrderState, OrderView } from "../../domain/contract/outcomes";
 import { toThousandths } from "../../domain/contract/numbers";
-import { isExcludedFromTotal } from "../../domain/order-total";
+import type { OrderFact } from "../../domain/order-state";
+import { deliveryOf, isExcludedFromTotal, totalOf, withLineMark } from "../../domain/order-total";
 import { labelOf } from "../../domain/orders";
 import type { Guard } from "./fence";
 
@@ -27,7 +39,42 @@ interface OrderRow {
   place_text: string | null;
   delivery_fee_centavos: number | null;
   total_centavos: number | null;
+  version_fact_id: string | null;
+  confirm_fact_id: string | null;
 }
+
+interface ChangeFactRow {
+  id: string;
+  kind: "change_request" | "change_review";
+  body_json: string;
+  recorded_at_ms: number;
+  live: number;
+  job_id: string | null;
+}
+
+/**
+ * The change requests and reviews of one order (?2) with liveness: no ancestor, itself included, is
+ * closed, except by a supersede from another of its own ancestors (the rule of `orderFacts`). A request
+ * answered by a review, replaced by a newer request, or resting on a cancelled confirm isn't live.
+ */
+const CHANGE_FACTS_SQL = `WITH RECURSIVE
+  mine AS (
+    SELECT id, kind, body_json, recorded_at_ms, rowid AS seq FROM facts
+    WHERE business_id = ?1 AND kind IN ('change_request', 'change_review') AND json_extract(body_json, '$.orderId') = ?2
+  ),
+  anc(root, id) AS (
+    SELECT id, id FROM mine
+    UNION
+    SELECT a.root, d.depends_on_fact_id FROM fact_dependencies d JOIN anc a ON d.fact_id = a.id WHERE d.business_id = ?1
+  )
+SELECT m.id, m.kind, m.body_json, m.recorded_at_ms,
+  NOT EXISTS (
+    SELECT 1 FROM fact_closures c JOIN anc a ON c.fact_id = a.id AND a.root = m.id
+    WHERE c.business_id = ?1 AND NOT (c.reason = 'superseded' AND c.closed_by_fact_id IN (SELECT id FROM anc WHERE root = m.id))
+  ) AS live,
+  (SELECT e.ref_id FROM fact_evidence e WHERE e.business_id = ?1 AND e.fact_id = m.id AND e.kind = 'inbound_message'
+   ORDER BY e.ref_id LIMIT 1) AS job_id
+FROM mine m ORDER BY m.recorded_at_ms, m.seq`;
 
 interface LineRow {
   line_no: number;
@@ -38,10 +85,11 @@ interface LineRow {
   unit_price_centavos: number | null;
   unit: string | null;
   restricted: number;
+  excluded_from_total: number;
 }
 
 const ORDER_SELECT = `SELECT o.id, o.customer_id, o.state, o.current_version, o.first_confirmed_at_ms,
-    v.fulfillment_mode, v.place_id, v.place_text, v.delivery_fee_centavos, v.total_centavos
+    o.version_fact_id, o.confirm_fact_id, v.fulfillment_mode, v.place_id, v.place_text, v.delivery_fee_centavos, v.total_centavos
   FROM orders o
   JOIN order_versions v ON v.business_id = o.business_id AND v.order_id = o.id AND v.version = o.current_version`;
 
@@ -69,12 +117,30 @@ export class D1OrderStore implements OrderStore {
     return row === null ? null : this.load(tenant, row);
   }
 
+  async order(tenant: Tenant, orderId: string): Promise<StoredOrder | null> {
+    const row = await this.db
+      .prepare(`${ORDER_SELECT} WHERE o.business_id = ? AND o.id = ?`)
+      .bind(tenant.businessId, orderId)
+      .first<OrderRow>();
+    return row === null ? null : this.load(tenant, row);
+  }
+
   async customerOrder(tenant: Tenant, customerId: string, orderId: string): Promise<StoredOrder | null> {
     const row = await this.db
       .prepare(`${ORDER_SELECT} WHERE o.business_id = ? AND o.customer_id = ? AND o.id = ?`)
       .bind(tenant.businessId, customerId, orderId)
       .first<OrderRow>();
     return row === null ? null : this.load(tenant, row);
+  }
+
+  async products(tenant: Tenant): Promise<readonly CatalogProduct[]> {
+    // The `products` table only: store_products (Angel's Tienda screens) is a different table. No aliases or
+    // barcodes are kept for `products` rows, so the matching by code has only the names.
+    const { results } = await this.db
+      .prepare(`SELECT id, canonical_name FROM products WHERE business_id = ? ORDER BY canonical_name COLLATE NOCASE, id LIMIT ?`)
+      .bind(tenant.businessId, MAX_CATALOG_LABELS)
+      .all<{ id: string; canonical_name: string }>();
+    return results.map((row) => ({ productId: row.id, names: [row.canonical_name], aliases: [], barcode: null }));
   }
 
   async productNames(tenant: Tenant, productIds: readonly string[]): Promise<ReadonlyMap<string, string>> {
@@ -84,6 +150,160 @@ export class D1OrderStore implements OrderStore {
       .bind(tenant.businessId, JSON.stringify(productIds))
       .all<{ id: string; canonical_name: string }>();
     return new Map(results.map((row) => [row.id, row.canonical_name]));
+  }
+
+  async orderHead(tenant: Tenant, orderId: string): Promise<OrderHead | null> {
+    // Through `order`, so a total claim is checked against the total a No hay left, as the customer hears it.
+    const stored = await this.order(tenant, orderId);
+    return stored === null ? null : { version: stored.view.version, state: stored.view.state, total: stored.view.total };
+  }
+
+  async noHayMarked(tenant: Tenant, productId: string): Promise<boolean> {
+    const { results } = await this.db
+      .prepare(
+        `SELECT DISTINCT o.id, o.customer_id, o.state, o.current_version, o.first_confirmed_at_ms,
+           o.version_fact_id, o.confirm_fact_id, v.fulfillment_mode, v.place_id, v.place_text, v.delivery_fee_centavos, v.total_centavos
+         FROM orders o
+         JOIN order_versions v ON v.business_id = o.business_id AND v.order_id = o.id AND v.version = o.current_version
+         JOIN order_lines l ON l.business_id = o.business_id AND l.order_id = o.id AND l.version = o.current_version
+         JOIN facts f ON f.business_id = o.business_id AND f.kind = 'order_status' AND json_extract(f.body_json, '$.orderId') = o.id
+           AND json_extract(f.body_json, '$.mark') = 'no_hay'
+         WHERE o.business_id = ? AND l.product_id = ? AND o.${OPEN}`,
+      )
+      .bind(tenant.businessId, productId)
+      .all<OrderRow>();
+    // The read decides: only a live mark of the current version, on a line of this product, counts.
+    const orders = await Promise.all(results.map((row) => this.load(tenant, row)));
+    return orders.some(({ view }) => view.lines.some((line) => line.productId === productId && line.mark === "no_hay"));
+  }
+
+  async orderFacts(tenant: Tenant, orderId: string): Promise<readonly OrderFact[]> {
+    // Liveness per fact: no ancestor (itself included) is closed, except by a supersede from another
+    // of its ancestors. Mirrors KILLING_CLOSURE in fact-ledger.ts, the rule G4 enforces.
+    const { results } = await this.db
+      .prepare(
+        `WITH RECURSIVE
+           mine AS (
+             SELECT id, kind, body_json FROM facts
+             WHERE business_id = ?1 AND kind IN ('order_version', 'order_confirm', 'order_cancel', 'order_status')
+               AND json_extract(body_json, '$.orderId') = ?2
+           ),
+           anc(root, id) AS (
+             SELECT id, id FROM mine
+             UNION
+             SELECT a.root, d.depends_on_fact_id FROM fact_dependencies d JOIN anc a ON d.fact_id = a.id WHERE d.business_id = ?1
+           )
+         SELECT m.id, m.kind, m.body_json,
+           (SELECT json_group_array(d.depends_on_fact_id) FROM fact_dependencies d
+            WHERE d.business_id = ?1 AND d.fact_id = m.id) AS depends_json,
+           NOT EXISTS (
+             SELECT 1 FROM fact_closures c JOIN anc a ON c.fact_id = a.id AND a.root = m.id
+             WHERE c.business_id = ?1
+               AND NOT (c.reason = 'superseded' AND c.closed_by_fact_id IN (SELECT id FROM anc WHERE root = m.id))
+           ) AS live
+         FROM mine m`,
+      )
+      .bind(tenant.businessId, orderId)
+      .all<{ id: string; kind: OrderFact["kind"]; body_json: string; depends_json: string; live: number }>();
+    return results.map((row) => {
+      const body = JSON.parse(row.body_json) as {
+        version: number;
+        resumeState?: OrderFact["resumeState"];
+        status?: OrderFact["status"];
+        line?: string;
+        mark?: LineMark;
+      };
+      return {
+        id: row.id,
+        kind: row.kind,
+        live: row.live === 1,
+        version: body.version,
+        dependsOn: JSON.parse(row.depends_json) as string[],
+        resumeState: body.resumeState ?? null,
+        status: body.status ?? null,
+        ...(body.line === undefined || body.mark === undefined ? {} : { lineMark: { line: body.line, mark: body.mark } }),
+      };
+    });
+  }
+
+  async courier(tenant: Tenant, memberId: string): Promise<{ readonly memberId: string; readonly name: string | null } | null> {
+    // Memberships are the store's members (0001); a deactivated one can't take an order out.
+    const row = await this.db
+      .prepare(
+        `SELECT m.user_id, u.display_name FROM memberships m JOIN users u ON u.id = m.user_id
+         WHERE m.business_id = ? AND m.user_id = ? AND m.active = 1`,
+      )
+      .bind(tenant.businessId, memberId)
+      .first<{ user_id: string; display_name: string | null }>();
+    return row === null ? null : { memberId: row.user_id, name: row.display_name };
+  }
+
+  async changeRequest(tenant: Tenant, changeRequestId: string): Promise<StoredChangeRequest | null> {
+    const row = await this.db
+      .prepare(`SELECT json_extract(body_json, '$.orderId') AS order_id FROM facts WHERE business_id = ? AND id = ? AND kind = 'change_request'`)
+      .bind(tenant.businessId, changeRequestId)
+      .first<{ order_id: string }>();
+    if (row === null) return null;
+    const { requests } = await this.changeFacts(tenant, row.order_id);
+    return requests.find((request) => request.id === changeRequestId) ?? null;
+  }
+
+  /** Every change request of an order, oldest first, and its latest review. */
+  private async changeFacts(
+    tenant: Tenant,
+    orderId: string,
+  ): Promise<{ readonly requests: readonly StoredChangeRequest[]; readonly lastReview: OrderView["lastReview"] }> {
+    const { results } = await this.db.prepare(CHANGE_FACTS_SQL).bind(tenant.businessId, orderId).all<ChangeFactRow>();
+    const requests: StoredChangeRequest[] = [];
+    let lastReview: OrderView["lastReview"] = null;
+    for (const row of results) {
+      if (row.kind === "change_review") {
+        const body = JSON.parse(row.body_json) as { decision: "approve" | "decline"; reason: string };
+        lastReview = { decision: body.decision, reason: body.reason, atMs: row.recorded_at_ms };
+        continue;
+      }
+      const body = JSON.parse(row.body_json) as Pick<StoredChangeRequest, "version" | "lines" | "fulfillment" | "diff">;
+      requests.push({
+        id: row.id,
+        orderId,
+        version: body.version,
+        lines: body.lines,
+        fulfillment: body.fulfillment,
+        diff: body.diff,
+        jobId: row.job_id,
+        live: row.live === 1,
+      });
+    }
+    return { requests, lastReview };
+  }
+
+  async preparationOrders(tenant: Tenant): Promise<readonly StoredOrder[]> {
+    const { results } = await this.db
+      .prepare(
+        `${ORDER_SELECT} WHERE o.business_id = ? AND o.state IN ('confirmado', 'preparando', 'listo')
+           AND o.first_confirmed_at_ms IS NOT NULL
+         ORDER BY o.first_confirmed_at_ms, o.id`,
+      )
+      .bind(tenant.businessId)
+      .all<OrderRow>();
+    return Promise.all(results.map((row) => this.load(tenant, row)));
+  }
+
+  async changedLineIds(tenant: Tenant, orderId: string, version: number): Promise<readonly string[]> {
+    if (version <= 1) return [];
+    const { results } = await this.db
+      .prepare(
+        `SELECT c.line_no FROM order_lines c
+         LEFT JOIN order_lines p ON p.business_id = c.business_id AND p.order_id = c.order_id
+           AND p.version = c.version - 1 AND p.line_no = c.line_no
+         WHERE c.business_id = ? AND c.order_id = ? AND c.version = ?
+           AND (p.line_no IS NULL OR c.product_id IS NOT p.product_id OR c.customer_text IS NOT p.customer_text
+             OR c.qty_milli IS NOT p.qty_milli OR c.unit IS NOT p.unit)
+         ORDER BY c.line_no`,
+      )
+      .bind(tenant.businessId, orderId, version)
+      .all<{ line_no: number }>();
+    return results.map((row) => labelOf(row.line_no - 1));
   }
 
   async queuePosition(tenant: Tenant, orderId: string, confirmedAtMs: number): Promise<number> {
@@ -96,6 +316,34 @@ export class D1OrderStore implements OrderStore {
       .bind(tenant.businessId, orderId, confirmedAtMs, confirmedAtMs, orderId)
       .first<{ ahead: number }>();
     return (row?.ahead ?? 0) + 1;
+  }
+
+  async priceState(tenant: Tenant, productId: string, operationKey: string): Promise<PriceState> {
+    const used = await this.db
+      .prepare(`SELECT 1 AS used FROM facts WHERE business_id = ? AND operation_key = ?`)
+      .bind(tenant.businessId, operationKey)
+      .first<{ used: number }>();
+    // Newest first. A price fact is closed only by a newer confirmed price (superseded), and a proposal
+    // is never closed, so "live" is simply "no closure".
+    const { results } = await this.db
+      .prepare(
+        `SELECT f.id, json_extract(f.body_json, '$.status') AS status, json_extract(f.body_json, '$.price') AS price
+         FROM facts f
+         WHERE f.business_id = ? AND f.kind = 'price' AND json_extract(f.body_json, '$.productId') = ?
+           AND NOT EXISTS (SELECT 1 FROM fact_closures c WHERE c.business_id = f.business_id AND c.fact_id = f.id)
+         ORDER BY f.rowid DESC`,
+      )
+      .bind(tenant.businessId, productId)
+      .all<{ id: string; status: string; price: number }>();
+    const confirmedAt = results.findIndex((row) => row.status === "confirmed");
+    const confirmed = confirmedAt === -1 ? null : results[confirmedAt]!;
+    // Rows before the confirmed one are newer; a proposal older than it was already answered.
+    const proposal = results.slice(0, confirmedAt === -1 ? undefined : confirmedAt).find((row) => row.status === "proposed") ?? null;
+    return {
+      confirmed: confirmed === null ? null : { factId: confirmed.id, price: confirmed.price },
+      proposal: proposal === null ? null : { factId: proposal.id, price: proposal.price },
+      keyUsed: used !== null,
+    };
   }
 
   commitFor(tenant: Tenant, write: OrderWrite): Commit {
@@ -113,9 +361,20 @@ export class D1OrderStore implements OrderStore {
       statements.push(
         this.db
           .prepare(
-            `INSERT INTO orders (id, business_id, customer_id, state, current_version, created_at_ms) VALUES (?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO orders (id, business_id, customer_id, state, current_version, created_at_ms, version_fact_id,
+               confirm_fact_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           )
-          .bind(order.orderId, businessId, write.customerId, order.state, order.version, write.nowMs),
+          .bind(
+            order.orderId,
+            businessId,
+            write.customerId,
+            order.state,
+            order.version,
+            write.nowMs,
+            write.facts.versionFactId,
+            write.facts.confirmFactId,
+          ),
       );
     } else {
       // Ownership, version and state, exactly as read.
@@ -127,11 +386,24 @@ export class D1OrderStore implements OrderStore {
       statements.push(
         this.db
           .prepare(
-            `UPDATE orders SET state = ?, current_version = ?,
-               first_confirmed_at_ms = CASE WHEN ? THEN COALESCE(first_confirmed_at_ms, ?) ELSE first_confirmed_at_ms END
-             WHERE business_id = ? AND id = ? AND customer_id = ?`,
+            `UPDATE orders SET state = ?1, current_version = ?2,
+               first_confirmed_at_ms = CASE WHEN ?3 THEN COALESCE(first_confirmed_at_ms, ?4) ELSE first_confirmed_at_ms END,
+               ready_at_ms = CASE WHEN ?1 = 'listo' THEN COALESCE(ready_at_ms, ?4) ELSE ready_at_ms END,
+               delivered_at_ms = CASE WHEN ?1 = 'entregado' THEN COALESCE(delivered_at_ms, ?4) ELSE delivered_at_ms END,
+               version_fact_id = ?8, confirm_fact_id = ?9
+             WHERE business_id = ?5 AND id = ?6 AND customer_id = ?7`,
           )
-          .bind(order.state, order.version, write.confirming ? 1 : 0, write.nowMs, businessId, order.orderId, write.customerId),
+          .bind(
+            order.state,
+            order.version,
+            write.confirming ? 1 : 0,
+            write.nowMs,
+            businessId,
+            order.orderId,
+            write.customerId,
+            write.facts.versionFactId,
+            write.facts.confirmFactId,
+          ),
       );
     }
 
@@ -191,9 +463,9 @@ export class D1OrderStore implements OrderStore {
           businessId,
           write.auditKind,
           order.orderId,
-          write.customerId,
+          write.actorId ?? write.customerId,
           write.nowMs,
-          JSON.stringify({ from: write.base?.state ?? null, to: order.state, version: order.version }),
+          JSON.stringify({ from: write.base?.state ?? null, to: order.state, version: order.version, ...write.auditDetail }),
         ),
       // UNIQUE (business_id, operation_key): only settles a race; the engine read the key first.
       this.db
@@ -208,7 +480,7 @@ export class D1OrderStore implements OrderStore {
     const { results } = await this.db
       .prepare(
         `SELECT l.line_no, l.product_id, p.canonical_name AS product_name, l.customer_text, l.qty_milli,
-           l.unit_price_centavos, l.unit, l.restricted
+           l.unit_price_centavos, l.unit, l.restricted, l.excluded_from_total
          FROM order_lines l
          LEFT JOIN products p ON p.business_id = l.business_id AND p.id = l.product_id
          WHERE l.business_id = ? AND l.order_id = ? AND l.version = ?
@@ -232,23 +504,48 @@ export class D1OrderStore implements OrderStore {
       resumeState = event?.from_state ?? "confirmado";
     }
 
+    // A line mark is a fact on this version; a cancel or a newer version kills it.
+    const marks = new Map(
+      (await this.orderFacts(tenant, row.id)).flatMap((fact) =>
+        fact.live && fact.version === row.current_version && fact.lineMark !== undefined ? [[fact.lineMark.line, fact.lineMark.mark] as const] : [],
+      ),
+    );
+    const lines = results.map(lineView).map((line) => {
+      const mark = marks.get(line.lineId);
+      return mark === undefined ? line : withLineMark(line, mark);
+    });
+
+    const changes = await this.changeFacts(tenant, row.id);
+    const openRequest = changes.requests.findLast((request) => request.live) ?? null;
     const packing = row.state === "confirmado" || row.state === "preparando";
+    const fulfillment: OrderView["fulfillment"] =
+      row.fulfillment_mode === null
+        ? null
+        : row.fulfillment_mode === "pickup"
+          ? { mode: "pickup" }
+          : { mode: "delivery", placeId: row.place_id, placeText: row.place_text, fee: row.delivery_fee_centavos };
     const view: OrderView = {
       orderId: row.id,
       version: row.current_version,
       state: row.state,
-      lines: results.map(lineView),
-      fulfillment:
-        row.fulfillment_mode === null
-          ? null
-          : row.fulfillment_mode === "pickup"
-            ? { mode: "pickup" }
-            : { mode: "delivery", placeId: row.place_id, placeText: row.place_text, fee: row.delivery_fee_centavos },
-      total: row.total_centavos,
+      lines,
+      fulfillment,
+      // The version keeps the total it was confirmed with; a No hay leaves the customer a smaller one.
+      total: lines.some((line) => line.mark === "no_hay") ? totalOf(lines, deliveryOf(fulfillment)).total : row.total_centavos,
       queuePosition:
         packing && row.first_confirmed_at_ms !== null ? await this.queuePosition(tenant, row.id, row.first_confirmed_at_ms) : null,
+      openChangeRequest: openRequest === null ? null : { id: openRequest.id, diff: openRequest.diff },
+      lastReview: changes.lastReview,
     };
-    return { view, customerId: row.customer_id, firstConfirmedAtMs: row.first_confirmed_at_ms, resumeState };
+    return {
+      view,
+      customerId: row.customer_id,
+      firstConfirmedAtMs: row.first_confirmed_at_ms,
+      resumeState,
+      versionFactId: row.version_fact_id,
+      confirmFactId: row.confirm_fact_id,
+      openRequest,
+    };
   }
 }
 
@@ -261,7 +558,8 @@ function lineView(row: LineRow): OrderLineView {
     quantity: row.qty_milli === null ? null : fromThousandths(row.qty_milli),
     unit: row.unit,
     unitPrice: row.unit_price_centavos,
-    availability: "no_se",
+    // A line is left out of the total for being restricted or out of stock. "Hay" isn't stored: unknown.
+    availability: row.excluded_from_total === 1 && row.restricted === 0 ? "se_acabo" : "no_se",
     restricted: row.restricted === 1,
     mark: null,
     substitute: null,

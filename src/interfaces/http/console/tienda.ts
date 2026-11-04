@@ -1,7 +1,8 @@
 /**
- * Tienda (owner only, #40): the store's own products, prices and "No hay" marks, its hours and its
- * delivery fee. The pretend engine reads them per store (PRETEND_ENGINE); staff can't open or
- * change any of it.
+ * Tienda (owner only, #40): the store's hours and delivery fee. Its products are edited on the
+ * Productos screen, the store's one product list: this screen's product tab points there, and its
+ * product routes (add, edit, No hay, remove, the paste box) write through the same `CatalogService`,
+ * so scripts that seed a store through them keep working. Staff can't open or change any of it.
  *
  * The store is always the session's. A product ID from a form or a URL is only ever used together
  * with that store, so another store's ID finds nothing and changes nothing.
@@ -23,7 +24,6 @@ import {
   daysOf,
   hoursFromDays,
   MAX_PASTE_LINES,
-  MAX_PRODUCT_NAME,
   type PasteProblem,
   parseFee,
   parseLempiras,
@@ -33,9 +33,9 @@ import {
   parseUsualQuantity,
   type ProductSelling,
   productNameKey,
-  type StoreProduct,
 } from "../../../domain/store-setup";
-import { type ConsoleEnv, requireOwner } from "./auth";
+import type { CatalogRow } from "../../../application/catalog";
+import { type ConsoleEnv, memberContext, requireOwner } from "./auth";
 import { csrfField, shell } from "./layout";
 
 const PATH = "/console/tienda";
@@ -56,6 +56,7 @@ const NOTICES = {
   no_hay: "Listo. Marcado No hay: el asistente le dice al cliente que se acabó.",
   si_hay: "Listo. Ya no está marcado No hay.",
   pegados: "Listo. Productos guardados.",
+  ocupado: "No se guardó: la lista cambió mientras tanto. Revisala y tocá Guardar otra vez.",
   nada: "No había productos para guardar.",
   horario: "Listo. Horario guardado.",
   sin_horario: "Listo. Sin horario: si un cliente pregunta, el asistente le dice que le confirmás.",
@@ -76,23 +77,23 @@ const PROBLEMS: Record<PasteProblem, string> = {
 };
 
 export function tiendaScreen(app: Hono<ConsoleEnv>) {
+  // The products live on Productos now: one list, one place to edit it.
   app.get("/tienda", requireOwner, async (c) => {
-    const products = await setup(c).listProducts(c.get("member"));
-    return page(c, "products", html`${addForm(c.get("csrf"))}${productList(products, c.get("csrf"))}`);
+    const count = (await catalog(c).list(c.get("member"))).length;
+    return page(c, "products", movedCard(count));
   });
 
   app.post("/tienda/agregar", requireOwner, async (c) => {
     const fields = productFields(await c.req.parseBody());
     if (typeof fields === "string") return back(c, fields);
-    const added = await setup(c).addProduct(c.get("member"), fields, now(c));
-    return back(c, added === "added" ? "agregado" : "existe");
+    const added = await catalog(c).addProduct(memberContext(c), fields);
+    if (added.type === "added") return back(c, "agregado");
+    return back(c, added.reason === "name_taken" ? "existe" : added.reason === "other_names" ? "otros" : "nombre");
   });
 
-  app.get("/tienda/editar", requireOwner, async (c) => {
+  app.get("/tienda/editar", requireOwner, (c) => {
     const productId = idOf(c.req.query("producto"));
-    const product = productId === null ? null : await setup(c).product(c.get("member"), productId);
-    if (product === null) return back(c, "falta");
-    return page(c, "products", editForm(product, c.get("csrf")));
+    return productId === null ? back(c, "falta") : c.redirect(`/console/productos/${encodeURIComponent(productId)}`, 303);
   });
 
   app.post("/tienda/editar", requireOwner, async (c) => {
@@ -104,9 +105,14 @@ export function tiendaScreen(app: Hono<ConsoleEnv>) {
     const selling = sellingFields(form);
     if (selling === "bad") return c.text("Bad request", 400);
     if (selling === "cantidad") return c.redirect(`${PATH}/editar?producto=${encodeURIComponent(productId)}&aviso=cantidad`, 303);
-    const saved = await setup(c).updateProduct(c.get("member"), productId, fields, now(c), selling);
+    const member = memberContext(c);
+    const saved = await catalog(c).updateDetails(member, productId, { name: fields.name, otherNames: fields.otherNames, ...(selling === undefined ? {} : { selling }) });
     if (saved === "name_taken") return c.redirect(`${PATH}/editar?producto=${encodeURIComponent(productId)}&aviso=nombre_usado`, 303);
-    return back(c, saved === "saved" ? "guardado" : "falta");
+    if (saved !== "saved") return back(c, "falta");
+    // A price typed here is the owner's confirmation, recorded as a price fact like on Productos.
+    const current = await catalog(c).product(member, productId);
+    if (fields.price !== null && current !== null && current.price !== fields.price) await catalog(c).changePrice(member, productId, fields.price, "confirm_price");
+    return back(c, "guardado");
   });
 
   app.post("/tienda/hay", requireOwner, async (c) => {
@@ -114,13 +120,13 @@ export function tiendaScreen(app: Hono<ConsoleEnv>) {
     const productId = idOf(form["producto"]);
     const mark = form["no_hay"];
     if (productId === null || (mark !== "1" && mark !== "0")) return c.text("Bad request", 400);
-    if (!(await setup(c).setNoHay(c.get("member"), productId, mark === "1", now(c)))) return back(c, "falta");
+    if (!(await catalog(c).setNoHay(memberContext(c), productId, mark === "1"))) return back(c, "falta");
     return back(c, mark === "1" ? "no_hay" : "si_hay", productId);
   });
 
   app.get("/tienda/quitar", requireOwner, async (c) => {
     const productId = idOf(c.req.query("producto"));
-    const product = productId === null ? null : await setup(c).product(c.get("member"), productId);
+    const product = productId === null ? null : await catalog(c).product(c.get("member"), productId);
     if (product === null) return back(c, "falta");
     return page(
       c,
@@ -128,8 +134,8 @@ export function tiendaScreen(app: Hono<ConsoleEnv>) {
       html`<section class="card">
 <h2>¿Quitar ${product.name}?</h2>
 <p>El asistente ya no lo va a reconocer. Si lo vendés otra vez, lo agregás de nuevo.</p>
-<form method="post" action="${PATH}/quitar">${csrfField(c.get("csrf"))}<input type="hidden" name="producto" value="${product.productId}"><button class="primary danger-fill">Sí, quitar</button></form>
-<p class="cancel"><a href="${PATH}">Cancelar</a></p>
+<form method="post" action="${PATH}/quitar">${csrfField(c.get("csrf"))}<input type="hidden" name="producto" value="${product.id}"><button class="primary danger-fill">Sí, quitar</button></form>
+<p class="cancel"><a href="/console/productos/${encodeURIComponent(product.id)}">Cancelar</a></p>
 </section>`,
     );
   });
@@ -137,7 +143,7 @@ export function tiendaScreen(app: Hono<ConsoleEnv>) {
   app.post("/tienda/quitar", requireOwner, async (c) => {
     const productId = idOf((await c.req.parseBody())["producto"]);
     if (productId === null) return c.text("Bad request", 400);
-    return back(c, (await setup(c).removeProduct(c.get("member"), productId)) ? "quitado" : "falta");
+    return back(c, (await catalog(c).removeProduct(memberContext(c), productId)) ? "quitado" : "falta");
   });
 
   app.get("/tienda/pegar", requireOwner, (c) => page(c, "products", pasteForm(c.get("csrf"), "")));
@@ -146,7 +152,7 @@ export function tiendaScreen(app: Hono<ConsoleEnv>) {
   app.post("/tienda/pegar", requireOwner, async (c) => {
     const text = pasteText(await c.req.parseBody());
     if (text === null) return c.text("Bad request", 400);
-    const existing = await setup(c).listProducts(c.get("member"));
+    const existing = await catalog(c).list(c.get("member"));
     return page(c, "products", pastePreview(text, existing, c.get("csrf")));
   });
 
@@ -156,8 +162,9 @@ export function tiendaScreen(app: Hono<ConsoleEnv>) {
     if (text === null) return c.text("Bad request", 400);
     const { products } = parsePasteBox(text);
     if (products.length === 0) return back(c, "nada");
-    const member = c.get("member");
-    await setup(c).importProducts(member, products, now(c));
+    const member = memberContext(c);
+    const saved = await catalog(c).importPrices(member, products);
+    if (saved.type === "refused") return back(c, "ocupado");
     c.get("runtime").deps.log.info("store_products_pasted", { businessId: member.businessId, count: products.length });
     return back(c, "pegados");
   });
@@ -190,6 +197,7 @@ export function tiendaScreen(app: Hono<ConsoleEnv>) {
 }
 
 const setup = (c: Context<ConsoleEnv>) => c.get("runtime").storeSetup;
+const catalog = (c: Context<ConsoleEnv>) => c.get("runtime").catalog;
 const now = (c: Context<ConsoleEnv>) => c.get("runtime").deps.clock.now();
 
 function back(c: Context<ConsoleEnv>, notice: NoticeKey, productId: string | null = null, sub = "") {
@@ -277,71 +285,18 @@ function priceInput(price: Centavos | null): string {
 // ---------------------------------------------------------------------------------------------
 // Rendering. `html` escapes every interpolated string.
 
-/** "Se vende por libra · De siempre: 2", or null when the owner set neither. */
-function sellingLine(p: StoreProduct): string | null {
-  const parts = [
-    ...(p.soldBy === null ? [] : [p.soldBy === "weight" ? "Se vende por libra" : "Se vende por unidad"]),
-    ...(p.usualQuantity === null ? [] : [`De siempre: ${p.usualQuantity}${p.soldBy === "weight" ? " lb" : ""}`]),
-  ];
-  return parts.length === 0 ? null : parts.join(" · ");
-}
-
-function subTabs(tab: "products" | "hours") {
-  return html`<p class="subtabs"><a href="${PATH}"${tab === "products" ? html` aria-current="page"` : ""}>Productos</a><a href="${PATH}/horario"${tab === "hours" ? html` aria-current="page"` : ""}>Horario y envío</a></p>`;
-}
-
-function addForm(csrf: string) {
+/** The product tab: the products are on Productos now. */
+function movedCard(count: number) {
   return html`<section class="card">
-<h2>Agregar un producto</h2>
-<form method="post" action="${PATH}/agregar">${csrfField(csrf)}
-<label>Nombre<input name="nombre" maxlength="${MAX_PRODUCT_NAME}" placeholder="Arroz 1 lb" required autocomplete="off"></label>
-<label>Precio en lempiras<input name="precio" inputmode="decimal" placeholder="18.50" autocomplete="off"></label>
-<label>Otros nombres que usan los clientes <small>(opcional, uno por línea)</small><textarea name="otros" rows="2" placeholder="libra de arroz"></textarea></label>
-<button class="primary">Agregar</button>
-</form>
+<h2>Los productos están en Productos</h2>
+<p class="meta">${count === 0 ? "Todavía no hay productos." : `${count} ${count === 1 ? "producto" : "productos"}.`} Ahí agregás, cambiás precios, marcás No hay y editás cada uno. Es la misma lista que usa el asistente.</p>
+<a class="button primary" href="/console/productos">Ir a Productos</a>
 <p class="more"><a href="${PATH}/pegar">Pegar una lista de muchos productos</a></p>
 </section>`;
 }
 
-function productList(products: readonly StoreProduct[], csrf: string) {
-  if (products.length === 0) {
-    return html`<p class="empty">Todavía no hay productos. Agregá uno arriba o pegá una lista.</p>`;
-  }
-  return html`<p class="count">${products.length} ${products.length === 1 ? "producto" : "productos"}</p>${products.map((p) => productCard(p, csrf))}`;
-}
-
-function productCard(p: StoreProduct, csrf: string) {
-  return html`<section class="card product${p.noHay ? " out" : ""}" id="p-${p.productId}">
-<div class="head"><strong>${p.name}</strong><span class="price">${p.price === null ? "Sin precio" : formatLempiras(p.price)}</span></div>
-${p.otherNames.length === 0 ? "" : html`<p class="meta">También: ${p.otherNames.join(", ")}</p>`}
-${sellingLine(p) === null ? "" : html`<p class="meta">${sellingLine(p)}</p>`}
-${p.noHay ? html`<p class="badge">No hay</p>` : ""}
-<div class="buttons">
-<form method="post" action="${PATH}/hay">${csrfField(csrf)}<input type="hidden" name="producto" value="${p.productId}"><input type="hidden" name="no_hay" value="${p.noHay ? "0" : "1"}"><button${p.noHay ? html` class="yes"` : ""}>${p.noHay ? "Sí hay" : "No hay"}</button></form>
-<a class="button" href="${PATH}/editar?producto=${encodeURIComponent(p.productId)}">Editar</a>
-<a class="button danger" href="${PATH}/quitar?producto=${encodeURIComponent(p.productId)}">Quitar</a>
-</div>
-</section>`;
-}
-
-function editForm(p: StoreProduct, csrf: string) {
-  return html`<section class="card">
-<h2>Editar ${p.name}</h2>
-<form method="post" action="${PATH}/editar">${csrfField(csrf)}<input type="hidden" name="producto" value="${p.productId}">
-<label>Nombre<input name="nombre" maxlength="${MAX_PRODUCT_NAME}" value="${p.name}" required autocomplete="off"></label>
-<label>Precio en lempiras <small>(vacío si no lo sabés)</small><input name="precio" inputmode="decimal" value="${priceInput(p.price)}" autocomplete="off"></label>
-<label>Otros nombres que usan los clientes <small>(uno por línea)</small><textarea name="otros" rows="3">${p.otherNames.join("\n")}</textarea></label>
-<fieldset class="sold"><legend>Cómo se vende</legend>
-<label class="check"><input type="radio" name="vende" value="unidad"${p.soldBy === "unit" ? html` checked` : ""}> Por unidad</label>
-<label class="check"><input type="radio" name="vende" value="libra"${p.soldBy === "weight" ? html` checked` : ""}> Por libra</label>
-<label class="check"><input type="radio" name="vende" value=""${p.soldBy === null ? html` checked` : ""}> No sé</label>
-</fieldset>
-<label>Cantidad de siempre <small>(opcional: lo que casi todos llevan, por ejemplo 1)</small><input name="usual" inputmode="decimal" maxlength="20" value="${p.usualQuantity ?? ""}" autocomplete="off"></label>
-<p class="meta">Si un cliente no dice cuánto, el asistente le propone esa cantidad y el cliente la confirma.</p>
-<button class="primary">Guardar</button>
-</form>
-<p class="cancel"><a href="${PATH}">Cancelar</a></p>
-</section>`;
+function subTabs(tab: "products" | "hours") {
+  return html`<p class="subtabs"><a href="${PATH}"${tab === "products" ? html` aria-current="page"` : ""}>Productos</a><a href="${PATH}/horario"${tab === "hours" ? html` aria-current="page"` : ""}>Horario y envío</a></p>`;
 }
 
 function pasteForm(csrf: string, text: string) {
@@ -356,11 +311,11 @@ Azúcar 1 lb - L 16.50</pre>
 <button class="primary">Revisar</button>
 </form>
 <p class="meta">Primero te enseño lo que entendí. No se guarda nada hasta que tocás Guardar. Hasta ${MAX_PASTE_LINES} productos por vez.</p>
-<p class="cancel"><a href="${PATH}">Volver a Productos</a></p>
+<p class="cancel"><a href="/console/productos">Volver a Productos</a></p>
 </section>`;
 }
 
-function pastePreview(text: string, existing: readonly StoreProduct[], csrf: string) {
+function pastePreview(text: string, existing: readonly CatalogRow[], csrf: string) {
   const { products, problems, truncated } = parsePasteBox(text);
   const byKey = new Map(existing.map((p) => [productNameKey(p.name), p]));
   const tag = (name: string, price: Centavos) => {
@@ -421,30 +376,29 @@ function dayRow(d: DayHours, bad: boolean) {
 }
 
 const STYLE = `
-h2{font-size:17px;margin:0 0 8px}
-label{display:block;margin:8px 0;font-weight:600}label small{font-weight:400;color:#555}
-input,textarea{display:block;width:100%;min-height:44px;margin-top:4px;padding:8px;font:16px system-ui,sans-serif;border:1px solid #888;border-radius:8px}
-.subtabs{display:flex;gap:8px;margin:10px}.subtabs a{flex:1;text-align:center;padding:10px 4px;border-radius:8px;background:#fff;color:#1f3d2b;text-decoration:none;border:1px solid #ccc}
-.subtabs a[aria-current=page]{background:#1f3d2b;color:#fff;border-color:#1f3d2b}
-.head{display:flex;justify-content:space-between;gap:8px}.price{white-space:nowrap;font-weight:600}
-.meta,.count{margin:4px 10px 8px;font-size:14px;color:#555}.card .meta{margin:4px 0 8px}
-.badge{display:inline-block;margin:4px 0;padding:2px 8px;border-radius:6px;background:#b33;color:#fff;font-size:14px}
-.product.out{border-left:4px solid #b33}
-.buttons{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
-button.yes{border-color:#2f6f45;color:#2f6f45}
-a.button{display:inline-flex;align-items:center;justify-content:center;min-height:44px;min-width:88px;padding:0 12px;
-border-radius:8px;border:1px solid #888;background:#fff;color:#1b1b1b;text-decoration:none;font-size:16px}
-a.button.danger{border-color:#b33;color:#b33}
-button.danger-fill{background:#b33}
-.cancel,.more{text-align:center;margin-top:12px}
-pre.example{background:#f4f4f2;padding:8px;border-radius:8px;font-size:15px;white-space:pre-wrap}
-ul.preview li{display:flex;flex-wrap:wrap;gap:6px;padding:6px 0;border-bottom:1px solid #eee}
-ul.preview li span{flex:1}ul.preview li small{width:100%;color:#555}
-.problems{border-left:4px solid #e0c060}.problems li{padding:4px 0}
-.error{padding:8px;border-radius:8px;background:#fde8e8;border:1px solid #b33}
-fieldset.day{border:1px solid #ddd;border-radius:8px;margin:8px 0;padding:6px 10px;display:flex;flex-wrap:wrap;gap:0 10px}
-fieldset.day legend{font-weight:700}fieldset.day label{flex:1;min-width:120px}fieldset.day label.check{flex-basis:100%}
-fieldset.day.bad{border-color:#b33}
-label.check input{display:inline;width:auto;min-height:0;margin-right:6px}
-fieldset.sold{border:1px solid #ddd;border-radius:8px;margin:8px 0;padding:6px 10px}fieldset.sold legend{font-weight:700}
+label small{font-weight:400;color:var(--mute)}
+.subtabs{display:flex;gap:4px;margin:14px;padding:4px;border-radius:16px;background:var(--cream)}
+.subtabs a{flex:1;display:flex;align-items:center;justify-content:center;min-height:48px;padding:6px 4px;border-radius:12px;color:var(--ink);font-weight:700;text-align:center;text-decoration:none}
+.subtabs a[aria-current=page]{background:var(--ink);color:#fff}
+.head{display:flex;justify-content:space-between;align-items:baseline;gap:10px}.head strong{font-size:18px;font-weight:800}
+.price{white-space:nowrap;font-size:20px;font-weight:800;letter-spacing:-.3px}
+.meta,.count{margin:6px 18px 8px;font-size:15px;color:var(--mute)}.card .meta{margin:6px 0 8px}
+.count{font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}
+.badge{display:inline-block;margin:6px 0;padding:3px 10px;border-radius:8px;background:#ffe6de;color:#8a3429;font-size:13px;font-weight:800}
+.product.out{border-left:5px solid var(--warn)}
+.buttons{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.buttons>form,.buttons>a{flex:1 1 0;min-width:96px}.buttons button,.buttons a.button{width:100%;min-width:0;padding:0 10px}
+button.yes{border-color:var(--green);background:var(--soft);color:var(--green)}
+.cancel,.more{text-align:center;margin-top:14px}
+pre.example{background:var(--cream);padding:10px 12px;border-radius:12px;font-size:15px;white-space:pre-wrap}
+ul.preview li{display:flex;flex-wrap:wrap;gap:6px;padding:8px 0;border-bottom:1px solid var(--line)}
+ul.preview li span{flex:1}ul.preview li small{width:100%;color:var(--mute)}
+.problems{border-left:5px solid #d7a24b}.problems li{padding:4px 0}
+.error{padding:10px 14px;border-radius:14px;background:var(--redsoft);border:1px solid #d9a99b;color:var(--warn);font-weight:600}
+fieldset.day{border:1px solid var(--line);border-radius:14px;margin:10px 0;padding:8px 12px 12px;display:flex;flex-wrap:wrap;gap:0 10px}
+fieldset.day legend{font-weight:800}fieldset.day label{flex:1;min-width:120px}fieldset.day label.check{flex-basis:100%}
+fieldset.day.bad{border-color:var(--warn);background:var(--redsoft)}
+label.check{display:flex;align-items:center;min-height:48px}
+label.check input{display:inline;width:22px;min-height:0;margin:0 10px 0 0}
+fieldset.sold{border:1px solid var(--line);border-radius:14px;margin:10px 0;padding:8px 12px 12px}fieldset.sold legend{font-weight:800}
 `;

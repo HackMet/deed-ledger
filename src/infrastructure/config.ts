@@ -45,6 +45,8 @@ export interface Config {
    * console still needs login, unless devConsole is also on (the simulator's --store).
    */
   readonly pretendEngine: boolean;
+  /** The real order engine (OrderEngine, on D1) with perception's reads: DEED_ENGINE "1", which wrangler.jsonc sets for the deployed Worker. Off when unset. */
+  readonly deedEngine: boolean;
   /**
    * Who decides each conversation step: "planner" (a second Muse Spark call per burst, D-45) or
    * "classic" (the engine's own questions). Anything but "planner" is classic.
@@ -104,6 +106,7 @@ export function readConfig(env: Env): Config {
     devConsole: String(env.DEV_CONSOLE ?? "") === "1",
     devStorePhoneNumberId: String(env.DEV_STORE_PHONE_NUMBER_ID ?? ""),
     pretendEngine: String(env.PRETEND_ENGINE ?? "") === "1",
+    deedEngine: String(env.DEED_ENGINE ?? "") === "1",
     conversation,
     modelApiKey: env.MODEL_API_KEY ?? "",
     readerModel: modelSettings(env.READER_REASONING_EFFORT, conversation === "planner" ? DEFAULT_READER_EFFORT : "default", env.PROMPT_CACHE_RETENTION),

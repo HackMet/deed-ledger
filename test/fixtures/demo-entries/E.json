@@ -1,0 +1,135 @@
+{
+  "schema": 1,
+  "domain": "deed-libro",
+  "input": {
+    "orderId": "69f41936-2c53-441f-8250-1fbe25b36ada",
+    "facts": [
+      {
+        "id": "02e55d64-a576-4c3d-8a7e-6613cf8b2b15",
+        "kind": "order_version",
+        "operationKey": "burst:437a7dce-0c4f-4aa5-a0cc-dc4f5a582c53",
+        "recordedAtMs": 1793796071395,
+        "version": 1,
+        "status": null,
+        "resumeState": null,
+        "live": false,
+        "witness": null
+      },
+      {
+        "id": "5d7764e2-fe0b-429c-b8a1-c21b30cd1c60",
+        "kind": "order_version",
+        "operationKey": "burst:d0c2f549-1b3a-49ea-a09c-54e0d9c8e162",
+        "recordedAtMs": 1793796079363,
+        "version": 2,
+        "status": null,
+        "resumeState": null,
+        "live": true,
+        "witness": null
+      },
+      {
+        "id": "4ebfd268-09e8-4550-a975-664edb997261",
+        "kind": "order_confirm",
+        "operationKey": "confirm:69f41936-2c53-441f-8250-1fbe25b36ada:v2",
+        "recordedAtMs": 1793796088059,
+        "version": 2,
+        "status": null,
+        "resumeState": "confirmado",
+        "live": false,
+        "witness": null
+      },
+      {
+        "id": "1cceadd9-d817-4fd3-88ad-6b365e10def5",
+        "kind": "order_cancel",
+        "operationKey": "cancel:69f41936-2c53-441f-8250-1fbe25b36ada:v2",
+        "recordedAtMs": 1793796096847,
+        "version": 2,
+        "status": null,
+        "resumeState": null,
+        "live": true,
+        "witness": null
+      }
+    ],
+    "lines": [
+      {
+        "version": 1,
+        "counted": true,
+        "unitPrice": null,
+        "quantity": "1"
+      },
+      {
+        "version": 1,
+        "counted": true,
+        "unitPrice": null,
+        "quantity": "3"
+      },
+      {
+        "version": 1,
+        "counted": true,
+        "unitPrice": null,
+        "quantity": "3"
+      },
+      {
+        "version": 1,
+        "counted": true,
+        "unitPrice": null,
+        "quantity": "2"
+      },
+      {
+        "version": 2,
+        "counted": true,
+        "unitPrice": null,
+        "quantity": "1"
+      },
+      {
+        "version": 2,
+        "counted": true,
+        "unitPrice": null,
+        "quantity": "3"
+      },
+      {
+        "version": 2,
+        "counted": true,
+        "unitPrice": null,
+        "quantity": "3"
+      },
+      {
+        "version": 2,
+        "counted": true,
+        "unitPrice": null,
+        "quantity": "3"
+      }
+    ],
+    "replies": [],
+    "refusals": [
+      {
+        "id": "fe2d766f-be85-4a7b-86bf-301d03965ca3",
+        "atMs": 1793796101567,
+        "reason": "invalid_state",
+        "decidingFactId": "1cceadd9-d817-4fd3-88ad-6b365e10def5",
+        "operationKey": "staff:69f41936-2c53-441f-8250-1fbe25b36ada:2:mark_ready"
+      }
+    ]
+  },
+  "verdicts": [
+    {
+      "rowKey": "r1",
+      "state": null
+    },
+    {
+      "rowKey": "r2",
+      "state": null
+    },
+    {
+      "rowKey": "r3",
+      "state": null
+    },
+    {
+      "rowKey": "r4",
+      "state": null
+    },
+    {
+      "rowKey": "r5",
+      "state": "bloqueado"
+    }
+  ]
+}

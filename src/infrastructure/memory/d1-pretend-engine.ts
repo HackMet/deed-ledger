@@ -172,7 +172,7 @@ export class D1PretendEngine implements Engine, OrderReadingSource, PlannerSourc
 }
 
 /** A store product as the pretend engine sees it: "No hay" is "se_acabo"; unmarked is unknown. */
-function pretendProduct(product: StoreProduct): PretendProduct {
+export function pretendProduct(product: StoreProduct): PretendProduct {
   return {
     productId: product.productId,
     names: [product.name],

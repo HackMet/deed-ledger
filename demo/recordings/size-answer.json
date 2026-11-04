@@ -1,0 +1,33 @@
+{
+  "source": "fixture",
+  "name": "sizeAnswer",
+  "text": "de litro",
+  "reading": {
+    "observations": [
+      {
+        "kind": "clarification",
+        "answer": "de litro",
+        "evidence": {
+          "source": "text",
+          "message": 0,
+          "start": 0,
+          "end": 8
+        },
+        "issues": [],
+        "pick": null,
+        "quantity": null
+      }
+    ],
+    "calls": [
+      {
+        "model": "muse-spark-1.3",
+        "promptVersion": "order-v1",
+        "latencyMs": 2100,
+        "inputTokens": 1800,
+        "outputTokens": 240
+      }
+    ]
+  },
+  "matches": [],
+  "note": "Copied from test/fixtures/contract.ts (sizeAnswer)."
+}

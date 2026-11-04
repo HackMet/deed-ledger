@@ -13,6 +13,7 @@ import { html } from "hono/html";
 import { type ConsoleActionResult, runConsoleAction } from "../../../application/console-actions";
 import { dispatchOutbox } from "../../../application/dispatch";
 import type { MemberContext } from "../../../application/engine";
+import { OrderEngine, staffKey } from "../../../application/engine/order-engine";
 import { describeError } from "../../../application/errors";
 import type { ActionEnvelope, ConsoleAction, LineMark } from "../../../domain/contract/actions";
 import { formatLempiras } from "../../../domain/contract/numbers";
@@ -21,6 +22,8 @@ import { mapLink } from "../../../domain/place";
 import { formatStoreTime } from "../../../domain/store-time";
 import { type ConsoleEnv, memberContext } from "./auth";
 import { csrfField, shell } from "./layout";
+
+type StaffTap = Parameters<typeof staffKey>[0];
 
 const PATH = "/console/preparacion";
 const REFRESH_SECONDS = 15;
@@ -94,7 +97,11 @@ export function preparacionScreen(app: Hono<ConsoleEnv>) {
         refreshSeconds: REFRESH_SECONDS,
         notice: noticeText(c.req.query("aviso")),
         style: ORDER_STYLE,
-        body: orderPage(card, member.nowMs, c.get("csrf")),
+        // The order's history (Pedidos, with change approvals) is read from the ledger, which only the
+        // real engine writes; with a pretend engine there is no history to link to.
+        body: html`${orderPage(card, member.nowMs, c.get("csrf"))}${
+          engine instanceof OrderEngine ? html`<p class="links"><a href="/console/pedidos/${encodeURIComponent(card.order.orderId)}">Historial del pedido</a></p>` : ""
+        }`,
       }),
     );
   });
@@ -201,6 +208,7 @@ function listCard(card: PreparationCard, nowMs: number) {
   return html`<a class="card order${PACKING.has(order.state) ? "" : " packed"}" id="${order.orderId}" href="${orderPath(order.orderId)}">
 <span class="row"><strong class="name">${orderLabel(order)}${card.customerName ?? "Cliente sin nombre"}</strong><span class="${chip.tone === "" ? "chip" : `chip ${chip.tone}`}">${chip.label}</span></span>
 <span class="muted">${count === 1 ? "1 producto" : `${count} productos`} · ${fulfillmentLine(order)} · <span class="when">${when}</span></span>
+<span class="items">${order.lines.map((line) => html`<span>${line.quantity ?? "¿cuántos?"} × ${line.productName ?? `"${line.text}"`}</span>`)}</span>
 </a>`;
 }
 
@@ -225,7 +233,7 @@ function waitedText(minutes: number): string {
 }
 
 /** How the order leaves the store, short enough for one card line. */
-function fulfillmentLine(order: OrderView): string {
+export function fulfillmentLine(order: OrderView): string {
   const f = order.fulfillment;
   if (f?.mode !== "delivery") return fulfillmentKind(order);
   const where = placeOf(f);
@@ -285,7 +293,7 @@ function markButton(
   ariaLabel?: string,
 ) {
   return html`<form method="post" action="/console/acciones">
-${hidden(order, "mark_line", csrf)}<input type="hidden" name="lineId" value="${line.lineId}"><input type="hidden" name="mark" value="${mark}">
+${hidden(order, "mark_line", csrf, line.lineId)}<input type="hidden" name="lineId" value="${line.lineId}"><input type="hidden" name="mark" value="${mark}">
 <button class="${kind}"${ariaLabel === undefined ? "" : html` aria-label="${ariaLabel}"`}>${label}</button></form>`;
 }
 
@@ -301,6 +309,11 @@ function orderActions(card: PreparationCard, csrf: string) {
 <p class="hint">Al marcar Listo se le avisa ${to}${order.total === null ? "" : " con el total"}.</p>
 <form method="post" action="/console/acciones">${hidden(order, "mark_ready", csrf)}<button class="primary">Listo</button></form>`;
   }
+  if (order.state === "listo" && order.fulfillment?.mode === "delivery") {
+    // A delivery order goes out with a courier, picked on its Pedidos page (K13).
+    return html`<p class="hint">Ya está listo. Falta mandarlo con quien lo lleva.</p>
+<a class="button primary" href="/console/pedidos/${encodeURIComponent(order.orderId)}">Despachar</a>`;
+  }
   if (order.state === "listo") {
     const who = card.customerName ?? "el cliente";
     return html`<p class="hint">Ya está listo. Cuando ${who} ya lo tenga, tocá Entregado.</p>
@@ -309,9 +322,13 @@ function orderActions(card: PreparationCard, csrf: string) {
   return "";
 }
 
-/** Every form carries the version on screen and a fresh operation key: a double tap sends the same key. */
-function hidden(order: OrderView, type: string, csrf: string) {
-  return html`<input type="hidden" name="type" value="${type}"><input type="hidden" name="orderId" value="${order.orderId}"><input type="hidden" name="version" value="${order.version}"><input type="hidden" name="operationKey" value="${crypto.randomUUID()}">${csrfField(csrf)}`;
+/**
+ * Every form carries the version on screen and the key the engine derives for this tap (D-44), so a
+ * double tap sends the same key and the engine accepts it.
+ */
+function hidden(order: OrderView, type: StaffTap["type"], csrf: string, lineId?: string) {
+  const key = staffKey({ type, orderId: order.orderId, version: order.version, lineId } as StaffTap);
+  return html`<input type="hidden" name="type" value="${type}"><input type="hidden" name="orderId" value="${order.orderId}"><input type="hidden" name="version" value="${order.version}"><input type="hidden" name="operationKey" value="${key}">${csrfField(csrf)}`;
 }
 
 function fulfillmentKind(order: OrderView): string {
@@ -335,28 +352,37 @@ function deliveryText(f: Delivery) {
 }
 
 /** The cards; the header, tabs, notice and chips come from the shared layout. */
+/** The cards, as in the concept: who, how it leaves, what it carries. Header, tabs and chips are shared. */
 const LIST_STYLE = `
-.order{padding:12px 14px}
-.order .name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.order .muted{display:block;margin-top:4px}
-.order.packed{opacity:.6}
+.order{padding:20px}
+.order .row{align-items:flex-start}
+.order .name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:21px;font-weight:700;letter-spacing:-.5px}
+.order .muted{display:block;margin-top:6px}
+.order .items{display:flex;flex-direction:column;margin-top:12px;padding-top:12px;border-top:1px solid var(--line);color:var(--mute);font-size:15px;line-height:1.85}
+.order.packed{background:var(--paper);border-style:dashed;box-shadow:none}
 .when{white-space:nowrap}
+@media (min-width:1024px){main{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;align-items:start}
+main>.page-head,main>.notice,main>.empty{grid-column:1/-1}main>.card{margin:0}}
 `;
 
+/** The packer's page; the next step is the one mustard button, full width. */
 const ORDER_STYLE = `
-.where{margin:10px 14px;font-size:15px}
-.lines{padding:0 12px}
-.line{display:flex;align-items:center;gap:6px;min-height:56px;padding:4px 0;border-top:1px solid #eee}
+.where{margin:6px 16px 0;padding:12px 16px;border-radius:10px;background:var(--sage);font-size:16px;font-weight:600}
+.lines{padding:4px 18px}
+.line{display:flex;align-items:center;gap:8px;min-height:64px;padding:6px 0;border-top:1px solid var(--line)}
 .line:first-child{border-top:0}
-.line.changed{margin:0 -12px;padding:4px 12px;background:var(--hi)}
-.what{flex:1;min-width:0}.qty{color:var(--mute);white-space:nowrap}
-.tick{flex:none;display:flex;align-items:center;justify-content:center;width:48px;min-height:48px;margin-left:-8px}
-button.check{width:48px;min-width:48px;padding:0;border:0;background:none}
-.box{display:block;width:26px;height:26px;border:2px solid #555;border-radius:6px;background:#fff;color:#fff;font-size:18px;line-height:22px;text-align:center}
-.box.done{background:var(--accent);border-color:var(--accent)}
-button.no_hay{flex:none;min-width:0;padding:0 12px;font-size:15px}
-.total{margin:12px 14px 0;font-size:18px;font-weight:700;text-align:right}
-.actions{margin:0 10px 12px}
-.hint{margin:14px 4px 0;text-align:center;color:var(--mute);font-size:14px}
-button.wide{width:100%;margin-top:10px}
+.line.changed{margin:0 -18px;padding:6px 18px;background:var(--wash)}
+.what{flex:1;min-width:0;font-size:18px;font-weight:600;line-height:1.3}.qty{color:var(--mute);white-space:nowrap;font-weight:700}
+.tick{flex:none;display:flex;align-items:center;justify-content:center;width:52px;min-height:52px;margin-left:-8px}
+button.check{width:52px;min-width:52px;min-height:52px;padding:0;border:0;background:none;box-shadow:none}
+.box{display:block;width:32px;height:32px;border:2px solid var(--forest);border-radius:8px;background:var(--card);color:#fff;font-size:20px;font-weight:900;line-height:28px;text-align:center}
+.box.done{background:var(--green);border-color:var(--green)}
+button.no_hay{flex:none;min-width:0;min-height:48px;padding:0 14px;font-size:15px}
+.total{margin:18px 18px 0;padding-top:4px;font-size:30px;font-weight:700;letter-spacing:-.6px;line-height:1.15;text-align:right}
+.actions{margin:0 16px 16px}
+.hint{margin:14px 4px 0;text-align:center;color:var(--mute);font-size:15px}
+.links{margin:8px 18px 24px;text-align:center}.links a{display:inline-flex;align-items:center;min-height:48px;font-weight:700}
+.actions button.wide,.actions button.primary{width:100%;margin-top:12px;min-height:58px;background:var(--gold);border-color:var(--gold);color:var(--forest);font-size:18px;box-shadow:none}
+.actions form:has(button.wide)~form button.primary{background:var(--forest);border-color:var(--forest);color:#fff}
+@media (min-width:1024px){main>.card,main>.where,main>.total,main>.actions{max-width:720px}main>.card,main>.where{margin-left:0;margin-right:0}main>.total,main>.actions{margin-left:0}}
 `;

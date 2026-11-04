@@ -7,9 +7,18 @@ import type { Centavos, DecimalString } from "./numbers";
 import type { ObservationIssue } from "./observation";
 import type { AskKind, QuantitySource } from "../planner/types";
 
-export type OrderState = "armando" | "por_confirmar" | "confirmado" | "preparando" | "listo" | "entregado" | "cancelado";
+/** `en_camino` is proposed (K13), pending Angel's OK: a delivery order out with a courier of the store. */
+export type OrderState =
+  | "armando"
+  | "por_confirmar"
+  | "confirmado"
+  | "preparando"
+  | "listo"
+  | "en_camino"
+  | "entregado"
+  | "cancelado";
 
-/** From the latest evidence. Customers never hear a count. */
+/** From the latest evidence. Customers hear a count only as `OrderLineView.inStock`: what's left when they asked for more. */
 export type Availability = "hay" | "se_acabo" | "no_se";
 
 export interface OrderLineView {
@@ -24,6 +33,12 @@ export interface OrderLineView {
   /** The store's confirmed price only. A proposed price is never quoted to a customer. */
   readonly unitPrice: Centavos | null;
   readonly availability: Availability;
+  /**
+   * Proposed, pending Angel's OK: what the store's verified stock shows when it's above zero and under
+   * `quantity`. The customer is asked whether to take that amount. Absent: nothing to offer. Not stored
+   * with the line: the engine reads it again for each readback.
+   */
+  readonly inStock?: DecimalString;
   /** Alcohol or tobacco: "solo en tienda", never priced or confirmed in chat. */
   readonly restricted: boolean;
   readonly mark: LineMark | null;
@@ -73,6 +88,21 @@ export interface OrderView {
    * ("101"), unique within the store. Optional until agreed; absent means none.
    */
   readonly code?: string;
+  /**
+   * Proposed (K12), pending Angel's OK. The customer's change waiting for the owner or staff, with what
+   * it would change; null when none. Optional so views built before K12 still type-check: absent
+   * means the engine that built the view doesn't track requests.
+   */
+  readonly openChangeRequest?: { readonly id: string; readonly diff: LineDiff } | null;
+  /** Proposed (K12). The latest answer to a change request of this order; null when none. */
+  readonly lastReview?: { readonly decision: "approve" | "decline"; readonly reason: string; readonly atMs: number } | null;
+}
+
+/** Proposed (K12). What a change request would do to the current version's lines. */
+export interface LineDiff {
+  readonly added: readonly OrderLineView[];
+  readonly removed: readonly OrderLineView[];
+  readonly changed: readonly { readonly before: OrderLineView; readonly after: OrderLineView }[];
 }
 
 /** One order on the staff's preparation list. */
@@ -209,7 +239,16 @@ export interface CustomerNotice {
     | { readonly type: "line_unavailable"; readonly order: OrderView; readonly lineId: string }
     | { readonly type: "substitute_offered"; readonly order: OrderView; readonly lineId: string }
     | { readonly type: "payment_confirmed"; readonly paymentClaimId: string; readonly amount: Centavos }
-    | { readonly type: "payment_rejected"; readonly paymentClaimId: string };
+    | { readonly type: "payment_rejected"; readonly paymentClaimId: string }
+    /** Proposed (K12): "Tu cambio fue aprobado: …", with the new version. */
+    | { readonly type: "change_approved"; readonly order: OrderView }
+    /** Proposed (K12): "No pudimos hacer el cambio: <reason>". The order is unchanged. */
+    | { readonly type: "change_declined"; readonly order: OrderView; readonly reason: string }
+    /**
+     * Proposed (K13): "Tu pedido va en camino con <nombre>". The courier's name as the store recorded
+     * it; null when the store has none, and the copy then leaves the name out.
+     */
+    | { readonly type: "order_dispatched"; readonly order: OrderView; readonly courierName: string | null };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -219,7 +258,8 @@ export type Claim =
   | { readonly type: "order_state"; readonly orderId: string; readonly version: number; readonly state: OrderState }
   | { readonly type: "order_total"; readonly orderId: string; readonly version: number; readonly total: Centavos }
   | { readonly type: "unit_price"; readonly productId: string; readonly price: Centavos }
-  | { readonly type: "availability"; readonly productId: string; readonly availability: "hay" | "se_acabo" }
+  /** Proposed `inStock`, pending Angel's OK: with it, the store's verified stock is exactly that amount now. */
+  | { readonly type: "availability"; readonly productId: string; readonly availability: "hay" | "se_acabo"; readonly inStock?: DecimalString }
   | { readonly type: "payment_confirmed"; readonly paymentClaimId: string; readonly amount: Centavos }
   | { readonly type: "balance"; readonly customerId: string; readonly balance: Centavos }
   /** Proposed (#47): the store's hours are exactly these now (same entries, same order). */

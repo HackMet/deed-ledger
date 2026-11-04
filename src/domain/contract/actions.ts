@@ -47,9 +47,24 @@ export type ConsoleAction =
       readonly substituteProductId: string | null;
     } & OrderRef)
   | ({ readonly type: "mark_ready" } & OrderRef)
+  /**
+   * Proposed (K13), pending Angel's OK: a ready delivery order leaves with a courier, an active member
+   * of the same store. Pickup orders go from listo straight to mark_delivered.
+   */
+  | ({ readonly type: "dispatch"; readonly courierMemberId: string } & OrderRef)
   | ({ readonly type: "mark_delivered" } & OrderRef)
   /** Staff decide which catalog product a customer's words meant ("la de marca X"). */
   | ({ readonly type: "match_line"; readonly lineId: string; readonly productId: string } & OrderRef)
+  /**
+   * Proposed (K12), pending Angel's OK: the answer to a customer's change after confirming. The reason
+   * is required, 1–200 characters after trimming, free text stored as data and never interpreted.
+   */
+  | {
+      readonly type: "review_change";
+      readonly changeRequestId: string;
+      readonly decision: "approve" | "decline";
+      readonly reason: string;
+    }
   // Money (owner, or staff allowed to approve fiado)
   | { readonly type: "confirm_payment"; readonly paymentClaimId: string }
   | { readonly type: "reject_payment"; readonly paymentClaimId: string }

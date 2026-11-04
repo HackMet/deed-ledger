@@ -3,10 +3,65 @@
 Shared state for every agent: what's true now, what's next, what's open, what bit us. Keep it short. Anything a
 command can tell you (git log, test results, CI) doesn't belong here. Decisions go in [decisions.md](decisions.md).
 
-Last updated: Tue Nov 3, 2026, midday Honduras time, by Claude Code.
+Last updated: Wed Nov 4, 2026, morning Honduras time, by Claude Code.
 
 ## Now
 
+- **Ask before confirm (`claude/flow-ask`, D-58 proposed, not deployed):** on `OrderEngine`, a missing quantity, an
+  illegible line or no pickup or delivery is asked before an order confirms, and staff close an order stuck at `listo`
+  with Entregado. A typed word answers the customer's last readback only while that order is the open one; otherwise
+  it is read like any other message. Not covered: a change request after confirming can still add a line with no quantity, for staff to
+  approve or decline. An illegible line is asked as `illegible` once, then as `quantity`, since nothing stores the issue.
+  A list with a part unread is asked once too: the next message that changes nothing gets the readback, or the line's
+  question while a line still waits. Exceptions: instructions found in a message stay out of scope, a handoff stays a
+  handoff, and an empty answer to a list with no fulfillment gets the pickup question first.
+
+- **Integration (`claude/integration`, PR #71, Nov 4, not merged):** `claude/deed-core` + `claude/deed-recheck` +
+  `claude/demo-fixes`. Gates and open items are in the PR.
+  - **C3 met, with known limits in the README.** Its last review passed after more fix rounds than Kerly authorized,
+    because `track.sh` relaunched the chain; those scripts are now disabled. The two findings closed only by the demo now
+    have tests under `npm test`: `test/node/deed-recheck-command.test.mjs` and `test/node/demo-verdicts.test.mjs`.
+  - **C10 met, with known limits in the README.** One Opus review gave PASS after the fix for the blocking
+    disagreement. Open for Kerly: any kind can close any kind, and a policy can't require a dependency or a closure.
+    Handoff for Angel's agents: `docs/handoff-pr-71.md`.
+  - **`claude/demo-fixes` goes in only through this PR.** Its reviews and their fixes are in the PR. Codex was not run: it isn't installed here.
+  - **Answers to customer messages in the demo are templates;** notices after a staff tap are the product's. "Le pasé tu cambio…" exists only there. Real WhatsApp doesn't say it, so it
+    stays out of the video.
+  - **Decided (D-55, D-56):** the contract additions are accepted, and C11's code stays invisible. Angel also says the
+    customer doesn't need the quantity shown while a change waits, so the `statusReply` diff is dropped.
+  - **C11 stays partial:** the Libro shows each reply's WhatsApp ID, the search is a POST, and the order notices resolve. The owner's words from Pendientes
+    and a safe reply don't (`docs/handoff-pr-71.md`, item 10).
+  - **Short stock (D-57 proposed):** a short line asks "¿Te mando 2 o lo quitamos?", and its written answer makes a new version the customer confirms. An unreadable answer asks again. An order with nothing to prepare can't be confirmed. Still open: a typed "confirmar" under the stock question commits the full amount.
+  - **Waiting on Angel:** append-only triggers in the store's migrations (C5), `saidName`, and the real order with Muse.
+    stays out of the video until Angel matches it.
+  - **Waiting on Angel:** the `statusReply` copy for a pending change, not committed; append-only triggers in the
+    store's migrations (C5).
+- **On top of PR #71 (Nov 4):** the planner on the Deed engine (below), one product list (`CatalogService` the
+  only writer, the same ID in `products` and `store_products`, migration `0031`), the console's new look (Inicio,
+  five tabs, Pendientes as the one inbox), long price pastes saved 25 products per batch, and the demo runner
+  closing each connection. Review fixes: staff see delivery totals with the fee, the planner path reads stock, and
+  the planner quotes only confirmed prices. Eval on the combined copy: 28/31, zero truth failures.
+  - **After this deploy (Angel):** in Productos, tap "Confirmar precio" on each demo product. A price typed in the
+    old Tienda screen has no price fact, so the bot treats it as unknown until it's confirmed. Then one real order
+    from a phone: order, readback, Confirmar, Listo, "listo".
+- **Planner on the Deed engine (`claude/planner-on-deed`, on top of PR #71, Nov 4, uncommitted):** closes the handoff's
+  known gap 1. With `DEED_ENGINE=1` and `CONVERSATION=planner` the app runs `PlannedDeedEngine` (D-59, proposed): the
+  planner's conversation per customer in `planner_memory` (migration `0030`, additive), `OrderEngine` as the only writer
+  of orders through one new entry, `onDecidedChange`. Classic on the Deed engine is unchanged. Simulator:
+  `npm run dev:sim -- --ai --store --planner --deed …`, then `npm run eval -- --planner --deed …`. Under `--deed`,
+  E14, E16, E16a and E16b add the owner's approval (K12) instead of a second Confirmar. Eval on the Deed engine
+  (Nov 4): 25/32 and 27/32, zero truth failures. E02 and E04 failed the first run only on a stale expectation
+  («acabo»; the copy says "ahorita no hay" since 9ca625a), fixed before the second. E08b and E11 fail the same way
+  on the pretend engine at the same code; E21's expectation is known wrong; E16b in the second run hit the sim
+  store's US$2 daily model cap.
+  - **Open for Angel:** after a change on a confirmed order, the ledger saves a K12 request, but the planner's
+    phrase still says "Va, le agrego eso." before "Vas cuarto en la fila…". It reads as done while it waits for the
+    store (same gap as the pending `statusReply` copy).
+- **Deed core (`src/deed-core/`, in PR #71):** the fact batch lives in `src/deed-core/d1-store.ts`. The store's evidence
+  rules are policy data (`src/domain/store-policy.ts`), its drafts and stock a host extension
+  (`src/infrastructure/d1/store-extension.ts`) (D-53, D-54). The store's tables keep their kind CHECKs: they are the
+  host's schema, not the core's. In the store, `facts` and `fact_evidence` are append-only by code path only; the core's
+  `schema.sql` enforces it with triggers.
 - **Auto-deploy works (Nov 3):** every merge to main tests and deploys the demo (`.github/workflows/deploy.yml`);
   the first run after #63 passed once the repo secrets were set. Repo moved to `HackMet/deed-ledger`.
 - **Customer copy fixes (branch `claude/customer-copy-fixes`, from a live photo test):** "out of stock" now reads
@@ -133,6 +188,41 @@ Kept as written on `main`. In this merge the default `jobHandler` is the order h
 - Two independent reviews of Tech Spec v3 (Oct 30) both said "build with changes". The contract draft takes in their
   fixes for line references, multi-part messages, staff-only kinds, confirmed prices and the claim check.
 
+- K12, change requests (Nov 3, `claude/change-requests`, local D1 only, **not deployed**): after `confirmado`, a
+  customer's change is a `change_request` fact on the live confirm (key `chg:<order>:<job>`); owner or staff answer
+  in Pedidos with Aprobar ✓ / Rechazar ✗ and a required reason (`change_review`, key `rev:<request>`). Approve
+  writes the new version (superseding the old, resting on the review) and its confirm in the same batch; decline
+  closes the request. Window: `confirmado` and `preparando` (Q1 default). Migration `0024_change_requests.sql`
+  rebuilds `facts` with `change_request`, `change_review` and `receipt_review` (K14). The contract additions are
+  Proposed in [contract.md](contract.md) and need Angel's OK before merging. The Pedidos buttons save through
+  `runConsoleAction` (#63), post guards included, since `claude/demo-on-main`.
+- K13, dispatch (Nov 3, `claude/dispatch`, local D1 only, **not deployed**): a ready delivery order is dispatched
+  from Pedidos with a courier picked from the store's active members (`en_camino`, blue, the courier's name in the
+  row and the trail), then marked delivered; pickup goes `listo → entregado`. Each step is an `order_status` fact
+  resting on the one before; a `null` fulfillment is refused, and the customer can't cancel once it is on its way.
+  Migration `0025_dispatch.sql` widens `orders.state`. The contract additions are Proposed in
+  [contract.md](contract.md) and need Angel's OK; as with K12, taps save through `runConsoleAction` (#63).
+- K21 and K20 (Nov 3, `claude/deed-on-main`, from `claude/owner-on-main`, local only, **not deployed**):
+  - K21: `OrderEngine` gives Angel's reader `perceptionContext` and `catalog`. The catalog comes from our `products` table, not `store_products`.
+  - K21: with `DEED_ENGINE=1` the app runs on `OrderEngine`, and the Muse reader reads through it. `wrangler.jsonc` sets the flag to "1", so a deploy runs on it with nothing else to set; the simulator and the tests set "0". `plannerContext` is not built, so the planner conversation mode can't run on it yet.
+  - K20: every refusal and claim check the engine makes is recorded in `deed_checks` (migration `0027`, append-only, IDs and codes only).
+  - K20: `/console/deed/<order>` shows the order's facts as a graph, and `/console/deed/verificaciones` shows the feed.
+  - Measured: 84 files / 1192 tests pass and `./demo.sh` gives 29/29.
+- K6, K15 and K14 on main (Nov 3, `claude/owner-on-main`, from `claude/demo-on-main`, local only): Productos,
+  Mi tienda (`/console/negocio`) and Facturas are registered in `console/index.ts`; the invoice upload sets its own
+  size limit there, like Anotar. Those three screens still draw their own pages, not the shared layout, and "Más"
+  doesn't link them yet. Productos overlaps #40's Tienda (products and prices): which one the owner uses is open.
+- K14, supplier invoices (Nov 3, `claude/facturas`, local D1 only, **not deployed**): the owner uploads an invoice
+  photo at `/console/facturas/nueva` (≤ 10 MB, JPG/PNG/WEBP by its bytes; PDF refused with a Spanish message, no PDF
+  library), stored through `putImmutable`. It is read through the `ReceiptReader` port, today only by
+  `RecordedReceiptReader` (synthetic fixtures by SHA-256); every other photo is refused as unreadable. The draft
+  matches each line by exact name or known alias (no alias table yet, so names only) or marks it "nuevo"; edits bump
+  the revision; Aprobar ✓ is one guarded batch (new products, `receipt` fact with member + photo evidence and the
+  revision, movements, balances); Rechazar ✗ is one `receipt_review` fact with the reason; "Anular factura" is a
+  `cancellation` with compensating movements, refused when stock already left. Migration `0026_console_receipts.sql`
+  rebuilds `drafts` for console uploads. **Pending:** the Muse Spark adapter waits on PR #63 (`MuseSparkProvider`)
+  and decision Q2; its prompt draft is [prompts/receipt-reading.md](prompts/receipt-reading.md), for Angel's review.
+
 ## Next
 
 | # | Task | Owner | Notes |
@@ -155,7 +245,21 @@ Gate: Saturday Oct 31, 8:00 PM Honduras time.
 | Organizer questions U1–U4, U6 and U7 | Angel → Discord | Oct 26 |
 | Repository license, and when it goes public (right before submitting) | Team | Oct 26 |
 | Decisions made since Oct 28 aren't in [decisions.md](decisions.md) yet | Angel → Claude Code | Oct 28 |
+| D-57: the `inStock` contract fields and the short-stock copy; whether the preparation list should show a sold-out line differently; `stock_balances` has no unit, so "2 cajas" is compared as 2 | Angel | Nov 4 |
 | Product and team name: "Johan AI" is a working title | Team | Oct 27 |
+| K12 touched two of Angel's files: `src/domain/copy.ts` gains the owner-facing copy `CHANGE_AFTER_READY` (new copy, not compile-only), and `test/secrets.test.ts` lists `0024_change_requests.sql` (compile-only); both need Angel's OK | Angel | Nov 3 |
+| K21 touched Angel's files: `config.ts` (`deedEngine`), `wrangler.jsonc` (`DEED_ENGINE: "0"`), `worker-configuration.d.ts` (regenerated) and `composition.ts` (engine choice; the Deed checks recorder). Whether to turn `DEED_ENGINE` on is his call | Angel | Nov 3 |
+| K20 adds migration `0027_deed_checks.sql` and lists it in Angel's `test/secrets.test.ts` (compile-only) | Angel | Nov 3 |
+| K14 Muse Spark receipt reader: needs PR #63's `MuseSparkProvider` and Q2; prompt draft in [prompts/receipt-reading.md](prompts/receipt-reading.md). K14 touched Angel's `test/secrets.test.ts` (lists `0026_console_receipts.sql`, compile-only) and `LogFields` (`draftId`) | Angel | Nov 3 |
+| K13 touched Angel's files: `memory-engine.ts` gains `case "dispatch"` returning null like `match_line` (compile-only), `copy.ts` gains `CANCEL_AFTER_DISPATCH` (new copy), `test/secrets.test.ts` lists `0025_dispatch.sql`; a delivery order at `listo` can no longer be marked delivered from Preparación (it needs a dispatch first) | Angel | Nov 3 |
+| D-41 (fact memory under `Commit`) and D-42 (read before every guard) are Proposed and need Angel's acceptance | Angel | Oct 30 |
+| D-43 (customer cancel refused once preparando; re-confirm returns to the interrupted state) and D-44 (operation keys derived from the customer's own order and action) are Proposed and need Angel's acceptance | Angel | Oct 30 |
+| Issue #12: `preparationList`, `verifyClaims` and the console taps are not built | Teammate | Oct 30 |
+| Order engine is wired only through the fixture perception adapter (T6b); `dev:sim` and `simulate` not run | Teammate | Oct 30 |
+| Perception questions (ambiguous size, missing fulfillment) not asked; unit prices null, so totals null | Teammate, with Angel's perception | Oct 30 |
+| Order tables lack some guards: no FK between order tables, no version-immutability trigger, no partial UNIQUE for one open order, `facts.operation_key` has no FK to `operations` | Teammate | Oct 30 |
+| `operations` rows do not store `customer_id`; ownership is checked through the order instead | Teammate | Oct 30 |
+| Trace shas for T1 to T5 and T7 (e.g. `137ec35`, `6c92127`) are on `claude/fact-memory`, not on `claude/fact-ledger`; the same work is committed here under other shas | Team | Oct 30 |
 
 ## Traps
 
@@ -166,6 +270,9 @@ Gate: Saturday Oct 31, 8:00 PM Honduras time.
   off, classic fallback). Keep `PLANNER_REASONING_EFFORT` at `minimal` or `low`. Reader `minimal` misread "5 consome"
   as a product name; `low` is the floor.
 - A photo's caption never reaches the reader: `resolveBurst` (`order-reading.ts`) sends only the image for photo jobs.
+- During `npm run eval`, don't edit `src/` (the simulator's `wrangler dev` reloads mid-conversation) and don't query
+  the simulator's local D1 from another process: one `SQLITE_BUSY` in the Worker deferred a job past the eval's 45 s
+  wait (E01a, Nov 4).
 
 - Claude Code skips `AGENTS.md` in this folder unless `CLAUDE.md` imports it (`~/angel/CLAUDE.md` is above the
   repo). Keep the import.

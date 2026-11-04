@@ -5,6 +5,7 @@ import { OrderEngine } from "../src/application/engine/order-engine";
 import { PermanentWriteError } from "../src/application/errors";
 import type { Commit, JobHandler } from "../src/application/ports";
 import { D1OrderStore } from "../src/infrastructure/d1/order-store";
+import { D1FactLedger } from "../src/infrastructure/d1/fact-ledger";
 import { randomIds } from "../src/infrastructure/runtime";
 import { RECEIVED_PLACEHOLDER } from "../src/domain/copy";
 import { type Harness, harness, rows } from "./helpers/harness";
@@ -20,7 +21,7 @@ const nowS = (h: Harness) => Math.floor(h.clock.now() / 1000);
 function engineHarness(): Harness {
   const base = harness();
   const orders = new D1OrderStore(env.DB);
-  return harness({ clock: base.clock, jobHandler: fixturePerceptionHandler({ engine: new OrderEngine({ store: orders, ids: randomIds }), orders, clock: base.clock }) });
+  return harness({ clock: base.clock, jobHandler: fixturePerceptionHandler({ engine: new OrderEngine({ store: orders, ids: randomIds, ledger: new D1FactLedger(env.DB) }), orders, clock: base.clock }) });
 }
 
 async function customer() {
@@ -127,7 +128,7 @@ describe("D-37: the engine's commits save in the job's one batch, or not at all"
   /** The real adapter and engine, plus one extra commit whose guard cannot hold. */
   function withBadCommit(h: Harness, where: "guard" | "post"): JobHandler {
     const orders = new D1OrderStore(env.DB);
-    const real = fixturePerceptionHandler({ engine: new OrderEngine({ store: orders, ids: randomIds }), orders, clock: h.clock });
+    const real = fixturePerceptionHandler({ engine: new OrderEngine({ store: orders, ids: randomIds, ledger: new D1FactLedger(env.DB) }), orders, clock: h.clock });
     const impossible = {
       holdsSql: "SELECT NULL",
       params: [],

@@ -1,0 +1,28 @@
+{
+  "source": "fixture",
+  "name": "pickup",
+  "text": "lo paso a traer",
+  "reading": {
+    "observations": [
+      {
+        "kind": "fulfillment",
+        "mode": "pickup",
+        "pin": null,
+        "placeText": null,
+        "sameAsBefore": false,
+        "issues": []
+      }
+    ],
+    "calls": [
+      {
+        "model": "muse-spark-1.3",
+        "promptVersion": "order-v1",
+        "latencyMs": 2100,
+        "inputTokens": 1800,
+        "outputTokens": 240
+      }
+    ]
+  },
+  "matches": [],
+  "note": "Copied from test/fixtures/contract.ts (pickup)."
+}

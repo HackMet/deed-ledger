@@ -1,0 +1,195 @@
+{
+  "schema": 1,
+  "domain": "deed-libro",
+  "input": {
+    "orderId": "f6e6032f-0509-4029-9b19-11bc84c71801",
+    "facts": [
+      {
+        "id": "b5e10e6e-230c-43ef-bc23-9f7c18e437e3",
+        "kind": "order_version",
+        "operationKey": "burst:1a78c9b5-c727-4612-b445-ffcc8de77fad",
+        "recordedAtMs": 1793827068634,
+        "version": 1,
+        "status": null,
+        "resumeState": null,
+        "live": false,
+        "witness": null
+      },
+      {
+        "id": "28f60078-17e2-48ea-a3f0-51cde5cafc3f",
+        "kind": "order_confirm",
+        "operationKey": "confirm:f6e6032f-0509-4029-9b19-11bc84c71801:v1",
+        "recordedAtMs": 1793827076739,
+        "version": 1,
+        "status": null,
+        "resumeState": "confirmado",
+        "live": false,
+        "witness": null
+      },
+      {
+        "id": "e4abb36a-fa0a-44be-a08e-ec554eec4b6e",
+        "kind": "change_request",
+        "operationKey": "chg:f6e6032f-0509-4029-9b19-11bc84c71801:72154ad0-3030-4565-a2a1-ab0cd7df5af7",
+        "recordedAtMs": 1793827085216,
+        "version": 1,
+        "status": null,
+        "resumeState": null,
+        "live": false,
+        "witness": null
+      },
+      {
+        "id": "0af26542-72d6-4fab-b43a-a71d41202c2e",
+        "kind": "change_review",
+        "operationKey": "rev:e4abb36a-fa0a-44be-a08e-ec554eec4b6e",
+        "recordedAtMs": 1793827090796,
+        "version": 1,
+        "status": null,
+        "resumeState": null,
+        "live": false,
+        "witness": {
+          "kind": "member",
+          "refId": "2ca33d4c-3010-4972-93f4-1094d9f6d28c"
+        }
+      },
+      {
+        "id": "2be88902-bf97-4828-9bee-7ea9e0fcf7de",
+        "kind": "order_version",
+        "operationKey": "rev:e4abb36a-fa0a-44be-a08e-ec554eec4b6e:version",
+        "recordedAtMs": 1793827090796,
+        "version": 2,
+        "status": null,
+        "resumeState": null,
+        "live": true,
+        "witness": {
+          "kind": "member",
+          "refId": "2ca33d4c-3010-4972-93f4-1094d9f6d28c"
+        }
+      },
+      {
+        "id": "eec46cf4-da60-45c3-be25-351812adc6a9",
+        "kind": "order_confirm",
+        "operationKey": "rev:e4abb36a-fa0a-44be-a08e-ec554eec4b6e:confirm",
+        "recordedAtMs": 1793827090796,
+        "version": 2,
+        "status": null,
+        "resumeState": "confirmado",
+        "live": true,
+        "witness": null
+      }
+    ],
+    "lines": [
+      {
+        "version": 1,
+        "counted": true,
+        "unitPrice": null,
+        "quantity": "1"
+      },
+      {
+        "version": 1,
+        "counted": true,
+        "unitPrice": null,
+        "quantity": "3"
+      },
+      {
+        "version": 1,
+        "counted": true,
+        "unitPrice": null,
+        "quantity": "3"
+      },
+      {
+        "version": 1,
+        "counted": true,
+        "unitPrice": null,
+        "quantity": "2"
+      },
+      {
+        "version": 2,
+        "counted": true,
+        "unitPrice": null,
+        "quantity": "1"
+      },
+      {
+        "version": 2,
+        "counted": true,
+        "unitPrice": null,
+        "quantity": "3"
+      },
+      {
+        "version": 2,
+        "counted": true,
+        "unitPrice": null,
+        "quantity": "3"
+      },
+      {
+        "version": 2,
+        "counted": true,
+        "unitPrice": null,
+        "quantity": "3"
+      }
+    ],
+    "replies": [
+      {
+        "id": "ef2ac15c-58cd-47d3-a36b-b5e00a1c0c54",
+        "atMs": 1793827090805,
+        "status": "pending",
+        "providerStatus": null,
+        "providerStatusAtS": null,
+        "claims": [
+          {
+            "anyOf": [
+              {
+                "type": "order_state",
+                "orderId": "f6e6032f-0509-4029-9b19-11bc84c71801",
+                "version": 2,
+                "state": "confirmado"
+              },
+              {
+                "type": "order_state",
+                "orderId": "f6e6032f-0509-4029-9b19-11bc84c71801",
+                "version": 2,
+                "state": "preparando"
+              },
+              {
+                "type": "order_state",
+                "orderId": "f6e6032f-0509-4029-9b19-11bc84c71801",
+                "version": 2,
+                "state": "listo"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "refusals": []
+  },
+  "verdicts": [
+    {
+      "rowKey": "r1",
+      "state": null
+    },
+    {
+      "rowKey": "r2",
+      "state": null
+    },
+    {
+      "rowKey": "r3",
+      "state": null
+    },
+    {
+      "rowKey": "r4",
+      "state": "emparejado"
+    },
+    {
+      "rowKey": "r5",
+      "state": "emparejado"
+    },
+    {
+      "rowKey": "r6",
+      "state": "en_duda"
+    },
+    {
+      "rowKey": "r7",
+      "state": "emparejado"
+    }
+  ]
+}

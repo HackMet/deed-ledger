@@ -62,6 +62,48 @@ against the types and the fixtures; `npm run typecheck` fails when a fixture sto
 - `Commit` naming D1 types in the application layer is a decision (D-40), not debt.
 - Tables use `business_id` (existing schema), not Tech Spec v3's `store_id`.
 
+## Proposed (K12): change requests after confirming
+
+Not agreed. Built behind these types on `claude/change-requests`; the PR can't merge until Angel accepts them (#5).
+Angel renders the WhatsApp copy.
+
+| Addition | Where | Status |
+|---|---|---|
+| `ConsoleAction` `{ type: "review_change"; changeRequestId; decision: "approve" \| "decline"; reason }`, owner or staff; reason 1–200 characters after trimming, stored as data; key `rev:<changeRequestId>` | `actions.ts` | Proposed (K12) — Angel to accept |
+| `CustomerNotice` `change_approved { order }` ("Tu cambio fue aprobado: …") | `outcomes.ts` | Proposed (K12) — Angel to accept |
+| `CustomerNotice` `change_declined { order, reason }` ("No pudimos hacer el cambio: <reason>") | `outcomes.ts` | Proposed (K12) — Angel to accept |
+| `OrderView.openChangeRequest: { id; diff } \| null`, with `LineDiff { added; removed; changed: { before; after }[] }` | `outcomes.ts` | Proposed (K12) — Angel to accept |
+| `OrderView.lastReview: { decision; reason; atMs } \| null` | `outcomes.ts` | Proposed (K12) — Angel to accept |
+
+- Both `OrderView` fields are optional (`?:`), so views built before K12 (the pretend engine, the demo orders,
+  the fixtures) still type-check unchanged; the real engine always sets them, `null` when there is none.
+- A customer's change in `confirmado` or `preparando` no longer answers `order_changed`: the order stays as it is
+  and the engine answers `order_status` with `openChangeRequest` set (the reply says it waits for the store). From
+  `listo` on it answers `rejected`/`invalid_state`; the copy is `CHANGE_AFTER_READY` in `src/domain/copy.ts`.
+
+## Proposed (K13): dispatch and internal delivery
+
+Not agreed. Built behind these types on `claude/dispatch`; the PR can't merge until Angel accepts them (#5). Angel
+renders the WhatsApp copy.
+
+| Addition | Where | Status |
+|---|---|---|
+| `OrderState` `en_camino`: a delivery order out with a courier of the store, between `listo` and `entregado` | `outcomes.ts` | Proposed (K13) — Angel to accept |
+| `ConsoleAction` `{ type: "dispatch"; orderId; version; courierMemberId }`, any active member (Q4); the courier must be an active member of the same store; key `staff:<order>:<version>:dispatch` | `actions.ts` | Proposed (K13) — Angel to accept |
+| `CustomerNotice` `order_dispatched { order, courierName }` ("Tu pedido va en camino con <nombre>"); `courierName` is the store's name for the member, `null` when it has none | `outcomes.ts` | Proposed (K13) — Angel to accept |
+
+- Every step is an `order_status` fact, no new kind: dispatch's body carries `status: "dispatched"` and
+  `courierMemberId`, and it rests on the live confirm and the live `ready` tap; a delivery order's `delivered` rests
+  on the confirm and the live dispatch. A pickup order's `delivered` rests on the confirm, as before.
+- `dispatch` only for `fulfillment.mode = "delivery"` at `listo`; `mark_delivered` from `en_camino` (delivery) or
+  `listo` (pickup). A `null` fulfillment is never guessed: `dispatch` answers `rejected`/`invalid_state`, and since
+  D-58 `mark_delivered` closes it from `listo` with the fulfillment left `null`, on a person's word.
+- A courier id that isn't an active member of this store answers `rejected`/`not_found` with the order.
+- A customer's cancel (or change) from `en_camino` on answers `rejected`/`invalid_state`; the copy is
+  `CANCEL_AFTER_DISPATCH` ("Ya va en camino; hablá con la tienda.") in `src/domain/copy.ts`.
+- Migration `0025_dispatch.sql` rebuilds `orders` so its state CHECK admits `en_camino`.
+- A review with an empty or too long reason answers `rejected`/`not_allowed` (the contract has no input-error reason).
+
 ## Open for the meeting
 
 1. **Kerly's spec:** not read yet. Anything here that conflicts with it wins a discussion, not a default.
@@ -147,6 +189,8 @@ in `src/domain/contract/outcomes.ts`, marked "Proposed (#47)"; they are additive
    `verifyClaims` answers true only when the store's hours now are exactly these (same entries, same order).
    `unit_price` and `availability` claims need `verifyClaims` support too: true only while the confirmed price,
    or the availability from evidence, is still the one claimed. Until then those replies go out as the safe reply.
+   Proposed (D-57): the order engine answers `availability` from `stock_balances`, and an optional `inStock` on the
+   claim, with `OrderLineView.inStock`, holds only while the balance is exactly that amount.
 5. **Topic routing in the engine:** `order_status` → `order_status`; `price`/`availability` → `answer`;
    `store_hours` → `store_hours`; `other` → `out_of_scope` (the short redirect); `balance` → unchanged (handoff in
    the pretend engine). A burst that also changes the order gets the order's next step; the question isn't

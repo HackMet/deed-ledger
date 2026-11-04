@@ -1,0 +1,40 @@
+{
+  "source": "fixture",
+  "name": "moreSugar",
+  "text": "mejor que sean 3 libras de azúcar",
+  "reading": {
+    "observations": [
+      {
+        "kind": "order_change",
+        "edits": [
+          {
+            "op": "set_quantity",
+            "target": {
+              "ref": "L4",
+              "said": "azúcar"
+            },
+            "quantity": "3",
+            "evidence": {
+              "source": "text",
+              "message": 0,
+              "start": 6,
+              "end": 33
+            }
+          }
+        ],
+        "issues": []
+      }
+    ],
+    "calls": [
+      {
+        "model": "muse-spark-1.3",
+        "promptVersion": "order-v1",
+        "latencyMs": 2100,
+        "inputTokens": 1800,
+        "outputTokens": 240
+      }
+    ]
+  },
+  "matches": [],
+  "note": "Built by hand from test/fixtures/contract.ts (moreSugar), with the target changed from L3 to L4: in the demo's first order L3 is Jabón Xtra and L4 is the azúcar, so the fixture's L3 would change the soap. A change: set azúcar to 3."
+}

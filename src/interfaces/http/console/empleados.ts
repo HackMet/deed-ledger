@@ -219,13 +219,10 @@ function memberCard(m: MemberSummary, csrf: string) {
 }
 
 const STYLE = `
-h2{font-size:17px;margin:0 0 8px}
-label{display:block;margin:8px 0;font-weight:600}
-input{display:block;width:100%;min-height:48px;margin-top:4px;padding:8px;font-size:16px;border:1px solid #888;border-radius:8px}
-input.link{font-size:14px}
-.head{display:flex;justify-content:space-between;gap:8px}.head span{font-size:14px;color:var(--accent)}
-.member.off{opacity:.75}.meta{margin:4px 0 8px;font-size:14px;color:var(--mute)}
+input.link{font-size:14px;background:var(--cream)}
+.head{display:flex;justify-content:space-between;align-items:center;gap:8px}.head strong{font-size:18px;font-weight:800}
+.head span{flex:none;padding:3px 10px;border-radius:8px;background:var(--soft);color:var(--green);font-size:13px;font-weight:800}
+.member.off{background:var(--cream)}.meta{margin:6px 0 10px;font-size:15px;color:var(--mute)}
 .buttons{display:flex;flex-wrap:wrap;gap:8px}
-button.danger-fill{background:var(--warn);border-color:var(--warn)}
-.cancel{text-align:center;margin-top:12px}
+.cancel{text-align:center;margin-top:14px}
 `;

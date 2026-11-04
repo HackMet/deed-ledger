@@ -54,6 +54,13 @@ src/
 - Interfaces exist where they pay for themselves: `ModelProvider`, `Transcriber`, `MessagingChannel`, `MediaStore`
   and the repositories. Tests swap in fakes; nothing else needs one.
 - Only `application/` starts writes. Repository methods require a tenant context argument.
+- `src/deed-core/` is the core: a pure judge, liveness, pairing, re-check and the D1 batch for one entry, over four
+  tables that `LedgerConfig` names. It imports only from its own folder and names no business word. The store is
+  one host, outside the core: its evidence rules are data in `src/domain/store-policy.ts`, and its drafts and stock
+  are a host extension in `src/infrastructure/d1/store-extension.ts`. `D1FactLedger` is the thin adapter.
+- One entry's batch runs in this order (D-53). Guards: the extension's, then the dependency gate, then the closed-fact
+  guard. Statements: the extension's before-statements, the fact, its evidence and dependencies, the closure, the
+  extension's after-statements. Post-guards: the compiled evidence rule, the same-batch gate, the extension's post-guards.
 - Web pages: server-rendered from Hono (no separate frontend build) unless T1 finds a reason otherwise. The PRD asks
   for 360 px screens, large touch targets and Spanish labels.
 
@@ -289,7 +296,8 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
   on, since the claim might not outlast the send's 10 s timeout: the row goes back to pending (a notice's last try
   ends it). `markSent` and every settle run as one batch guarded by the claim: a stale or repeated call writes
   nothing, early statuses and group stops included, and logs `outbox_claim_lost`.
-- **Outcomes.** Sent: the provider message ID is kept for members only, since it embeds the phone number. A 429 is
+- **Outcomes.** Sent: the provider message ID is kept for anyone with a conversation, not for an unknown sender,
+  and shown only to the store's logged-in members, never in the exported entry, since it embeds the phone number. A 429 is
   retried, up to 5 attempts; another 4xx fails the row. A 5xx, a timeout, a dropped connection or an unreadable 200
   becomes `unknown_delivery` and is never sent again automatically: at most once. A dispatcher that dies mid-send
   leaves its row `sending`; once the claim has run out, the sweep marks it `unknown_delivery`.
@@ -440,6 +448,21 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
   as a `Commit` guarded on the version it read (rule 6): it lands in the job's completion batch or the console
   action's batch, or not at all. A lost race fails that batch with `PretendStateMovedError`; the job is deferred and
   retried, and a staff tap shows "no se guardó". Remove the table with the pretend engine.
+- **The planner on the Deed engine** (`DEED_ENGINE=1` with `CONVERSATION=planner`, D-59 proposed):
+  `PlannedDeedEngine` (`src/infrastructure/d1/planned-deed-engine.ts`). The conversation (`MemoryEngine`, the code
+  the planner path was tuned on) decides each step on a per-customer snapshot in `planner_memory` (migration 0030):
+  the question last shown and its numbered options, each line's words, the planner's picks, what the last answer
+  was about, an order still being put together. `OrderEngine` writes every order: a readback becomes a version
+  (`onDecidedChange`: the burst's key and reads, then the same `change()` path, so K12 requests, facts and guards
+  are unchanged), a confirmation (also one held for the customer's name) and a cancel go through `onCustomerAction`
+  under the keys it derives, and staff taps go straight to it. Before each call the conversation is put back in
+  step with the ledger's open order; it keeps a change it is building only while the ledger holds the version it
+  last saw and still takes changes. An order before its first readback is in `planner_memory` only. The memory
+  commit rides in the ledger's batch under a version guard (`PlannerMemoryMovedError`). `SetupCatalogOrderStore`
+  lets the ledger resolve and name the store's Tienda products, which the planner matches against. Replies get the
+  subtotal (the ledger's version total includes the fee); order_total claims are checked with the fee added back;
+  price, stock and hours claims against the store's setup; a claim about an order being built against the memory
+  that holds it.
 - `/console/preparacion` (wireframe C1) renders the preparation list server-side for a 360 px screen as compact
   cards (name; one chip: Listo, Cambió, minutes waited past `LATE_AFTER_MINUTES` (30), Nuevo or Preparando; product
   count, how the order leaves, store time), orders to pack first, and refreshes every 15 s. A card opens

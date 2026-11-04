@@ -132,7 +132,8 @@ export const SCENARIOS = [
       totalCentavos: 12000,
       state: "confirmado",
       maxTurns: 8,
-      textIncludes: ["acabo"],
+      // The sold-out copy is "ahorita no hay" since 9ca625a (was "se nos acabó").
+      textIncludes: ["ahorita no hay"],
     },
   },
   {
@@ -164,7 +165,8 @@ export const SCENARIOS = [
       totalCentavos: 10800,
       state: "confirmado",
       maxTurns: 6,
-      textIncludes: ["acabo"],
+      // The sold-out copy is "ahorita no hay" since 9ca625a (was "se nos acabó").
+      textIncludes: ["ahorita no hay"],
     },
   },
   {
@@ -319,6 +321,21 @@ export const SCENARIOS = [
       { say: "agreguele 1 cafe maya porfa" },
       { tapStale: "Confirmar" },
     ],
+    // --deed (K12): the change waits for the store's approval; the old Confirmar then changes nothing.
+    deedSteps: [
+      { say: "2 libras de queso seco, lo recojo" },
+      { tap: "Confirmar" },
+      { say: "Lucia" },
+      { say: "agreguele 1 cafe maya porfa" },
+      { staff: { do: "approve_change" } },
+      { tapStale: "Confirmar" },
+    ],
+    deedExpect: {
+      lines: [{ product: "Queso seco 1 lb", quantity: "2" }, { product: "Café Maya 400 g", quantity: "1" }],
+      state: "confirmado",
+      maxTurns: 5,
+      staleTap: true,
+    },
     expect: {
       lines: [{ product: "Queso seco 1 lb", quantity: "2" }, { product: "Café Maya 400 g", quantity: "1" }],
       state: "por_confirmar",
@@ -348,6 +365,15 @@ export const SCENARIOS = [
       { say: "Lucia" },
       { say: "agreguele un pan bimbo porfa" },
       { tap: "Confirmar" },
+    ],
+    // --deed (K12): the change waits for the store's approval, then the order stays confirmed.
+    deedSteps: [
+      { say: "2 libras de queso seco y una mantequilla" },
+      { say: "recojo" },
+      { tap: "Confirmar" },
+      { say: "Lucia" },
+      { say: "agreguele un pan bimbo porfa" },
+      { staff: { do: "approve_change" } },
     ],
     expect: {
       lines: [
@@ -565,6 +591,14 @@ export const SCENARIOS = [
       { say: "sumeme un pan bimbo porfa" },
       { tap: "Confirmar" },
     ],
+    // --deed (K12): the change waits for the store's approval, then the order stays confirmed.
+    deedSteps: [
+      { say: "2 lb de queso seco y una mantequilla para recoger" },
+      { tap: "Confirmar" },
+      { say: "Lucia" },
+      { say: "sumeme un pan bimbo porfa" },
+      { staff: { do: "approve_change" } },
+    ],
     expect: {
       lines: [
         { product: "Queso seco 1 lb", quantity: "2" },
@@ -585,6 +619,14 @@ export const SCENARIOS = [
       { say: "Lucia" },
       { say: "y agreguele el pan bimbo" },
       { tap: "Confirmar" },
+    ],
+    // --deed (K12): the change waits for the store's approval, then the order stays confirmed.
+    deedSteps: [
+      { say: "quiero 2 libras de queso seco mas 1 mantequilla, lo recojo" },
+      { tap: "Confirmar" },
+      { say: "Lucia" },
+      { say: "y agreguele el pan bimbo" },
+      { staff: { do: "approve_change" } },
     ],
     expect: {
       lines: [

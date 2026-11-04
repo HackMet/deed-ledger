@@ -26,6 +26,9 @@
 // --fast-text-effort sets its effort.
 //
 //   npm run dev:sim -- --ai --store --planner --vars ../hackathon/.dev.vars --planner-effort low
+//
+// --deed runs on the real order engine (DEED_ENGINE=1), as the deployed Worker does; with --planner,
+// the planner's conversation over it (PlannedDeedEngine). Pair it with `npm run eval -- --deed`.
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -65,6 +68,14 @@ function modelVars() {
     }
     vars[name] = args[flag];
   }
+  // --daily-cap sets the store's daily Muse Spark budget in US$ (MODEL_DAILY_CAP_USD), e.g. for a full eval.
+  if (args["daily-cap"] !== undefined) {
+    if (!/^\d{1,3}(\.\d{1,2})?$/.test(String(args["daily-cap"]))) {
+      console.error("--daily-cap takes an amount in US$, like 10 or 2.50.");
+      process.exit(1);
+    }
+    vars.MODEL_DAILY_CAP_USD = String(args["daily-cap"]);
+  }
   return vars;
 }
 
@@ -82,6 +93,8 @@ writeFileSync(
     ...SIM_SECRETS,
     ...SIM_VARS,
     ...(args.store === true ? { PRETEND_ENGINE: "1" } : {}),
+    // --deed: the real order engine (OrderEngine) instead of the pretend one, as wrangler.jsonc deploys it.
+    ...(args.deed === true ? { DEED_ENGINE: "1" } : {}),
     CONVERSATION: args.planner === true ? "planner" : "classic",
     ...modelSettings,
   })
@@ -125,6 +138,7 @@ const dev = spawn(
 );
 if (aiKey !== null) console.log("AI mode: customer messages are read by Muse Spark (spends Meta credits).");
 if (args.planner === true) console.log("Planner mode: a second Muse Spark call per message decides the next step.");
+if (args.deed === true) console.log("Deed engine: orders are saved by the real order engine (DEED_ENGINE=1).");
 for (const [name, value] of Object.entries(modelSettings)) console.log(`${name}=${value}`);
 dev.on("exit", (code) => process.exit(code ?? 0));
 for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => dev.kill(signal));

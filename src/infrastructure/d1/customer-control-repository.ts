@@ -246,8 +246,8 @@ export class D1CustomerControlRepository implements CustomerControlRepository {
   /**
    * What the purge erases, shared with a test reset: media references, message text and provider
    * IDs (`uptoReceivedAtMs`: only messages received by then; `keepProviderIds`: the inbound
-   * provider IDs stay, for intake's duplicate check), what we sent them, saved places, Pendientes,
-   * readback pointers, and learned aliases their orders proposed. Each statement runs only while
+   * provider IDs stay, for intake's duplicate check), what we sent them, saved places, the planner's
+   * memory of their conversation, Pendientes, readback pointers, and learned aliases their orders proposed. Each statement runs only while
    * `guard` (SQL with the business and customer IDs as its two parameters) holds. The purge erases
    * the IDs: its tombstone refuses a message sent before it.
    */
@@ -303,6 +303,8 @@ export class D1CustomerControlRepository implements CustomerControlRepository {
         .bind(ERASED_BODY, nowMs, b, b, customerId, b, customerId),
       // Their saved delivery places (#29): what they wrote and where they are.
       this.db.prepare(`DELETE FROM customer_places WHERE business_id = ? AND customer_id = ? AND ${guard}`).bind(b, customerId, b, customerId),
+      // The planner's memory of their conversation (migration 0030): their words, name, places and pins.
+      this.db.prepare(`DELETE FROM planner_memory WHERE business_id = ? AND customer_id = ? AND ${guard}`).bind(b, customerId, b, customerId),
       // Their Pendientes: the owner's list no longer points at them.
       this.db
         .prepare(`DELETE FROM conversation_pendientes WHERE business_id = ? AND conversation_id IN (${theirConversations}) AND ${guard}`)

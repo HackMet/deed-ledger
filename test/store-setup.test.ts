@@ -230,7 +230,7 @@ const productsOf = (businessId: string) =>
   );
 
 describe("the Tienda screens", () => {
-  it("the owner adds, edits, marks No hay and Sí hay, and removes a product", async () => {
+  it("the owner adds, edits, marks No hay and Sí hay, and removes a product, on the one list", async () => {
     const h = harness({ env: pretendEnv() });
     const s = await ownerSession(h);
     const added = await s.post("/console/tienda/agregar", { nombre: "  Arroz   1 lb ", precio: "L 18.50", otros: "arroz\nlibra de arroz" });
@@ -239,29 +239,31 @@ describe("the Tienda screens", () => {
     const [product] = await productsOf(s.store.businessId);
     expect(product).toMatchObject({ name: "Arroz 1 lb", price_centavos: 1850, no_hay: 0, other_names_json: '["arroz","libra de arroz"]' });
 
-    const list = await s.get("/console/tienda?aviso=agregado");
-    expect(list).toContain("Listo. Producto agregado.");
+    // Tienda points to Productos, where the product is, with its confirmed price.
+    const tienda = await s.get("/console/tienda?aviso=agregado");
+    expect(tienda).toContain("Listo. Producto agregado.");
+    expect(tienda).toContain(`href="/console/productos"`);
+    const list = await s.get("/console/productos");
     expect(list).toContain("Arroz 1 lb");
     expect(list).toContain("L 18.50");
-    expect(list).toContain("También: arroz, libra de arroz");
 
-    // Edit: clearing the price makes it unknown, never zero.
+    // Edit: a blank price leaves the recorded price as it is (a price is a ledger fact, never cleared to zero).
     const edited = await s.post("/console/tienda/editar", { producto: product!.id, nombre: "Arroz 1 lb", precio: "", otros: "arroz" });
     expect(edited.headers.get("location")).toBe("/console/tienda?aviso=guardado");
-    expect(await productsOf(s.store.businessId)).toEqual([expect.objectContaining({ price_centavos: null, other_names_json: '["arroz"]' })]);
-    expect(await s.get("/console/tienda")).toContain("Sin precio");
+    expect(await productsOf(s.store.businessId)).toEqual([expect.objectContaining({ price_centavos: 1850, other_names_json: '["arroz"]' })]);
 
     expect((await s.post("/console/tienda/hay", { producto: product!.id, no_hay: "1" })).headers.get("location")).toBe(
       `/console/tienda?aviso=no_hay#p-${product!.id}`,
     );
     expect((await productsOf(s.store.businessId))[0]!.no_hay).toBe(1);
-    expect(await s.get("/console/tienda")).toContain(">Sí hay</button>");
+    expect(await s.get(`/console/productos/${product!.id}`)).toContain(">Sí hay</button>");
     await s.post("/console/tienda/hay", { producto: product!.id, no_hay: "0" });
     expect((await productsOf(s.store.businessId))[0]!.no_hay).toBe(0);
 
     expect(await s.get(`/console/tienda/quitar?producto=${product!.id}`)).toContain("¿Quitar Arroz 1 lb?");
     expect((await s.post("/console/tienda/quitar", { producto: product!.id })).headers.get("location")).toBe("/console/tienda?aviso=quitado");
     expect(await productsOf(s.store.businessId)).toEqual([]);
+    expect(await rows(`SELECT id FROM products WHERE business_id = ?`, s.store.businessId)).toEqual([]);
   });
 
   it("refuses a price it can't read and a name already taken, saving nothing", async () => {
@@ -288,6 +290,8 @@ describe("the Tienda screens", () => {
     const h = harness({ env: pretendEnv() });
     const s = await ownerSession(h);
     await s.post("/console/tienda/agregar", { nombre: "Arroz 1 lb", precio: "16", otros: "arroz" });
+    // A new price for the same product is a new operation only in a later minute (D-44's key).
+    h.clock.advance(60_000);
     const lista = ["Arroz 1 lb - 18", "Aceite 1 L, 58", "Huevos 30", "Leche entera"].join("\n");
 
     const preview = await s.post("/console/tienda/pegar", { lista });
@@ -342,13 +346,23 @@ describe("the Tienda screens", () => {
   it("is owner only: staff get no link and can't open or change anything", async () => {
     const h = harness({ env: pretendEnv() });
     const owner = await ownerSession(h);
-    expect(await owner.get("/console/mas")).toContain('href="/console/tienda"');
+    const ownerMas = await owner.get("/console/mas");
+    // Productos is a tab; the hours and delivery are reached from Mi tienda (/console/negocio).
+    for (const href of ["/console/productos", "/console/negocio", "/console/facturas"]) {
+      expect(ownerMas).toContain(`href="${href}"`);
+    }
+    expect(await owner.get("/console/negocio")).toContain('href="/console/tienda/horario"');
     await owner.post("/console/tienda/agregar", { nombre: "Arroz", precio: "18" });
     const [product] = await productsOf(owner.store.businessId);
 
     const staffCookie = await login(h, owner.store.businessId, owner.store.members[1]!.userId);
     const csrf = await csrfFor(h, staffCookie);
-    expect(await (await send(h, "/console/mas", { cookie: staffCookie })).text()).not.toContain('href="/console/tienda"');
+    const staffMas = await (await send(h, "/console/mas", { cookie: staffCookie })).text();
+    expect(staffMas).not.toContain('href="/console/tienda"');
+    // K6 and K14: staff may propose prices, but the business info and invoices are the owner's.
+    expect(staffMas).toContain('href="/console/productos"');
+    expect(staffMas).not.toContain('href="/console/negocio"');
+    expect(staffMas).not.toContain('href="/console/facturas"');
     for (const path of ["/console/tienda", "/console/tienda/horario", "/console/tienda/pegar", `/console/tienda/editar?producto=${product!.id}`]) {
       expect((await send(h, path, { cookie: staffCookie })).status, path).toBe(403);
     }
@@ -377,9 +391,8 @@ describe("the Tienda screens", () => {
     const [product] = await productsOf(a.store.businessId);
     const b = await ownerSession(h);
 
-    expect((await send(h, `/console/tienda/editar?producto=${product!.id}`, { cookie: b.cookie })).headers.get("location")).toBe(
-      "/console/tienda?aviso=falta",
-    );
+    // The edit screen is Productos' details page now: another store's ID finds nothing there.
+    expect((await send(h, `/console/productos/${product!.id}`, { cookie: b.cookie })).headers.get("location")).toBe("/console/productos?aviso=falta");
     for (const [path, form] of [
       ["/console/tienda/editar", { producto: product!.id, nombre: "Robado", precio: "1" }],
       ["/console/tienda/hay", { producto: product!.id, no_hay: "1" }],

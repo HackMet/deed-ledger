@@ -5,6 +5,10 @@
  */
 import { gatedHandler } from "./application/customer-gate";
 import type { Engine } from "./application/engine";
+import { OrderEngine } from "./application/engine/order-engine";
+import { BusinessService } from "./application/business";
+import { readerConfiguration } from "./application/perception/agent";
+import { CatalogService } from "./application/catalog";
 import type { ModelCallSettings } from "./application/model-settings";
 import { type BurstReader as OrderBurstReader, createOrderHandler } from "./application/order-handler";
 import { type BurstMediaResolver, createOrderReading, readingSourceOf, storedMediaResolver } from "./application/order-reading";
@@ -12,8 +16,11 @@ import { BurstReader } from "./application/perception/reader";
 import { PlannerModel } from "./application/planner/plan-turn";
 import { plannerSourceOf } from "./application/planner/source";
 import { placeholderHandler } from "./application/placeholder-handler";
+import type { ReceiptReader } from "./application/receipt-reader";
+import { ReceiptService } from "./application/receipts";
 import type {
   AudioDecoder,
+  BusinessContext,
   Clock,
   Deps,
   Logger,
@@ -24,15 +31,26 @@ import type {
   PendientesBoard,
   Transcriber,
 } from "./application/ports";
+import { agentIdOf } from "./domain/agent-id";
 import { PRIVACY_PATH } from "./domain/customer-controls";
 import { SEND_TIMEOUT_MS } from "./domain/outbox";
 import { type Config, readConfig } from "./infrastructure/config";
+import { D1BusinessContext } from "./infrastructure/d1/business-context";
+import { D1CatalogStore } from "./infrastructure/d1/catalog-store";
+import { D1CommitRunner } from "./infrastructure/d1/commit-runner";
 import { D1ConsoleAuthRepository } from "./infrastructure/d1/console-auth-repository";
+import { D1ConsoleReceipts } from "./infrastructure/d1/console-receipts";
 import { D1CustomerControlRepository } from "./infrastructure/d1/customer-control-repository";
 import { D1CustomerPlaceRepository } from "./infrastructure/d1/customer-place-repository";
 import { D1CustomerRepository } from "./infrastructure/d1/customer-repository";
+import type { DeedChecks } from "./application/engine/deed-checks";
+import { D1DeedChecks } from "./infrastructure/d1/deed-checks";
+import { D1StockBalances } from "./infrastructure/d1/stock-balances";
+import { D1FactLedger, D1FactPrecheck } from "./infrastructure/d1/fact-ledger";
 import { D1IntakeRepository } from "./infrastructure/d1/intake-repository";
 import { D1JobRepository } from "./infrastructure/d1/job-repository";
+import { D1OrderStore } from "./infrastructure/d1/order-store";
+import { PlannedDeedEngine, SetupCatalogOrderStore } from "./infrastructure/d1/planned-deed-engine";
 import { D1ButtonsShown, D1OutboxRepository } from "./infrastructure/d1/outbox-repository";
 import { D1Pendientes } from "./infrastructure/d1/pendientes-repository";
 import { D1RetrievalRepository } from "./infrastructure/d1/retrieval-repository";
@@ -50,16 +68,26 @@ import { R2MediaStore } from "./infrastructure/r2-media-store";
 import { SimMediaSource } from "./infrastructure/sim-media-source";
 import { consoleLogger, randomIds, realSleep, systemClock } from "./infrastructure/runtime";
 import { OpusAudioDecoder } from "./integrations/audio";
-import { MuseSparkProvider } from "./integrations/meta/spark";
+import { MuseSparkProvider, SPARK_MODEL } from "./integrations/meta/spark";
 import { MuseVoiceTranscriber } from "./integrations/meta/transcribe";
+import { RecordedReceiptReader } from "./integrations/perception/recorded-receipt-reader";
 import { WhatsAppCloudChannel } from "./integrations/whatsapp/client";
 import { WhatsAppMediaSource } from "./integrations/whatsapp/media";
+import { receiptRecordings } from "../test/fixtures/receipts";
 
 export interface Runtime {
+  /** The Deed's record of checks (K20): the engine that writes it is wired where it runs (demo/worker.ts). */
+  readonly deedChecks: DeedChecks;
   readonly config: Config;
   /** The simulator's media uploads (dev console with no WhatsApp token only); null everywhere else. */
   readonly simMedia: SimMediaSource | null;
   readonly deps: Deps;
+  /** Products and prices (K6). */
+  readonly catalog: CatalogService;
+  /** What the store says about itself (K6, K15): saved by the owner, read by `business.context.current`. */
+  readonly business: { readonly service: BusinessService; readonly context: BusinessContext };
+  /** Supplier invoices on the console (K14). */
+  readonly receipts: ReceiptService;
   /** Null until the real engine is wired in, except for the pretend engines (DEV_CONSOLE, PRETEND_ENGINE). */
   readonly engine: Engine | null;
   /** The burst reader the console's Anotar screen uses (#26). */
@@ -91,7 +119,11 @@ export type RuntimeOverrides = Partial<
   // Tests pass a reader whose provider answers with recorded responses.
   readonly burstReader?: BurstReader;
   readonly mediaEraser?: MediaEraser;
+  readonly receiptReader?: ReceiptReader;
 } & Partial<Pick<Deps, "audioDecoder" | "transcriber">>;
+
+/** C11: the id of this deployment's agent configuration, hashed once when the Worker starts and stamped on customer facts. */
+const AGENT_ID = agentIdOf(readerConfiguration(SPARK_MODEL));
 
 export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtime {
   const config = readConfig(env);
@@ -100,20 +132,31 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
   // The simulator downloads the synthetic photos and voice notes it was sent (`npm run chat`): only with
   // the dev console on and no WhatsApp token, so a deployed Worker never serves uploads.
   const simMedia = config.devConsole && config.whatsappToken === "" ? new SimMediaSource(env.MEDIA) : null;
-  // DEV_CONSOLE: in memory, demo catalog, no login, local simulator only. PRETEND_ENGINE: state in
-  // D1, shared by every isolate, each store's own products and hours (#40), console behind login.
-  // Both (the simulator's --store): the D1 engine, so the Tienda screens feed the chat. Neither: no
-  // engine until the real one is wired in.
-  const engine =
-    overrides.engine ??
-    (config.pretendEngine ? new D1PretendEngine(db, { setup: storeSetup }) : config.devConsole ? devEngine : null);
+  const ids = overrides.ids ?? randomIds;
   const clock = overrides.clock ?? systemClock;
   const log = overrides.log ?? consoleLogger;
+  // The Deed's record of checks (K20): the order engine writes every claim check and refusal to it.
+  const deedChecks = new D1DeedChecks(db);
+  // DEED_ENGINE: the real order engine on D1 (OrderEngine), which Angel's reader reads through. DEV_CONSOLE:
+  // in memory, demo catalog, no login, local simulator only. PRETEND_ENGINE: state in D1, shared by every
+  // isolate, each store's own products and hours (#40), console behind login. Both (the simulator's
+  // --store): the D1 engine, so the Tienda screens feed the chat. Neither: no engine until the real one is wired in.
+  const engine =
+    overrides.engine ??
+    (config.deedEngine
+      ? config.conversation === "planner"
+        ? plannedDeedEngine(db, storeSetup, { ids, checks: deedChecks, clock, log })
+        : new OrderEngine({ store: new D1OrderStore(db), ids, ledger: new D1FactLedger(db), checks: deedChecks, stock: new D1StockBalances(db), clock, log, agentId: AGENT_ID })
+      : config.pretendEngine
+        ? new D1PretendEngine(db, { setup: storeSetup })
+        : config.devConsole
+          ? devEngine
+          : null);
   const jobs = new D1JobRepository(db);
   const customers = new D1CustomerRepository(db);
   const customerControls = new D1CustomerControlRepository(db);
   // Kept in D1 for the owner's Pendientes screen, and logged (IDs only).
-  const storedPendientes = new D1Pendientes(db, overrides.ids ?? randomIds, clock, log);
+  const storedPendientes = new D1Pendientes(db, ids, clock, log);
   const pendientes = overrides.pendientes ?? storedPendientes;
   const pendientesBoard = overrides.pendientesBoard ?? storedPendientes;
   // ALTO, SEGUIR, handoff, deletion and the first message, ahead of the order handler (#30).
@@ -158,10 +201,30 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
             log,
           },
         });
+  const ledger = new D1FactLedger(db);
+  const runner = new D1CommitRunner(db);
+  const businessInfo = new D1BusinessContext(db);
+  // Recorded readings of synthetic invoices until the Muse Spark adapter lands (PR #63, decision Q2):
+  // every other photo is refused as unreadable, never guessed.
+  const receiptReader = overrides.receiptReader ?? new RecordedReceiptReader(receiptRecordings);
   return {
     config,
     simMedia,
     engine,
+    deedChecks,
+    // One product list whichever engine runs the chat: a price is always the order engine's price fact (K6).
+    catalog: new CatalogService({ catalog: new D1CatalogStore(db), ledger, runner, ids, engine: new OrderEngine({ store: new D1OrderStore(db), ids, ledger, checks: deedChecks, clock, log }) }),
+    business: { service: new BusinessService({ store: businessInfo, ledger, runner, ids }), context: businessInfo },
+    receipts: new ReceiptService({
+      store: new D1ConsoleReceipts(db, env.MEDIA),
+      media: mediaStore,
+      reader: receiptReader,
+      context: businessInfo,
+      ledger,
+      precheck: new D1FactPrecheck(db),
+      runner,
+      ids,
+    }),
     storeSetup,
     retrieval,
     burstReader:
@@ -169,7 +232,7 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
       buildBurstReader(env, { clock, log }, { db, ...(overrides.modelProvider === undefined ? {} : { provider: overrides.modelProvider }) }),
     deps: {
       clock: overrides.clock ?? systemClock,
-      ids: overrides.ids ?? randomIds,
+      ids,
       log: overrides.log ?? consoleLogger,
       sleep: overrides.sleep ?? realSleep,
       hasher: overrides.hasher ?? new HmacKeyedHasher(config.senderHashSalt),
@@ -210,6 +273,31 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
       mediaEraser: overrides.mediaEraser ?? new R2MediaEraser(env.MEDIA),
     },
   };
+}
+
+/**
+ * DEED_ENGINE=1 with CONVERSATION=planner: the planner's conversation over the real order engine, which
+ * stays the only writer of orders. The order engine's store resolves the store's Tienda products too,
+ * since the planner path matches against them (`SetupCatalogOrderStore`).
+ */
+function plannedDeedEngine(
+  db: D1Database,
+  setup: D1StoreSetupRepository,
+  deps: { readonly ids: Deps["ids"]; readonly checks: DeedChecks; readonly clock: Clock; readonly log: Logger },
+): PlannedDeedEngine {
+  const store = new SetupCatalogOrderStore(new D1OrderStore(db), setup);
+  // The store's stock, as the classic Deed branch reads it (D-57): each readback and availability claim.
+  const ledger = new OrderEngine({
+    store,
+    ids: deps.ids,
+    ledger: new D1FactLedger(db),
+    checks: deps.checks,
+    stock: new D1StockBalances(db),
+    clock: deps.clock,
+    log: deps.log,
+    agentId: AGENT_ID,
+  });
+  return new PlannedDeedEngine({ db, ledger, store, setup });
 }
 
 /**

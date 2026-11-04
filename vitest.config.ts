@@ -29,7 +29,8 @@ export default defineConfig(async () => {
         wrangler: { configPath: "./wrangler.jsonc" },
         miniflare: {
           // Test-only binding so the setup file can apply every migration to the local D1.
-          bindings: { ...BLANK_SECRETS, TEST_MIGRATIONS: migrations },
+          // DEED_ENGINE: off unless a test turns it on; wrangler.jsonc's "1" is for the deployed Worker.
+          bindings: { ...BLANK_SECRETS, DEED_ENGINE: "0", TEST_MIGRATIONS: migrations },
           // An empty database for the migration test, which applies migrations step by step.
           d1Databases: { MIGRATION_TEST_DB: "migration-test" },
         },

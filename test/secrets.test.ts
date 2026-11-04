@@ -39,7 +39,29 @@ describe("test environment", () => {
       "0020_ledger.sql",
       "0021_orders.sql",
       "0022_order_line_details.sql",
+      "0023_order_facts.sql",
+      "0024_change_requests.sql",
+      "0025_dispatch.sql",
+      "0026_console_receipts.sql",
+      "0027_deed_checks.sql",
+      "0028_agent_id.sql",
+      "0030_planner_memory.sql",
+      "0031_one_product_list.sql",
     ]);
+  });
+
+  it("widens the fact and evidence kinds for order facts and gives orders their fact ids", async () => {
+    const sqlOf = async (name: string) =>
+      (await env.DB.prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?`).bind(name).first<{ sql: string }>())?.sql ?? "";
+    for (const kind of ["order_version", "order_confirm", "order_cancel", "order_status", "business_info"]) {
+      expect(await sqlOf("facts")).toContain(`'${kind}'`);
+    }
+    for (const kind of ["member", "session"]) expect(await sqlOf("fact_evidence")).toContain(`'${kind}'`);
+    // The rebuild leaves no table behind.
+    expect(await sqlOf("facts_new")).toBe("");
+    expect(await sqlOf("fact_evidence_new")).toBe("");
+    const { results } = await env.DB.prepare(`SELECT name FROM pragma_table_info('orders')`).all<{ name: string }>();
+    expect(results.map((row) => row.name)).toEqual(expect.arrayContaining(["version_fact_id", "confirm_fact_id"]));
   });
 
   it("creates the final schema directly: every outbound row has an expiry and a send order", async () => {

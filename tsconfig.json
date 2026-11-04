@@ -13,8 +13,9 @@
     "noUnusedParameters": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
+    "resolveJsonModule": true,
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src/**/*.ts", "worker-configuration.d.ts"]
+  "include": ["src/**/*.ts", "demo/**/*.ts", "worker-configuration.d.ts"]
 }

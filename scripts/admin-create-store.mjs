@@ -45,6 +45,10 @@ const ownerPhone = digits(args["owner-phone"], "owner-phone", 6, 15);
 const ids = { business: randomUUID(), location: randomUUID(), channelAccount: randomUUID(), user: randomUUID(), product: randomUUID() };
 const now = Date.now();
 
+const SYNTHETIC_PRODUCT = "Producto de prueba (sintético)";
+/** `productNameKey` (src/domain/store-setup.ts): case, accents and extra spaces don't count. */
+const nameKey = (name) => name.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().replace(/\s+/g, " ").trim();
+
 const statements = [
   `INSERT INTO businesses (id, name, created_at_ms) VALUES (${sql(ids.business)}, ${sql(storeName)}, ${now});`,
   `INSERT INTO locations (id, business_id, name, created_at_ms)
@@ -59,7 +63,10 @@ const statements = [
    SELECT ${sql(ids.business)}, id, ${sql(ids.location)}, 'owner', ${now} FROM users WHERE phone = ${sql(ownerPhone)};`,
   // One synthetic product until the catalog exists, so stock movements have a product to name.
   `INSERT INTO products (id, business_id, canonical_name, created_at_ms)
-   VALUES (${sql(ids.product)}, ${sql(ids.business)}, ${sql("Producto de prueba (sintético)")}, ${now});`,
+   VALUES (${sql(ids.product)}, ${sql(ids.business)}, ${sql(SYNTHETIC_PRODUCT)}, ${now});`,
+  // One product list (0031): the same product on Productos, same ID, no price.
+  `INSERT INTO store_products (id, business_id, name, name_key, other_names_json, price_centavos, no_hay, created_at_ms, updated_at_ms)
+   VALUES (${sql(ids.product)}, ${sql(ids.business)}, ${sql(SYNTHETIC_PRODUCT)}, ${sql(nameKey(SYNTHETIC_PRODUCT))}, '[]', NULL, 0, ${now}, ${now});`,
 ];
 
 mkdirSync(".wrangler/tmp", { recursive: true });

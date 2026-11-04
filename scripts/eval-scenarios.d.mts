@@ -16,6 +16,10 @@ export interface EvalScenario {
   readonly id: string;
   readonly title: string;
   readonly steps: readonly ScenarioStep[];
+  /** `npm run eval -- --deed`: the steps on the order engine, where they differ (K12 approval). */
+  readonly deedSteps?: readonly ScenarioStep[];
+  /** `npm run eval -- --deed`: the expectation where K12 makes it differ. */
+  readonly deedExpect?: unknown;
 }
 
 export interface MediaRef {
