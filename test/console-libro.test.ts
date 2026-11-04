@@ -3,6 +3,7 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import type { Claim } from "../src/domain/contract/outcomes";
 import { INVITE_TTL_MS } from "../src/domain/console-auth";
+import { recheckEntry } from "../src/domain/deed-recheck";
 import { hashToken, newToken } from "../src/infrastructure/tokens";
 import { firstOrder, ids } from "./fixtures/contract";
 import { type Harness, harness } from "./helpers/harness";
@@ -221,5 +222,55 @@ describe("/console/deed/:orderId/libro: the three lanes", () => {
     expect(deed).toContain(`href="/console/deed/${encodeURIComponent(orderId)}/libro"`);
     const trail = await (await get(h, `/console/pedidos/${encodeURIComponent(orderId)}`, cookie)).text();
     expect(trail).toContain(`href="/console/deed/${encodeURIComponent(orderId)}/libro"`);
+  });
+});
+
+describe("/console/deed/:orderId/entrada.json: the entry a third party re-judges", () => {
+  it("downloads the order's entry, whose verdicts the judge reproduces from the entry alone", async () => {
+    const s = await storeWithMembers();
+    const { orderId } = await fourStates(s);
+    const h = harness({ engine });
+    const cookie = await login(h, s, "staff");
+    const response = await get(h, `/console/deed/${encodeURIComponent(orderId)}/entrada.json`, cookie);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("application/json");
+    expect(response.headers.get("content-disposition")).toMatch(/^attachment; filename="entrada-/);
+    const body = await response.text();
+    const entry = JSON.parse(body);
+    expect(entry.schema).toBe(1);
+    expect(entry.input.orderId).toBe(orderId);
+    expect(entry.verdicts.length).toBeGreaterThan(0);
+    const result = recheckEntry(entry);
+    expect(result).toEqual({ ok: true, pairs: entry.verdicts.length, same: entry.verdicts.length, differ: [] });
+  });
+
+  it("carries IDs, codes, numbers and claims only: no phone, no message text", async () => {
+    const s = await storeWithMembers();
+    const { orderId } = await fourStates(s);
+    const h = harness({ engine });
+    const cookie = await login(h, s, "staff");
+    const body = await (await get(h, `/console/deed/${encodeURIComponent(orderId)}/entrada.json`, cookie)).text();
+    expect(body).not.toContain(REPLY_TEXT);
+    for (const phone of s.phones) expect(body).not.toContain(phone);
+    expect(body).not.toMatch(/(?<![0-9a-zA-Z-])5040\d{8}(?![0-9a-zA-Z-])/);
+  });
+
+  it("answers 404 for another store's order and for an unknown id", async () => {
+    const mine = await storeWithMembers();
+    const theirs = await storeWithMembers();
+    const { orderId } = await fourStates(theirs);
+    const h = harness({ engine });
+    const cookie = await login(h, mine, "owner");
+    expect((await get(h, `/console/deed/${encodeURIComponent(orderId)}/entrada.json`, cookie)).status).toBe(404);
+    expect((await get(h, `/console/deed/${encodeURIComponent("no-such-order")}/entrada.json`, cookie)).status).toBe(404);
+  });
+
+  it("is linked as 'Descargar entrada' from the Libro screen", async () => {
+    const s = await storeWithMembers();
+    const { orderId } = await fourStates(s);
+    const h = harness({ engine });
+    const cookie = await login(h, s, "staff");
+    const body = await (await get(h, `/console/deed/${encodeURIComponent(orderId)}/libro`, cookie)).text();
+    expect(body).toContain(`href="/console/deed/${encodeURIComponent(orderId)}/entrada.json" download>Descargar entrada</a>`);
   });
 });

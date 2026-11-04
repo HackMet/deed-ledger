@@ -7,6 +7,7 @@
 import type { Hono } from "hono";
 import { html } from "hono/html";
 import { type LibroCell, type LibroRow, PAIR_WORDS, type PairState, libroRows } from "../../../domain/deed-libro";
+import { entryOf } from "../../../domain/deed-recheck";
 import { D1LibroReads } from "../../../infrastructure/d1/libro-reads";
 import { D1OrderTrail } from "../../../infrastructure/d1/order-trail";
 import type { ConsoleEnv } from "./auth";
@@ -117,6 +118,16 @@ const legend = html`<ul class="legend">
 <p class="hint">Sin confirmación de entrega todavía es en duda, nunca rojo. Tocá una fila para ver su detalle.</p>`;
 
 export function libroScreen(app: Hono<ConsoleEnv>) {
+  /** The entry a third party re-judges (C3): IDs, codes, numbers and claims, never names, phones or message text. */
+  app.get("/deed/:orderId/entrada.json", async (c) => {
+    const orderId = c.req.param("orderId");
+    const input = await new D1LibroReads(c.env.DB).read({ businessId: c.get("member").businessId }, orderId);
+    if (input === null) return c.json({ error: "not_found" }, 404);
+    return c.body(JSON.stringify(entryOf(input), null, 2), 200, {
+      "content-type": "application/json; charset=utf-8",
+      "content-disposition": `attachment; filename="entrada-${orderId}.json"`,
+    });
+  });
   app.get("/deed/:orderId/libro", async (c) => {
     const orderId = c.req.param("orderId");
     const tenant = { businessId: c.get("member").businessId };
@@ -141,7 +152,8 @@ ${rows.map((row, index) => rowSvg(row, index))}
           ? html`<p class="empty">Todavía no hay nada que comparar en este pedido.</p>`
           : html`${legend}
 ${svg}
-${rows.map((row) => panelOf(row, rows))}`,
+${rows.map((row) => panelOf(row, rows))}
+<p class="hint"><a href="/console/deed/${encodeURIComponent(orderId)}/entrada.json" download>Descargar entrada</a></p>`,
       }),
     );
   });
