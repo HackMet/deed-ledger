@@ -47,3 +47,20 @@ export function lineDiff(before: readonly OrderLineView[], after: readonly Order
   }
   return { added: unpaired, removed, changed };
 }
+
+/** The lines a waiting request would leave: `diff` applied to the order's lines, for showing the customer what they asked. */
+export function requestedLines(lines: readonly OrderLineView[], diff: LineDiff): OrderLineView[] {
+  const removed = [...diff.removed];
+  const changed = [...diff.changed];
+  const kept: OrderLineView[] = [];
+  for (const line of lines) {
+    const gone = removed.findIndex((old) => identity(old) === identity(line));
+    if (gone !== -1) {
+      removed.splice(gone, 1);
+      continue;
+    }
+    const change = changed.findIndex(({ before }) => identity(before) === identity(line));
+    kept.push(change === -1 ? line : changed.splice(change, 1)[0]!.after);
+  }
+  return [...kept, ...diff.added];
+}

@@ -19,6 +19,7 @@ import type { CustomerContext, Engine, EngineResult } from "../engine";
 import { placeholderHandler } from "../placeholder-handler";
 import type { Clock, ConversationRef, JobHandler, JobInput, JobOutcome, Tenant } from "../ports";
 import { actionKey, type StoredOrder } from "./order-engine";
+import { requestedLines } from "../../domain/change-request";
 
 /** The customer's own open order, from our records: the only source of an order id and version. */
 export interface OpenOrderReader {
@@ -119,13 +120,32 @@ function reply(isNewestOfBurst: boolean, body: string, commits: EngineResult["co
 
 const NO_OPEN_ORDER = "No tengo un pedido abierto tuyo. Mandame lo que necesitás.";
 const CONFIRM_PROMPT = "¿Lo confirmo? Confirmar / Corregir / Cancelar";
+export const PENDING_CHANGE = "Le pasé tu cambio a la tienda. Queda así si lo aprueban:";
 
 const money = (centavos: number): string => `L ${(centavos / 100).toFixed(2)}`;
 
+/** A line's words: its product's name, or else the customer's text without a quantity it already carries. */
+function wordsOf(line: OrderView["lines"][number]): string {
+  if (line.productName !== null) return line.productName;
+  const prefix = `${line.quantity} `;
+  return line.quantity !== null && line.text.startsWith(prefix) ? line.text.slice(prefix.length) : line.text;
+}
+
+/** One line per order line, for a reply: the quantity once, then the words. */
+export function lineBullets(lines: OrderView["lines"]): string[] {
+  return lines.map((line) => `• ${line.quantity === null ? "" : `${line.quantity} `}${wordsOf(line)}`);
+}
+
 function readback(order: OrderView, lead: string): string {
-  const lines = order.lines.map((line) => `• ${line.quantity === null ? "" : `${line.quantity} `}${line.productName ?? line.text}`.replace(/\s+$/u, ""));
   const total = order.total === null ? [] : [`Total: ${money(order.total)}`];
-  return [lead, ...lines, ...total, CONFIRM_PROMPT].join("\n");
+  return [lead, ...lineBullets(order.lines), ...total, CONFIRM_PROMPT].join("\n");
+}
+
+/** A customer's order, or, with a change waiting for the store, the change they asked and who answers it. */
+export function orderStatusText(order: OrderView): string {
+  const waiting = order.openChangeRequest;
+  if (waiting === null || waiting === undefined) return readback(order, "Tu pedido va así:");
+  return [PENDING_CHANGE, ...lineBullets(requestedLines(order.lines, waiting.diff)), "Te aviso cuando respondan."].join("\n");
 }
 
 function question(code: QuestionCode): string {
@@ -165,7 +185,7 @@ function render(outcome: EngineOutcome): string {
           return "Eso lo ve la tienda. Ya les aviso.";
       }
     case "order_status":
-      return outcome.order === null ? NO_OPEN_ORDER : readback(outcome.order, "Tu pedido va así:");
+      return outcome.order === null ? NO_OPEN_ORDER : orderStatusText(outcome.order);
     case "handoff":
     case "out_of_scope":
       return "Se lo paso a la tienda para que te ayuden.";

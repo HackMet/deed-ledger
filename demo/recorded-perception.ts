@@ -15,6 +15,7 @@ import type { Clock, JobHandler, JobInput, JobOutcome } from "../src/application
 import type { BurstReading } from "../src/domain/contract/observation";
 import type { EngineOutcome, OrderView, QuestionCode } from "../src/domain/contract/outcomes";
 import { PLACEHOLDER_TTL_MS } from "../src/domain/outbox";
+import { lineBullets, orderStatusText } from "../src/application/engine/fixture-perception-handler";
 
 export type RecordingSource = "fixture" | "muse";
 
@@ -148,17 +149,9 @@ const CONFIRM_PROMPT = "¿Lo confirmo? Confirmar / Corregir / Cancelar";
 
 const money = (centavos: number): string => `L ${(centavos / 100).toFixed(2)}`;
 
-/** A line's words: its product's name, or else the customer's text without a quantity it already carries. */
-function wordsOf(line: OrderView["lines"][number]): string {
-  const prefix = `${line.quantity} `;
-  if (line.productName !== null) return line.productName;
-  return line.quantity !== null && line.text.startsWith(prefix) ? line.text.slice(prefix.length) : line.text;
-}
-
 function readback(order: OrderView, lead: string): string {
-  const lines = order.lines.map((line) => `• ${line.quantity === null ? "" : `${line.quantity} `}${wordsOf(line)}`.replace(/\s+$/u, ""));
   const total = order.total === null ? [] : [`Total: ${money(order.total)}`];
-  return [lead, ...lines, ...total, CONFIRM_PROMPT].join("\n");
+  return [lead, ...lineBullets(order.lines), ...total, CONFIRM_PROMPT].join("\n");
 }
 
 function question(code: QuestionCode): string {
@@ -199,7 +192,7 @@ export function render(outcome: EngineOutcome): string {
           return "Eso lo ve la tienda. Ya les aviso.";
       }
     case "order_status":
-      return outcome.order === null ? NO_OPEN_ORDER : readback(outcome.order, "Tu pedido va así:");
+      return outcome.order === null ? NO_OPEN_ORDER : orderStatusText(outcome.order);
     case "handoff":
     case "out_of_scope":
       return "Se lo paso a la tienda para que te ayuden.";
