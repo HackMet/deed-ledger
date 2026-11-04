@@ -53,7 +53,7 @@ async function login(h: Harness, s: Store, role: "owner" | "staff"): Promise<str
 }
 
 /** A store whose members sign in: an owner and a staff member, both in the store `newStore` seeds. */
-async function storeWithMembers(): Promise<Store> {
+async function storeWithMembers(): Promise<Store & { readonly phones: readonly string[] }> {
   const base = await seedStore({
     members: [
       { phone: newPhone(), role: "owner" },
@@ -69,7 +69,7 @@ async function storeWithMembers(): Promise<Store> {
       ).bind(s.businessId, m.userId, m.role),
     ),
   );
-  return s;
+  return { ...s, phones: base.members.map((m) => m.phone) };
 }
 
 const REPLY_TEXT = "Tu pedido está confirmado, gracias por tu compra.";
@@ -188,7 +188,7 @@ describe("/console/deed/:orderId/libro: the three lanes", () => {
     expect(body).toContain("Entregado al teléfono");
   });
 
-  it("writes no ACK or NACK, no external URL and no script, and never the text of a message", async () => {
+  it("writes no ACK or NACK, no external URL and no script, and never the text of a message or a phone", async () => {
     const s = await storeWithMembers();
     const { orderId } = await fourStates(s);
     const h = harness({ engine });
@@ -198,6 +198,9 @@ describe("/console/deed/:orderId/libro: the three lanes", () => {
     expect(body).not.toMatch(/https?:\/\//);
     expect(body).not.toContain("<script");
     expect(body).not.toContain(REPLY_TEXT);
+    for (const phone of s.phones) expect(body).not.toContain(phone);
+    // A Honduran number (504 and eight digits) as a whole token: no UUID's hex group can match it.
+    expect(body).not.toMatch(/(?<![0-9a-zA-Z])504\d{8}(?![0-9a-zA-Z])/);
   });
 
   it("is linked from the order's Deed page and from the Pedidos trail", async () => {
