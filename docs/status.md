@@ -9,8 +9,8 @@ Last updated: Tue Nov 3, 2026, midday Honduras time, by Claude Code.
 
 - **Deed core, D1 half (branch `claude/deed-core-store`, Nov 4, not merged):** the fact batch moved from
   `fact-ledger.ts` into `src/deed-core/d1-store.ts`. The store's evidence rules are policy data
-  (`src/domain/store-policy.ts`), its drafts and stock a host extension (`src/infrastructure/d1/store-extension.ts`),
-  and migration 0029 opens the kind lists to the policy (D-53). Gates: 94 files, 1359 tests; typecheck and
+  (`src/domain/store-policy.ts`), its drafts and stock a host extension (`src/infrastructure/d1/store-extension.ts`) (D-53, D-54). The store's tables
+  keep their kind CHECKs: they are the host's schema, not the core's. Gates: 94 files, 1359 tests; typecheck and
   `wrangler types --check` green. Open: `D1LedgerStore` writes through `batch_guards`, so the core's `schema.sql`
   must create it. `facts` and `fact_evidence` are append-only by convention only: no migration has ever given them a trigger.
 - **Auto-deploy works (Nov 3):** every merge to main tests and deploys the demo (`.github/workflows/deploy.yml`);
