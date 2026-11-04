@@ -6,7 +6,8 @@
  */
 export const EXPECTED_VERDICTS = {
   A: "emparejado 4, en_duda 2, null 2",
-  D: "emparejado 2, null 4",
+  // The approved notice claims the order's state (C11): one more reply, still in doubt here, and its confirm pairs.
+  D: "emparejado 3, en_duda 1, null 3",
   E: "bloqueado 1, null 4",
 };
 

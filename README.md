@@ -63,7 +63,7 @@ branding. The other seven can be partial and it is still recognisably Deed.
 - `rowKey` is positional, an entry doesn't name its judge's version, and an entry carries a staff member's full UUID and claims the judge ignores.
 - Without esbuild the command exits 1, as if a verdict differed.
 - The demo prints `RESULT: every expectation held` before its recheck, and its tallies can't see a path no demo order reaches, such as a closed fact or a total.
-- `entrada.json` has no `Cache-Control: no-store` and no explicit no-login test (the route does answer 401). "19 pairs" counts rows, 10 of them with no pair.
+- `entrada.json` has no `Cache-Control: no-store` and no explicit no-login test (the route does answer 401). "20 pairs" counts rows, 9 of them with no pair.
 
 **C10, met.** Un host cuyos efectos son solo hechos escribe una política. Un host que necesita escrituras propias en el mismo batch agrega una extensión fuera del núcleo. En ningún caso se edita el núcleo. (Like an adapter in hexagonal architecture.)
 
