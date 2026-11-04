@@ -43,6 +43,8 @@ export interface RecordedLine {
   readonly counted: boolean;
   readonly unitPrice: Centavos | null;
   readonly quantity: DecimalString | null;
+  /** Staff marked this line No hay on this version: the total after the tap leaves it out. */
+  readonly markedNoHay?: boolean;
 }
 
 export type ProviderStatus = "sent" | "delivered" | "read" | "played" | "failed";
@@ -366,7 +368,10 @@ export function libroRows(input: LibroInput): LibroRow[] {
       }
       if (totals.length > 0) {
         const found = totals.map((claim) => {
-          const recorded = recordedTotalOf(input.lines.filter((line) => line.version === claim.version));
+          const lines = input.lines.filter((line) => line.version === claim.version);
+          // A version has two true totals once a line is No hay: the one said before the tap and the one said after.
+          const afterNoHay = recordedTotalOf(lines.map((line) => (line.markedNoHay === true ? { ...line, counted: false } : line)));
+          const recorded = afterNoHay === claim.total ? afterNoHay : recordedTotalOf(lines);
           return { claim, recorded, state: pairOrderTotal(claim.total, recorded) };
         });
         const hit = found.find((entry) => entry.state === "emparejado") ?? found.find((entry) => entry.state === "sin_pareja") ?? found[0]!;

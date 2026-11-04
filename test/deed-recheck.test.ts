@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { LibroInput } from "../src/domain/deed-libro";
+import { libroRows, type LibroInput } from "../src/domain/deed-libro";
 import { entryOf, recheckEntry } from "../src/domain/deed-recheck";
 import example from "../docs/deed-entry-example.json";
 
@@ -47,6 +47,30 @@ describe("entryOf and recheckEntry: the judge re-runs from the entry alone", () 
       ["r5", "emparejado"],
     ]);
     expect(recheckEntry(roundTrip(entry))).toEqual({ ok: true, pairs: 5, same: 5, differ: [] });
+  });
+
+  it("pairs the totals said before and after a No hay, and nothing else, from the entry alone", () => {
+    const said = (id: string, atMs: number, total: number) => ({
+      id,
+      atMs,
+      status: "sent" as const,
+      providerStatus: "delivered" as const,
+      providerStatusAtS: 2,
+      claims: [{ anyOf: [{ type: "order_total" as const, orderId: "order-1", version: 1, total }] }],
+    });
+    const entry = entryOf({
+      ...input,
+      lines: [
+        { version: 1, counted: true, unitPrice: 2500, quantity: "2" },
+        { version: 1, counted: true, unitPrice: 1000, quantity: "1", markedNoHay: true },
+      ],
+      replies: [said("before", 2000, 6000), said("after", 4000, 5000), said("wrong", 5000, 1000)],
+    });
+    const verdicts = libroRows(entry.input).flatMap((row) => (row.agent?.text.startsWith("Dijo: total") ? [row.state] : []));
+    expect(verdicts).toEqual(["emparejado", "emparejado", "sin_pareja"]);
+    expect(recheckEntry(roundTrip(entry))).toMatchObject({ ok: true, differ: [] });
+    const lines = [{ version: 1, counted: true, unitPrice: 2500, quantity: "2", markedNoHay: "yes" }];
+    expect(recheckEntry(roundTrip({ ...entry, input: { ...entry.input, lines } }))).toMatchObject({ ok: false });
   });
 
   it("finds a stored verdict that no longer matches the input: one difference, named by its row", () => {

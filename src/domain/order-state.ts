@@ -2,6 +2,7 @@
  * An order's state, derived from its facts (R2): the ledger is the source and `orders.state` is the
  * cache this must agree with. Pure: the caller reads the facts and their liveness.
  */
+import type { LineMark } from "./contract/actions";
 import type { OrderState } from "./contract/outcomes";
 
 /** One order fact as the derivation needs it. `live`: neither it nor an ancestor is closed. */
@@ -16,6 +17,8 @@ export interface OrderFact {
   readonly resumeState: "confirmado" | "preparando" | null;
   /** order_status only, and only for a step (a line mark has none). */
   readonly status: "preparing" | "ready" | "dispatched" | "delivered" | null;
+  /** order_status only, and only for a line mark: which line of `version`, and the mark. */
+  readonly lineMark?: { readonly line: string; readonly mark: LineMark };
 }
 
 /** Later steps win: a delivered order stays delivered whatever order the taps were recorded in. */

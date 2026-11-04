@@ -1,7 +1,8 @@
 /** Exact order totals. Integer centavos, rounded per line, half up; never a float. */
 import type { Centavos } from "./contract/numbers";
 import { toThousandths } from "./contract/numbers";
-import type { OrderLineView } from "./contract/outcomes";
+import type { LineMark } from "./contract/actions";
+import type { OrderLineView, OrderView } from "./contract/outcomes";
 
 export interface OrderTotal {
   /**
@@ -17,6 +18,17 @@ export interface OrderTotal {
 
 export function isExcludedFromTotal(line: Pick<OrderLineView, "restricted" | "availability">): boolean {
   return line.restricted || line.availability === "se_acabo";
+}
+
+/** A line as staff marked it. No hay means it's out, which also leaves it out of the total. */
+export function withLineMark(line: OrderLineView, mark: LineMark): OrderLineView {
+  return { ...line, mark, availability: mark === "no_hay" ? "se_acabo" : line.availability };
+}
+
+/** What receiving the order costs: nothing at the counter, the set fee for delivery, unknown until it's said. */
+export function deliveryOf(fulfillment: OrderView["fulfillment"]): Centavos | null {
+  if (fulfillment === null) return null;
+  return fulfillment.mode === "pickup" ? 0 : fulfillment.fee;
 }
 
 /** unit price x quantity, rounded half up to the centavo; null if either is unknown. */

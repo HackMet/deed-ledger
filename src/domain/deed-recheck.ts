@@ -88,6 +88,7 @@ function parseLine(value: unknown, where: string): RecordedLine {
     counted: bool(line.counted, `${where}.counted`),
     unitPrice: orNull(line.unitPrice, int, `${where}.unitPrice`) as Centavos | null,
     quantity: orNull(line.quantity, (v, w) => (DECIMAL.test(str(v, w)) ? (v as string) : fail(w, "must be a decimal string")), `${where}.quantity`),
+    ...(line.markedNoHay === undefined ? {} : { markedNoHay: bool(line.markedNoHay, `${where}.markedNoHay`) }),
   };
 }
 

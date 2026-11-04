@@ -27,7 +27,7 @@ import type {
 } from "../../domain/contract/outcomes";
 import { deriveOrderState, type OrderFact } from "../../domain/order-state";
 import { stockVerdict } from "../../domain/stock-offer";
-import { totalOf } from "../../domain/order-total";
+import { deliveryOf, totalOf, withLineMark } from "../../domain/order-total";
 import { indexOfLabel, labelOf, nextVersion } from "../../domain/orders";
 import { isPrice, priceKey } from "../../domain/price";
 import type { EvidenceRef, FactCommit } from "../../domain/facts";
@@ -165,6 +165,8 @@ export interface OrderStore {
   commitFor(tenant: Tenant, write: OrderWrite): Commit;
   /** Price facts of one product of this store, and whether `operationKey` is already used (K6). */
   priceState(tenant: Tenant, productId: string, operationKey: string): Promise<PriceState>;
+  /** Whether a live No hay mark holds this product out of an open order of this store. */
+  noHayMarked(tenant: Tenant, productId: string): Promise<boolean>;
 }
 
 /** A customer can change these; listo waits at the counter, and a change then needs a person. */
@@ -341,6 +343,10 @@ export class OrderEngine implements Engine {
 
     const open = await store.openOrder(context, context.customerId);
     const names = await store.productNames(context, [...new Set(matches.map((m) => m.productId))]);
+    // The live confirmed price, read when a line is priced. A proposal or no price at all is unknown.
+    const prices = new Map(
+      await Promise.all([...names.keys()].map(async (id) => [id, (await store.priceState(context, id, "")).confirmed?.price ?? null] as const)),
+    );
     const lineFrom = (item: ItemLine, observation: number, line: number): OrderLineView => {
       const match = matches.find((m) => m.observation === observation && m.line === line);
       // A match counts only for a product of this store.
@@ -352,8 +358,8 @@ export class OrderEngine implements Engine {
         productName: productId === null ? null : (names.get(productId) ?? null),
         quantity: canonicalQuantity(item.quantity),
         unit: item.unit,
-        // Only the store's confirmed price is quoted, and none is recorded yet: unknown.
-        unitPrice: null,
+        // A restricted line is never quoted: it is sold only at the store.
+        unitPrice: productId === null || item.restrictedCategory ? null : (prices.get(productId) ?? null),
         availability: "no_se",
         restricted: item.restrictedCategory,
         mark: null,
@@ -577,7 +583,10 @@ export class OrderEngine implements Engine {
     }
 
     const packing = step.to === "confirmado" || step.to === "preparando";
-    const order: OrderView = { ...view, state: step.to, queuePosition: packing ? view.queuePosition : null };
+    const marked = action.type === "mark_line" ? view.lines.map((line) => (line.lineId === action.lineId ? withLineMark(line, action.mark) : line)) : view.lines;
+    // A No hay takes its line out of what the customer pays; the version keeps what was confirmed.
+    const total = action.type === "mark_line" && action.mark === "no_hay" ? totalOf(marked, deliveryOf(view.fulfillment)).total : view.total;
+    const order: OrderView = { ...view, lines: marked, total, state: step.to, queuePosition: packing ? view.queuePosition : null };
     const outcome: EngineOutcome = { type: "action_saved", order };
     const notice = (n: CustomerNotice["notice"]): CustomerNotice => ({ customerId: stored.customerId, notice: n });
     const notices: CustomerNotice[] = [];
@@ -817,9 +826,14 @@ export class OrderEngine implements Engine {
     return confirmed !== null && confirmed.price === claim.price;
   }
 
-  /** Backed only by a record of this store: no record is unknown, which backs neither "hay" nor "se_acabo". */
+  /**
+   * Backed only by a record of this store: no record is unknown, which backs neither "hay" nor "se_acabo".
+   * Staff saying No hay on an open order is such a record of "se_acabo", whatever the stock count says.
+   */
   private async verifyAvailability(tenant: Tenant, claim: Extract<Claim, { type: "availability" }>): Promise<boolean> {
-    if (this.deps.stock === undefined || typeof claim.productId !== "string") return false;
+    if (typeof claim.productId !== "string") return false;
+    if (claim.availability === "se_acabo" && (await this.deps.store.noHayMarked(tenant, claim.productId))) return true;
+    if (this.deps.stock === undefined) return false;
     const balance = (await this.deps.stock.balances(tenant, [claim.productId])).get(claim.productId);
     if (balance === undefined) return false;
     if (claim.availability === "se_acabo") return balance === 0;
@@ -906,14 +920,14 @@ export class OrderEngine implements Engine {
     // After confirming, a change waits for the owner or staff (K12); before, the customer reconfirms (D-43).
     if (open !== null && CHANGE_WINDOW.includes(open.view.state)) return this.request(context, operationKey, open, labelled, fulfillment);
     const stocked = await this.withStock(context, labelled);
-    const fee = fulfillment === null ? null : fulfillment.mode === "pickup" ? 0 : fulfillment.fee;
     const order: OrderView = {
       orderId: open?.view.orderId ?? this.deps.ids.newId(),
       version: open === null ? 1 : open.view.version + 1,
       state: "por_confirmar",
       lines: stocked,
       fulfillment,
-      total: totalOf(stocked, fee).total,
+      // A short line is still a question: no total counts what may not be sold.
+      total: stocked.some((line) => line.inStock !== undefined) ? null : totalOf(stocked, deliveryOf(fulfillment)).total,
       queuePosition: null,
       openChangeRequest: null,
       lastReview: open?.view.lastReview ?? null,
@@ -1081,8 +1095,9 @@ export class OrderEngine implements Engine {
     let cacheFacts: OrderWrite["facts"] = { versionFactId: stored.versionFactId, confirmFactId: stored.confirmFactId };
 
     if (approve) {
-      const fee = request.fulfillment === null ? null : request.fulfillment.mode === "pickup" ? 0 : request.fulfillment.fee;
-      order = { ...order, version: view.version + 1, lines: request.lines, fulfillment: request.fulfillment, total: totalOf(request.lines, fee).total };
+      // Marks belong to the version they were tapped on; a No hay stays out of the new one's total as se_acabo.
+      const lines = request.lines.map((line) => ({ ...line, mark: null }));
+      order = { ...order, version: view.version + 1, lines, fulfillment: request.fulfillment, total: totalOf(lines, deliveryOf(request.fulfillment)).total };
       // The customer's message asking for the change is what the new version and its confirm rest on.
       const asked: EvidenceRef[] = request.jobId === null ? [] : [{ kind: "inbound_message", refId: request.jobId, contentSha256: null }];
       const previous = stored.versionFactId;

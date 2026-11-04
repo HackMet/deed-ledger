@@ -143,7 +143,7 @@ tests run two stores side by side (`test/isolation.test.ts`).
 
 | Who sends what | What happens | Meta model |
 |---|---|---|
-| A customer: a photo of a handwritten list, then "y agregale dos libras de azúcar" | One order. The agent asks only what's missing, one kind of question at a time, then reads back every line and the total (on `DEED_ENGINE`, no line has a price yet, so the reply says "El total te lo confirmo") | Muse Spark (reader and planner) |
+| A customer: a photo of a handwritten list, then "y agregale dos libras de azúcar" | One order. The agent asks only what's missing, one kind of question at a time, then reads back every line and the total (a line has an amount once the owner confirmed its price; the total needs every counted line priced and pickup or a set delivery fee, otherwise the reply says "El total te lo confirmo") | Muse Spark (reader and planner) |
 | A customer: a voice note | Decoded from OGG/Opus to WAV inside the Worker, transcribed, then read like typed text | Muse Voice Transcribe, then Muse Spark |
 | A customer: "¿A cómo está el aceite?" | Answered from the store's records; when they don't know, "te confirmo" and an item for the owner | Muse Spark reads the question; code answers |
 | A customer: "Confirmar" (button or typed) | The order goes on the preparation list once; a second tap is a duplicate | None: code decides |

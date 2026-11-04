@@ -82,20 +82,28 @@ export class D1LibroReads {
     });
   }
 
-  /** The order's lines, per version: a line left out of the total, or with an unknown price or quantity, says so. */
+  /** The order's lines, per version: a line left out of the total, marked No hay, or with an unknown price or quantity, says so. */
   private async linesOf(tenant: Tenant, orderId: string): Promise<RecordedLine[]> {
     const { results } = await this.db
       .prepare(
-        `SELECT version, excluded_from_total, unit_price_centavos, qty_milli FROM order_lines
-         WHERE business_id = ?1 AND order_id = ?2 ORDER BY version, line_no`,
+        `SELECT l.version, l.excluded_from_total, l.unit_price_centavos, l.qty_milli,
+           EXISTS (
+             SELECT 1 FROM facts f
+             WHERE f.business_id = l.business_id AND f.kind = 'order_status' AND json_extract(f.body_json, '$.orderId') = l.order_id
+               AND json_extract(f.body_json, '$.version') = l.version AND json_extract(f.body_json, '$.mark') = 'no_hay'
+               AND json_extract(f.body_json, '$.line') = 'L' || l.line_no
+           ) AS marked_no_hay
+         FROM order_lines l
+         WHERE l.business_id = ?1 AND l.order_id = ?2 ORDER BY l.version, l.line_no`,
       )
       .bind(tenant.businessId, orderId)
-      .all<{ version: number; excluded_from_total: number; unit_price_centavos: number | null; qty_milli: number | null }>();
+      .all<{ version: number; excluded_from_total: number; unit_price_centavos: number | null; qty_milli: number | null; marked_no_hay: number }>();
     return results.map((row) => ({
       version: row.version,
       counted: row.excluded_from_total === 0,
       unitPrice: row.unit_price_centavos,
       quantity: row.qty_milli === null ? null : milliToDecimal(row.qty_milli),
+      ...(row.marked_no_hay === 1 ? { markedNoHay: true } : {}),
     }));
   }
 
