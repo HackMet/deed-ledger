@@ -253,6 +253,111 @@ describe("DEED_ENGINE=1: an illegible line is asked about before any Confirmar",
   });
 });
 
+describe("DEED_ENGINE=1: the ask rule beside the empty-confirm guard and stock's question", () => {
+  it("nothing readable but a pickup: no Confirmar to tap and a typed confirmar confirms nothing", async () => {
+    const c = await setUp([reading(order([], [{ code: "illegible", line: null, evidence: none }]), PICKUP), NOTHING, NOTHING]);
+    expect(await c.say("foto borrosa, lo recojo")).toBe("No alcancé a leer una parte de tu lista. ¿Me la escribís?");
+    await c.say("solo eso");
+    expect(await c.buttons()).not.toContain("Confirmar");
+    await c.say("confirmar");
+    expect(await c.factKinds()).not.toContain("order_confirm");
+    expect(await c.orders()).toEqual([{ id: expect.any(String), state: "por_confirmar" }]);
+  });
+
+  it("a line with no quantity is asked before stock's question, and a bare number lands on that line", async () => {
+    const c = await setUp([reading(order([RICE(null), SUGAR("5")]), PICKUP), reading(answer("3", "3"))]);
+    await env.DB.prepare(`INSERT INTO stock_balances (business_id, product_id, qty_milli, updated_at_ms) VALUES (?, ?, 2000, 0)`).bind(c.store.businessId, `${c.store.businessId}:azucar`).run();
+    expect(await c.say("arroz y 5 azucar")).toMatch(/¿Cuánto querés de Arroz 1 lb\?/);
+    const next = await c.say("3");
+    expect(next).toMatch(/• 3 Arroz 1 lb/);
+    expect(next).toMatch(/¿Te mando 2 o lo quitamos\?/);
+  });
+});
+
+describe("DEED_ENGINE=1: a typed word under an ask never acts on the customer's finished order", () => {
+  const UNREAD = { code: "illegible", line: null, evidence: none };
+  const FIRST_ORDER = reading(order([RICE("1")]), PICKUP);
+  const SECOND_ORDER_PART_READ = reading(order([SUGAR("2")], [UNREAD]), PICKUP);
+  const SECOND_ORDER_NO_QUANTITY = reading(order([SUGAR(null)]), PICKUP);
+
+  type Customer = Awaited<ReturnType<typeof setUp>>;
+
+  /** Order 1 confirmed, prepared and delivered, its readback still the customer's last. */
+  async function deliverFirstOrder(c: Customer): Promise<string> {
+    await c.say("arroz");
+    await c.say("confirmar");
+    const [placed] = await c.orders();
+    for (const [n, type] of (["start_preparing", "mark_ready", "mark_delivered"] as const).entries()) {
+      const action = { type, orderId: placed!.id, version: 1 } as const;
+      const member: MemberContext = { businessId: c.store.businessId, memberId: ids.staff, role: "staff", canApproveFiado: false, nowMs: T0 + n };
+      await save(await engine.onConsoleAction(member, { operationKey: staffKey(action), actor: { type: "member", memberId: ids.staff, role: "staff" }, action }));
+    }
+    return "entregado";
+  }
+
+  /** Order 1 cancelled from its readback, which stays the customer's last. */
+  async function cancelFirstOrder(c: Customer): Promise<string> {
+    await c.say("arroz");
+    await c.say("cancelar");
+    return "cancelado";
+  }
+
+  for (const [finished, finish] of [
+    ["delivered", deliverFirstOrder],
+    ["cancelled", cancelFirstOrder],
+  ] as const) {
+    for (const word of ["confirmar", "cancelar"]) {
+      it(`order 1 ${finished}, part of order 2 unread: "${word}" reaches order 2's readback and order 1 isn't touched`, async () => {
+        const c = await setUp([FIRST_ORDER, SECOND_ORDER_PART_READ, NOTHING]);
+        const first = await finish(c);
+        expect(await c.say("azucar y foto")).toBe("No alcancé a leer una parte de tu lista. ¿Me la escribís?");
+        const before = await c.factKinds();
+
+        expect(await c.say(word)).toMatch(/• 2 Azucar 1 lb/);
+        expect(await c.buttons()).toContain("Confirmar");
+        expect(await c.factKinds()).toEqual(before);
+        expect((await c.orders()).map((row) => row.state)).toEqual([first, "por_confirmar"]);
+      });
+
+      it(`order 1 ${finished}, order 2 waits on a quantity: "${word}" gets the line's question`, async () => {
+        const c = await setUp([FIRST_ORDER, SECOND_ORDER_NO_QUANTITY, NOTHING]);
+        const first = await finish(c);
+        expect(await c.say("azucar")).toMatch(/¿Cuánto querés de Azucar 1 lb\?/);
+        const before = await c.factKinds();
+
+        expect(await c.say(word)).toMatch(/¿Cuánto querés de Azucar 1 lb\?/);
+        expect(await c.factKinds()).toEqual(before);
+        expect((await c.orders()).map((row) => row.state)).toEqual([first, "por_confirmar"]);
+      });
+    }
+
+    it(`order 1 ${finished}: once order 2's readback is out, "confirmar" confirms order 2`, async () => {
+      const c = await setUp([FIRST_ORDER, SECOND_ORDER_PART_READ, NOTHING]);
+      const first = await finish(c);
+      await c.say("azucar y foto");
+      await c.say("confirmar");
+      await c.say("confirmar");
+      expect((await c.orders()).map((row) => row.state)).toEqual([first, "confirmado"]);
+    });
+
+    it(`order 1 ${finished}: "cancelar" read as a cancel cancels order 2, and after its readback the word does too`, async () => {
+      const cancelled = reading({ kind: "order_cancel", issues: [] });
+      const read = await setUp([FIRST_ORDER, SECOND_ORDER_PART_READ, cancelled]);
+      const first = await finish(read);
+      await read.say("azucar y foto");
+      await read.say("cancelar");
+      expect((await read.orders()).map((row) => row.state)).toEqual([first, "cancelado"]);
+
+      const typed = await setUp([FIRST_ORDER, SECOND_ORDER_PART_READ, NOTHING]);
+      await finish(typed);
+      await typed.say("azucar y foto");
+      await typed.say("solo eso");
+      await typed.say("cancelar");
+      expect((await typed.orders()).map((row) => row.state)).toEqual([first, "cancelado"]);
+    });
+  }
+});
+
 describe("DEED_ENGINE=1: an order already stuck at listo never blocks its customer for good", () => {
   it("the customer is refused until staff say they have it; then a new order starts", async () => {
     const c = await setUp([reading(order([RICE("1")]), PICKUP), reading(order([SUGAR("2")])), reading(order([SUGAR("2")]))]);
