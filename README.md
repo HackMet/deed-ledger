@@ -54,7 +54,7 @@ branding. The other seven can be partial and it is still recognisably Deed.
 | **C8** | **Reliability is measured per (agent id, effect class), under dependence.** Agent errors arrive in bursts, so a Bernoulli interval is mis-specified. | ⚠️ partial: `docs/deed-scale.html`, from harness runs only, not store orders. There the id is sha256(model + brief), not `facts.agent_id`. The page gives counts only; it makes no claim about dependence |
 | **C9** | **Nothing identifies, scores, profiles or tracks a person.** The unit is an agent version and an effect class. | ✅ built and tested |
 | **C10** | **The core is agnostic.** No business nouns inside it; a new business flow is a new policy, never an edit to the core. | ✅ built and tested, with the known limits below |
-| **C11** | **The agent is identified, and the identity travels.** Every fact records which agent version made the claim; every customer-facing output carries a code that resolves to that entry. | ⚠️ partial: every customer fact records the agent version (see the limit below). No customer-facing output carries a code yet |
+| **C11** | **The agent is identified, and the identity travels.** Every fact records which agent version made the claim; every customer-facing output carries a code that resolves to that entry. | ⚠️ partial: every customer fact records the agent version (see the limit below). Staff can search a code or reference at `/console/deed/buscar` and reach the order's entry, but no customer-facing output carries one yet |
 
 **Known limits of C3.** These have no test:
 
@@ -116,7 +116,7 @@ The store's append-only triggers (C5), signatures, watermarks, C2PA, hash chain.
 
 | Number | Value | Measured |
 |---|---|---|
-| Tests | 1651 passed in 104 files, plus 9 under `node:test`; typecheck exit 0 | `npm test` and `npm run typecheck` on this branch, November 4, 2026 |
+| Tests | 1660 passed in 105 files, plus 9 under `node:test`; typecheck exit 0 | `npm test` and `npm run typecheck` on this branch, November 4, 2026 |
 | Attacks | 9 attacks that reach the engine: 0 false facts admitted. One more attack is intake only and is not counted | `node scripts/adversary.mjs`, exit 0. Removing a defence on purpose turns its row red, except one K12 case noted in the script's review |
 | Harness runs | 125 run names, last attempt of each (at least 61 earlier attempts were overwritten with no verdict): 63 confirmed, 0 contradictions, 62 with no claim | `deed_check_harness.py` on 2026-11-04, Honduras time, rows in `docs/deed-verdicts.csv`, page in `docs/deed-scale.html`. Confirmed only means the commit exists and the runner recorded it for that run; tests are not re-run. Only the first sha on the `RESULT: COMMITTED` line is read, so any other false statement, with a sha or without one, is not detected. A reader re-runs them from the published evidence, and about a quarter of those shas exist only in local copies |
 

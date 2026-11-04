@@ -1,7 +1,8 @@
 /**
  * The short code staff and customers say out loud for an order: "#" and the first five Crockford
- * base32 characters of the SHA-256 of its confirm fact's id. Display only: two orders can share a
- * code, so no lookup ever uses it. Null until the order has a confirm.
+ * base32 characters of the SHA-256 of its confirm fact's id. Two orders can share a code, so only the
+ * console's search reads it, and that search opens the most recently confirmed. Null until the order
+ * has a confirm.
  */
 const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const CODE_LENGTH = 5;

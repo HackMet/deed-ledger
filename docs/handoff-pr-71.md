@@ -62,6 +62,8 @@ Also waiting on him: decisions D-41 to D-44 and the migration numbers.
 
 9. **No total on this engine.** `order-engine.ts:352` sets every line's `unitPrice` to null, so every order's total is null and the real reply says "El total te lo confirmo". No wrong total is possible, and none is shown. Prices need a decision.
 
+10. **C11 is still partial.** Staff can search an order's code or reference at `/console/deed/buscar`, but on this engine no customer message carries one. Local branch `claude/c11-ref` adds a last line `Ref. a1b2c3d4` to customer messages about an order, in `src/application/replies.ts`. It stays out of this PR until Angel accepts it.
+
 ## Conformance
 
 - ✅ C1, C2, C3, C4, C6, C9, C10. The known limits of C3 and C10 are in the README.
