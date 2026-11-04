@@ -20,6 +20,7 @@ import { placeholderHandler } from "../placeholder-handler";
 import type { Clock, ConversationRef, JobHandler, JobInput, JobOutcome, Tenant } from "../ports";
 import { actionKey, type StoredOrder } from "./order-engine";
 import { requestedLines } from "../../domain/change-request";
+import { wordsWithoutQuantity } from "../../domain/orders";
 
 /** The customer's own open order, from our records: the only source of an order id and version. */
 export interface OpenOrderReader {
@@ -124,11 +125,10 @@ export const PENDING_CHANGE = "Le pasé tu cambio a la tienda. Queda así si lo 
 
 const money = (centavos: number): string => `L ${(centavos / 100).toFixed(2)}`;
 
-/** A line's words: its product's name, or else the customer's text without a quantity it already carries. */
+/** A line's words: its product's name, or else the customer's text without the quantity it starts with. */
 function wordsOf(line: OrderView["lines"][number]): string {
   if (line.productName !== null) return line.productName;
-  const prefix = `${line.quantity} `;
-  return line.quantity !== null && line.text.startsWith(prefix) ? line.text.slice(prefix.length) : line.text;
+  return line.quantity === null ? line.text : wordsWithoutQuantity(line.text);
 }
 
 /** One line per order line, for a reply: the quantity once, then the words. */

@@ -142,7 +142,7 @@ export function recordedPerceptionHandler(deps: {
 
 // ---------------------------------------------------------------------------------------------
 // Replies. The demo renders its own, so `src/` stays untouched; the words match the fixture
-// perception handler's (src/application/engine/fixture-perception-handler.ts), and a test holds them alike.
+// perception handler's (src/application/engine/fixture-perception-handler.ts), and a test holds the ones with no change waiting alike. The product's real replies are src/domain/replies.ts, which never runs here.
 
 const NO_OPEN_ORDER = "No tengo un pedido abierto tuyo. Mandame lo que necesitás.";
 const CONFIRM_PROMPT = "¿Lo confirmo? Confirmar / Corregir / Cancelar";

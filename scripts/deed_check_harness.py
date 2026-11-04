@@ -24,6 +24,9 @@ NONE_RE = re.compile(r"RESULT:\W*(COMMITTED\W+none|NO\s+COMMIT)\b", re.I)
 REVIEW_RE = re.compile(r"review|validate", re.I)
 PASSED_RE = re.compile(r"(\d+)\s+passed")
 FAILED_RE = re.compile(r"(\d+)\s+failed")
+LOCAL_PATH_RE = re.compile(r"(?<![\w.])/(?:home|Users|root|tmp|mnt|var)/[^\s`'\"),]+")
+SECRET_RE = re.compile(r"\b[A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET)=\S+")
+PHONE_RE = re.compile(r"\+\d{8,}")
 
 
 def sh(cmd, cwd=None, timeout=None):
@@ -161,13 +164,18 @@ def runs_in_evidence(path):
                        result=e["result"], started=e["started"], claimed_passed=e["claimed_passed"])
 
 
+def scrubbed(line):
+    """A published line, with no local path, secret assignment or phone number."""
+    return PHONE_RE.sub("<phone>", SECRET_RE.sub("<secret>", LOCAL_PATH_RE.sub("<local path>", line)))
+
+
 def evidence_of(rec):
     """A record reduced to what its verdict depends on: RESULT lines, the runner's fields. No other report text."""
     keep = ("status", "model", "model_id", "commits", "sha", "commit")
     return dict(run=rec["run"], started=rec["started"], claimed_passed=last_int(PASSED_RE, rec["report"]),
                 result={k: rec["result"][k] for k in keep if k in rec["result"]},
-                final_lines=[l for l in rec["final"].splitlines() if "RESULT:" in l.upper()],
-                report_lines=[l for l in rec["report"].splitlines() if SHA_RE.search(l)])
+                final_lines=[scrubbed(l) for l in rec["final"].splitlines() if "RESULT:" in l.upper()],
+                report_lines=[scrubbed(l) for l in rec["report"].splitlines() if SHA_RE.search(l)])
 
 
 def check_records(repo, records, gate=None, timeout=900):

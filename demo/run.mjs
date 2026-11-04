@@ -72,7 +72,7 @@ async function main() {
     return parsed;
   });
   counts = { fixture: recordings.filter((r) => r.source === "fixture").length, muse: recordings.filter((r) => r.source === "muse").length };
-  LABEL = `PERCEPTION: RECORDED (${counts.fixture} fixture, ${counts.muse} muse) — fixtures until Angel records real Muse outputs. The engine, ledger and console are live code.`;
+  LABEL = `PERCEPTION: RECORDED (${counts.fixture} fixture, ${counts.muse} muse) — fixtures until Angel records real Muse outputs. The engine, ledger and console are live code; the customer replies are demo templates, not the product's words.`;
   console.log(LABEL);
   console.log("");
 

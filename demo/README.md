@@ -40,7 +40,7 @@ the message, the reply from the outbox, the fact counts that moved, and ✓/✗.
 ## What is recorded and what is live
 
 Live: the Worker, webhook intake, the queue, the order engine (`OrderEngine` on D1), the fact ledger,
-the outbox and the console. Recorded: perception only. `demo/recorded-perception.ts` maps each scripted
+the outbox and the console. Not the product: the customer replies are demo templates (`demo/recorded-perception.ts`), not `src/domain/replies.ts`, so their wording differs and they don't pass the claim checks. A customer with a waiting change hears "Le pasé tu cambio…" only here. Recorded: perception. `demo/recorded-perception.ts` maps each scripted
 message text to a `BurstReading` from `demo/recordings/*.json`; `confirmar`/`cancelar` use the fixture
 handler's exact words; any other text gets the placeholder reply, never a guess. Nothing calls Muse and
 nothing is sent to WhatsApp. `PERCEPTION=live ./demo.sh` exits 2: there is no live mode yet.

@@ -120,3 +120,5 @@ c3-recheck-fix3,2026-11-04T08:43:24+00:00,haiku,ok,29aaad6,True,,,,,CONFIRMED_CO
 c3-recheck-fix4,2026-11-04T09:52:38+00:00,haiku,ok,7bd4a01e2b38,True,,,,,CONFIRMED_COMMIT_ONLY
 c3-recheck-fix5,2026-11-04T11:09:50+00:00,haiku,ok,d3c16345199f,True,,,,,CONFIRMED_COMMIT_ONLY
 rc3-review-recheck,2026-11-04T11:54:23+00:00,opus,ok,,,,,,,NO_CLAIM
+rc10b-review-core,2026-11-04T14:55:46+00:00,opus,ok,,,,,,,NO_CLAIM
+rd-review-demo-fixes,2026-11-04T14:58:38+00:00,opus,ok,,,,,,,NO_CLAIM

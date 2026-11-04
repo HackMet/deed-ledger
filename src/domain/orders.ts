@@ -38,6 +38,11 @@ export interface NextVersion {
  * The version after `current` with `change` applied, or null when the change points at a label
  * or quantity that doesn't resolve. `current` is never modified; labels are renumbered by position.
  */
+const LEADING_QUANTITY = /^(?:\d+(?:[.,]\d+)?|un|una|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s+(?=\S)/i;
+
+/** The customer's words without the quantity they start with ("1 aceite", "dos libras de azúcar"). */
+export const wordsWithoutQuantity = (text: string): string => text.replace(LEADING_QUANTITY, "");
+
 export function nextVersion(
   current: Pick<OrderView, "version" | "lines">,
   change: OrderChangeEdit,
@@ -58,6 +63,11 @@ export function nextVersion(
   if (!isDecimalString(change.quantity)) return null;
   return {
     version,
-    lines: current.lines.map((line, i) => (i === index ? { ...line, quantity: change.quantity } : line)),
+    // An unmatched line's words carry the old quantity; kept, the line would show two numbers.
+    lines: current.lines.map((line, i) =>
+      i === index
+        ? { ...line, quantity: change.quantity, text: line.productId === null ? wordsWithoutQuantity(line.text) : line.text }
+        : line,
+    ),
   };
 }

@@ -130,6 +130,9 @@ describe("the page takes the checker's verdict as written", () => {
       expect(Object.keys(entry).sort()).toEqual(["claimed_passed", "final_lines", "report_lines", "result", "run", "started"]);
       for (const line of entry.final_lines) expect(line.toUpperCase()).toContain("RESULT:");
       for (const line of entry.report_lines) expect(line.toUpperCase()).toContain("RESULT:");
+      for (const line of [...entry.final_lines, ...entry.report_lines]) {
+        expect(line).not.toMatch(/\/(home|Users|root|tmp|mnt|var)\/|\+\d{8,}|[A-Z_]*(KEY|TOKEN|SECRET)=/);
+      }
     }
   });
 

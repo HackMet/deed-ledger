@@ -3,6 +3,7 @@
  * approve or decline it with a reason. Pure rules: keys, the reason, the window and the diff.
  */
 import type { LineDiff, OrderLineView, OrderState } from "./contract/outcomes";
+import { wordsWithoutQuantity } from "./orders";
 
 /** A customer's change is a request in these states; before, it is a new version to reconfirm (D-43). */
 export const CHANGE_WINDOW: readonly OrderState[] = ["confirmado", "preparando"];
@@ -22,9 +23,9 @@ export function reviewReason(reason: unknown): string | null {
   return trimmed.length >= 1 && [...trimmed].length <= REASON_MAX ? trimmed : null;
 }
 
-/** A line is the same line when it names the same product, or, unmatched, the same words. */
+/** A line is the same line when it names the same product, or, unmatched, the same words, whatever quantity they start with. */
 const identity = (line: OrderLineView): string =>
-  line.productId !== null ? `p:${line.productId}` : `t:${line.text.trim().toLowerCase()}`;
+  line.productId !== null ? `p:${line.productId}` : `t:${wordsWithoutQuantity(line.text.trim()).toLowerCase()}`;
 
 const sameContent = (a: OrderLineView, b: OrderLineView): boolean => a.quantity === b.quantity && a.unit === b.unit && a.text === b.text;
 

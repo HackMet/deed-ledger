@@ -1,11 +1,37 @@
 import { describe, expect, it } from "vitest";
 import { totalOf } from "../src/domain/order-total";
-import { labelOf, lineByLabel, nextVersion } from "../src/domain/orders";
+import { labelOf, lineByLabel, nextVersion, wordsWithoutQuantity } from "../src/domain/orders";
 import type { OrderLineView } from "../src/domain/contract/outcomes";
 import { changedOrder, readbackOrder } from "./fixtures/contract";
 
 const [aceite, arroz, azucar, jabon] = readbackOrder.lines as [OrderLineView, OrderLineView, OrderLineView, OrderLineView];
 const priced = (over: Partial<OrderLineView>): OrderLineView => ({ ...aceite, ...over });
+
+describe("changing an unmatched line's quantity", () => {
+  const unmatched = priced({ productId: null, productName: null, text: "1 aceite clover", quantity: "1" });
+
+  it("drops the old quantity from its words, so the line shows one number", () => {
+    const next = nextVersion({ version: 1, lines: [unmatched] }, { op: "set_quantity", label: "L1", quantity: "3" });
+    expect(next?.lines[0]).toMatchObject({ text: "aceite clover", quantity: "3" });
+  });
+
+  it("keeps a matched line's words", () => {
+    const next = nextVersion({ version: 1, lines: [{ ...aceite, text: "2 aceite" }] }, { op: "set_quantity", label: "L1", quantity: "3" });
+    expect(next?.lines[0]?.text).toBe("2 aceite");
+  });
+
+  it.each([
+    ["1 aceite clover", "aceite clover"],
+    ["2.5 libras de queso", "libras de queso"],
+    ["dos libras de azúcar", "libras de azúcar"],
+    ["Una bolsa", "bolsa"],
+    ["aceite", "aceite"],
+    ["2", "2"],
+    ["doscientos gramos", "doscientos gramos"],
+  ])("reads %s as %s", (text, words) => {
+    expect(wordsWithoutQuantity(text)).toBe(words);
+  });
+});
 
 describe("totalOf", () => {
   it("matches the readback fixture: L 315 pickup, L 345 after the change", () => {

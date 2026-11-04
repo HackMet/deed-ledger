@@ -236,8 +236,8 @@ describe("the demo's change and replies (K10 fix 1)", () => {
     const v2 = await demoRuntime(env, recordings).deps.jobHandler.handle({ ...input(byName("moreSugar").text), lease });
     const before = v1.replies![0]!.body;
     const after = v2.replies![0]!.body;
-    expect(readbackQuantity(before, "dos libras de azúcar")).toBe("2");
-    expect(readbackQuantity(after, "dos libras de azúcar")).toBe("3");
+    expect(readbackQuantity(before, "libras de azúcar")).toBe("2");
+    expect(readbackQuantity(after, "libras de azúcar")).toBe("3");
     // The other lines read as before: the change touched only the azúcar.
     const others = (reply: string) => reply.split("\n").filter((l) => l.startsWith("• ") && !l.includes("azúcar"));
     expect(others(after)).toEqual(others(before));

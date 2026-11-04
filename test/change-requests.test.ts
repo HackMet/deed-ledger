@@ -86,6 +86,9 @@ describe("K12: the customer's change, whole", () => {
     expect(heard).toContain(`• 3 ${sugarOf(order.lines).productName}`);
     expect(heard).not.toContain(`• 2 ${sugarOf(order.lines).productName}`);
     expect(heard).not.toContain("¿Lo confirmo?");
+    expect(heard).toBe(
+      [PENDING_CHANGE, ...lineBullets(order.lines.map((line) => (line === sugarOf(order.lines) ? { ...line, quantity: "3" } : line))), "Te aviso cuando respondan."].join("\n"),
+    );
 
     const requestFact = (await factsOfKind(s.businessId, "change_request")).at(-1)!;
     expect(sugarOf((JSON.parse(requestFact.body_json) as { lines: OrderLineView[] }).lines).quantity).toBe("3");
@@ -424,6 +427,13 @@ describe("G4b: a dependency written in the same batch is checked after the state
 });
 
 describe("lineDiff: lines pair by product or words, not by label", () => {
+  it("pairs an unmatched line whose words lost their old quantity as one change", () => {
+    const before = { lineId: "l1", text: "1 aceite clover", quantity: "1", unit: null, productId: null, productName: null } as unknown as OrderLineView;
+    const diff = lineDiff([before], [{ ...before, text: "aceite clover", quantity: "3" }]);
+    expect(diff).toMatchObject({ added: [], removed: [] });
+    expect(diff.changed).toHaveLength(1);
+  });
+
   const line = (text: string, quantity: string, productId: string | null = null): OrderLineView => ({
     lineId: "",
     text,
