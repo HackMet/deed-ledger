@@ -464,8 +464,8 @@ describe("migration 0024: facts gains the K12 and K14 kinds, keeping every row",
     expect(await env.DB.prepare(`SELECT name FROM sqlite_master WHERE name = 'k12_facts_new'`).first()).toBeNull();
     await env.DB.prepare(`DROP TABLE k12_facts`).run();
 
-    // The real table carries the new kinds.
+    // The real table no longer lists kinds (0029 opened them to the store's policy): the policy names them instead.
     const sql = (await env.DB.prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'facts'`).first<{ sql: string }>())!.sql;
-    for (const kind of ["change_request", "change_review", "receipt_review", "order_status", "receipt"]) expect(sql).toContain(`'${kind}'`);
+    expect(sql).not.toContain("CHECK (kind");
   });
 });

@@ -45,16 +45,17 @@ describe("test environment", () => {
       "0026_console_receipts.sql",
       "0027_deed_checks.sql",
       "0028_agent_id.sql",
+      "0029_open_fact_kinds.sql",
     ]);
   });
 
-  it("widens the fact and evidence kinds for order facts and gives orders their fact ids", async () => {
+  it("opens the fact and evidence kinds to the store's policy and gives orders their fact ids", async () => {
     const sqlOf = async (name: string) =>
       (await env.DB.prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?`).bind(name).first<{ sql: string }>())?.sql ?? "";
-    for (const kind of ["order_version", "order_confirm", "order_cancel", "order_status", "business_info"]) {
-      expect(await sqlOf("facts")).toContain(`'${kind}'`);
-    }
-    for (const kind of ["member", "session"]) expect(await sqlOf("fact_evidence")).toContain(`'${kind}'`);
+    // 0029 dropped the kind CHECK lists: the policy refuses an unknown kind in the batch's post-guard.
+    // Before it, these tables listed the kinds (0023, 0024), so this assertion changed with 0029.
+    expect(await sqlOf("facts")).not.toContain("CHECK (kind");
+    expect(await sqlOf("fact_evidence")).not.toContain("CHECK (kind");
     // The rebuild leaves no table behind.
     expect(await sqlOf("facts_new")).toBe("");
     expect(await sqlOf("fact_evidence_new")).toBe("");
