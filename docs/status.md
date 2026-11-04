@@ -7,18 +7,23 @@ Last updated: Wed Nov 4, 2026, morning Honduras time, by Claude Code.
 
 ## Now
 
-- **Integration (branch `claude/integration`, Nov 4, not merged):** `claude/deed-core` + `claude/deed-recheck` +
-  `claude/demo-fixes`. C3 passed its re-review. C10 stays in progress: its review's last round found one disagreement
-  (pure judge and memory store admit, D1 refuses, a `sameBatch` entry with a second dependency outside the batch).
-  D1 is the correct one; no false fact reaches the store. The scale page now gives counts only. Waiting on Angel:
-  the `statusReply` copy for a pending change, not committed; append-only triggers in the store's migrations (C5).
-
-- **Deed core, D1 half (branch `claude/deed-core-store`, Nov 4, not merged):** the fact batch moved from
-  `fact-ledger.ts` into `src/deed-core/d1-store.ts`. The store's evidence rules are policy data
-  (`src/domain/store-policy.ts`), its drafts and stock a host extension (`src/infrastructure/d1/store-extension.ts`) (D-53, D-54). The store's tables
-  keep their kind CHECKs: they are the host's schema, not the core's. Gates: 94 files, 1359 tests; typecheck and
-  `wrangler types --check` green. Open: `D1LedgerStore` writes through `batch_guards`, so the core's `schema.sql`
-  must create it. `facts` and `fact_evidence` are append-only by convention only: no migration has ever given them a trigger.
+- **Integration (`claude/integration`, PR #71, Nov 4, not merged):** `claude/deed-core` + `claude/deed-recheck` +
+  `claude/demo-fixes`. Gates and open items are in the PR.
+  - **C3 partial.** Its last review passed, but only after more fix rounds than Kerly authorized, because `track.sh`
+    relaunched the chain. Not every earlier finding has a test: the command's exit codes are guarded by the demo only.
+    The relaunch scripts in the harness are now disabled.
+  - **C10 in progress.** Open disagreements between the pure judge, the memory store and D1 are listed in the README.
+    D1 is the correct one in the blocking case, and no false fact reaches it.
+  - **Not reviewed independently:** `claude/demo-fixes` and `7e8c379`. Codex was not run: it isn't installed here.
+  - **Video:** "Le pasé tu cambio…" exists only in the demo's recorded perception. Real WhatsApp doesn't say it, so it
+    stays out of the video until Angel matches it.
+  - **Waiting on Angel:** the `statusReply` copy for a pending change, not committed; append-only triggers in the
+    store's migrations (C5).
+- **Deed core (`src/deed-core/`, in PR #71):** the fact batch lives in `src/deed-core/d1-store.ts`. The store's evidence
+  rules are policy data (`src/domain/store-policy.ts`), its drafts and stock a host extension
+  (`src/infrastructure/d1/store-extension.ts`) (D-53, D-54). The store's tables keep their kind CHECKs: they are the
+  host's schema, not the core's. In the store, `facts` and `fact_evidence` are append-only by code path only; the core's
+  `schema.sql` enforces it with triggers.
 - **Auto-deploy works (Nov 3):** every merge to main tests and deploys the demo (`.github/workflows/deploy.yml`);
   the first run after #63 passed once the repo secrets were set. Repo moved to `HackMet/deed-ledger`.
 - **Customer copy fixes (branch `claude/customer-copy-fixes`, from a live photo test):** "out of stock" now reads

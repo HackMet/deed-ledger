@@ -46,14 +46,14 @@ branding. The other seven can be partial and it is still recognisably Deed.
 |---|---|---|
 | **C1** ★ | **A claim is not a fact.** The actor writes only the claim leg and a pointer to where its counter-leg must appear. Separation of write permissions, enforced structurally. | ✅ built and tested |
 | **C2** ★ | **Every fact carries evidence from a source the actor does not control.** No evidence, no fact. | ✅ built and tested. The order's Libro view (`/console/deed/:pedido/libro`) pairs each claim with its witness. The demo has no WhatsApp statuses, so delivery reads *en duda* there |
-| **C3** ★ | **The verdict is issued by fixed arithmetic, never by a model.** Re-runnable by a third party from the entry alone. | ✅ built and tested. No model issues a verdict. `node scripts/deed-recheck.mjs <entry.json>` re-runs an order's verdicts from its exported entry alone (`docs/deed-entry-example.json` is a synthetic one), and `python3 scripts/deed_check_harness.py --evidence docs/deed-run-evidence.jsonl --compare docs/deed-verdicts.csv --out v.csv` re-runs the harness verdicts, counting any commit a clone lacks apart. Two limits: re-runnable means with this repo's source and `npm ci` (for esbuild), which needs the network once; and the check shows the verdicts follow from the entry's input, not that the input is the book. An entry edited consistently on both sides still exits 0, because entries are not signed. The commit guards run in D1, not over an entry |
+| **C3** ★ | **The verdict is issued by fixed arithmetic, never by a model.** Re-runnable by a third party from the entry alone. | ⚠️ partial. No model issues a verdict, built and tested. `node scripts/deed-recheck.mjs <entry.json>` re-runs an order's verdicts from its exported entry alone (`docs/deed-entry-example.json` is a synthetic one), and `python3 scripts/deed_check_harness.py --evidence docs/deed-run-evidence.jsonl --compare docs/deed-verdicts.csv --out v.csv` re-runs the harness verdicts, counting any commit a clone lacks apart. Two limits: re-runnable means with this repo's source and `npm ci` (for esbuild), which needs the network once; and the check shows the verdicts follow from the entry's input, not that the input is the book. An entry edited consistently on both sides still exits 0, because entries are not signed. The commit guards run in D1, not over an entry. Partial because the command's exit codes are guarded by the demo and not by `npm test`, and other review findings have no test yet |
 | **C4** | **Admission is atomic with the effect.** The fact, the reply and the job's completion live or die in one transaction. "Saved" cannot exist without the fact. | ✅ built and tested |
 | **C5** | **Append-only, with validity.** Never updated, never deleted. A correction is a new fact; a cancellation closes an interval. | ⚠️ in the store, ✅ in the core. Append-only: en el código no existe un camino de UPDATE ni DELETE sobre `facts`, `fact_evidence`, `fact_dependencies` ni `fact_closures`, y las claves únicas impiden los duplicados. El esquema del núcleo (`src/deed-core/schema.sql`) lo hace cumplir con triggers; en la tienda, los triggers quedan para Next. |
 | **C6** ★ | **Dependencies gate at commit time, not with an `if`.** Liveness is derived from closures, never cascaded by writes. | ✅ built and tested |
 | **C7** | **Uncertainty is a first-class outcome.** Silence is not failure; a fetch error is never a contradiction. | ⚠️ **partial, and say so:** the view surfaces *en duda*; the engine does not model an in-doubt state in the order flow. Showing it is not the same as having it. |
 | **C8** | **Reliability is measured per (agent id, effect class), under dependence.** Agent errors arrive in bursts, so a Bernoulli interval is mis-specified. | ⚠️ partial: `docs/deed-scale.html`, from harness runs only, not store orders. There the id is sha256(model + brief), not `facts.agent_id`. The page gives counts only; it makes no claim about dependence |
 | **C9** | **Nothing identifies, scores, profiles or tracks a person.** The unit is an agent version and an effect class. | ✅ built and tested |
-| **C10** | **The core is agnostic.** No business nouns inside it; a new business flow is a new policy, never an edit to the core. | ⚠️ in progress. Evidence below; one open disagreement keeps it unmarked |
+| **C10** | **The core is agnostic.** No business nouns inside it; a new business flow is a new policy, never an edit to the core. | ⚠️ in progress. Evidence below; open disagreements between its three judges keep it unmarked |
 | **C11** | **The agent is identified, and the identity travels.** Every fact records which agent version made the claim; every customer-facing output carries a code that resolves to that entry. | ⚠️ partial: every customer fact records the agent version (see the limit below). No customer-facing output carries a code yet |
 
 **C10, in progress.** Un host cuyos efectos son solo hechos escribe una política. Un host que necesita escrituras propias en el mismo batch agrega una extensión fuera del núcleo. En ningún caso se edita el núcleo. (Like an adapter in hexagonal architecture.)
@@ -66,7 +66,20 @@ branding. The other seven can be partial and it is still recognisably Deed.
 | Seguros | `test/deed-core-fourth-industry.test.ts` | none | 0 |
 | Inspecciones de obra | `test/deed-core-inspections-industry.test.ts` | none | 0 |
 
-What it rests on: `test/deed-core-boundary.test.ts` fails on a business noun or an outside import inside the core, and the last two industries were written by the reviewing agent, which took no part in building the core. What keeps it unmarked: the review's last round found one case where the pure judge and the memory store admit an entry that D1 refuses (a `sameBatch` entry with a second dependency outside the batch). D1 refuses correctly, so no false fact reaches the store; but a third party's re-check built on the memory store would disagree with it.
+What it rests on: `test/deed-core-boundary.test.ts` fails on a listed business noun or an outside import inside the core, and the last two industries were written by the reviewing agent, which took no part in building the core.
+
+What keeps it unmarked, each reproduced by a test on the reviewer's list:
+
+| Case | Pure judge and memory store | D1 |
+|---|---|---|
+| A `sameBatch` entry with a second dependency outside the batch (blocking) | admitted | `dependency_not_live`, which is correct |
+| `validFromMs` of `1.5` or `NaN` | admitted | throws a raw `D1_ERROR`, no fact written |
+| A policy with a bad bound (`min: 1.5`, `-1`) | admitted | every admit throws, even for other kinds |
+| Two concurrent identical entries that close a fact | not applicable | the loser gets `closes_not_live`, not `duplicate`; a refusal either way |
+
+Also, `MemoryLedgerStore` keeps the caller's `dependsOn` array by reference, so changing that array later changes its ledger. No false fact reached D1 in any of these, but a third party's re-check built on the memory store can disagree with it.
+
+Known limit of the boundary test: it finds only the words on its list. A hard-coded host word outside the list, such as `"confirmation"`, is not detected. It also misses compounds such as `unitprice`, and an import hidden after a regex with an escaped slash. None of these is in the code today, by reading the files.
 
 An honest note: the core was extracted from the store, so it was born with the store in mind. The stronger proof is the industries written by someone who did not build it, and those are policies in tests, not running businesses.
 
@@ -93,7 +106,7 @@ The judge and memory-store fix that closes C10, the store's append-only triggers
 | Attacks | 9 attacks that reach the engine: 0 false facts admitted. One more attack is intake only and is not counted | `node scripts/adversary.mjs`, exit 0. Removing a defence on purpose turns its row red, except one K12 case noted in the script's review |
 | Harness runs | 121 run names, last attempt of each (at least 61 earlier attempts were overwritten with no verdict): 63 confirmed, 0 contradictions, 58 with no claim | `deed_check_harness.py` on 2026-11-04, Honduras time, rows in `docs/deed-verdicts.csv`, page in `docs/deed-scale.html`. Confirmed only means the commit exists and the runner recorded it for that run; tests are not re-run. Only the first sha on the `RESULT: COMMITTED` line is read, so any other false statement, with a sha or without one, is not detected. A reader re-runs them from the published evidence, and about a quarter of those shas exist only in local copies |
 
-`./demo.sh` runs six synthetic customers (A to F) through the real engine, ledger and console on a local Worker, on recorded perception, and ends by re-checking three exported entries over HTTP.
+`./demo.sh` runs six synthetic customers (A to F) through the real engine, ledger and console on a local Worker, on recorded perception, and ends by re-checking three exported entries over HTTP. Its `0 differ` holds for the demo's entries only. The export and the check run the same judge in the same tree, so the demo pins its tally of verdicts per order but cannot see every broken path; `npm test` covers those.
 
 Screens: `/console/deed/<order>` (the order's facts as a graph), `/console/deed/<order>/libro` (AGENTE, LIBRO and MUNDO paired), `/console/deed/verificaciones` (every refusal and claim check), `docs/deed-scale.html` (harness runs, static).
 

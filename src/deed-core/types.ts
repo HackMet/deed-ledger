@@ -6,7 +6,7 @@
 export interface Evidence {
   readonly kind: string;
   readonly refId: string;
-  /** Media only: the stored object's SHA-256. Null otherwise. */
+  /** Optional: the SHA-256 of the evidence's content, for any kind. Null otherwise. */
   readonly contentSha256: string | null;
 }
 

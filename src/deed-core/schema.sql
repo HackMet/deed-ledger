@@ -1,6 +1,6 @@
 -- The core's four tables, with neutral names and no kind lists: a host's policy decides which kinds exist.
 -- Every row is scoped by scope_id (a tenant, a site, a lot: the host decides). Append-only: nothing updates
--- or removes a row, so each triggers below refuses it. A host may add its own columns and CHECKs in its own
+-- or removes a row, so each trigger below refuses it. A host may add its own columns and CHECKs in its own
 -- migration, never by editing these tables.
 
 -- One operation = one operation_key. A second entry with the same key is a duplicate, refused by the judge first.
@@ -18,7 +18,7 @@ CREATE TABLE facts (
   UNIQUE (scope_id, operation_key)
 ) STRICT;
 
--- The evidence a fact rests on. content_sha256 is set for media only.
+-- The evidence a fact rests on. content_sha256 is optional: any evidence may carry a hash.
 CREATE TABLE fact_evidence (
   scope_id TEXT NOT NULL,
   fact_id TEXT NOT NULL,
