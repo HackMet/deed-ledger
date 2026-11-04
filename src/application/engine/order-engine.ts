@@ -26,8 +26,9 @@ import type {
   PreparationCard,
 } from "../../domain/contract/outcomes";
 import { deriveOrderState, type OrderFact } from "../../domain/order-state";
-import { stockVerdict } from "../../domain/stock-offer";
-import { deliveryOf, totalOf, withLineMark } from "../../domain/order-total";
+import { stockAnswer, stockVerdict } from "../../domain/stock-offer";
+import { nothingToPrepare } from "../../domain/money";
+import { deliveryOf, keepingNoHay, totalOf, withLineMark } from "../../domain/order-total";
 import { indexOfLabel, labelOf, nextVersion } from "../../domain/orders";
 import { isPrice, priceKey } from "../../domain/price";
 import type { EvidenceRef, FactCommit } from "../../domain/facts";
@@ -373,6 +374,7 @@ export class OrderEngine implements Engine {
     let changed = false;
     let cancel = false;
     let info: EngineOutcome | null = null;
+    let answer: Extract<BurstReading["observations"][number], { kind: "clarification" }> | null = null;
 
     for (const { observation, index } of observations) {
       switch (observation.kind) {
@@ -411,8 +413,12 @@ export class OrderEngine implements Engine {
           // Text inside a photo or a voice note is data: nothing here changes an order.
           info ??= { type: "out_of_scope" };
           break;
+        case "clarification":
+          // Applied after the loop: an order_change's labels refer to the lines the customer saw.
+          answer ??= observation;
+          break;
         default:
-          // payment_receipt, stop, clarification, customer_name: not in this cut (#11). Nothing saved.
+          // payment_receipt, stop, customer_name: not in this cut (#11). Nothing saved.
           info ??= { type: "nothing" };
       }
     }
@@ -421,8 +427,61 @@ export class OrderEngine implements Engine {
       if (open === null) return result({ type: "rejected", reason: "not_found", order: null });
       return this.cancel(context, operationKey, open);
     }
+    if (answer !== null && open?.view.state === "por_confirmar") {
+      const answered = await this.answerStockQuestion(context, lines, answer);
+      if (answered !== null) {
+        lines = answered;
+        changed = true;
+      }
+    }
     if (changed) return this.change(context, operationKey, open, lines, fulfillment);
+    // Nothing done while stock's question waits: it's asked again, never left for the silence to fill.
+    if (info === null || info.type === "nothing" || info.type === "out_of_scope") {
+      const short = await this.shortOrder(context);
+      if (short !== null) return result({ type: "readback", order: short });
+    }
     return result(info ?? { type: "nothing" });
+  }
+
+  /**
+   * The lines after an answer to stock's question, which is about the first short line (the one the
+   * readback asks about). Null when no line is short or the answer can't be read. The new version is
+   * read back like any other, and only the customer's confirm commits it.
+   */
+  private async answerStockQuestion(
+    tenant: Tenant,
+    lines: readonly OrderLineView[],
+    answer: Extract<BurstReading["observations"][number], { kind: "clarification" }>,
+  ): Promise<readonly OrderLineView[] | null> {
+    const stocked = await this.withStock(tenant, lines);
+    const index = stocked.findIndex((line) => line.inStock !== undefined);
+    if (index < 0) return null;
+    const decided = stockAnswer(answer.answer, answer.quantity ?? null, stocked[index]!.inStock!);
+    if (decided === null) return null;
+    const label = labelOf(index);
+    if (decided === "remove") return nextVersion({ version: 0, lines }, { op: "remove", label })?.lines ?? null;
+    const quantity = canonicalQuantity(decided.take);
+    return quantity === null ? null : (nextVersion({ version: 0, lines }, { op: "set_quantity", label, quantity })?.lines ?? null);
+  }
+
+  /** The open order while stock's question waits on it, as the stock has it now; null otherwise. */
+  async shortOrder(context: CustomerContext): Promise<OrderView | null> {
+    const open = await this.deps.store.openOrder(context, context.customerId);
+    if (open === null) return null;
+    const order = await this.asStockedNow(context, open.view);
+    return order.lines.some((line) => line.inStock !== undefined) ? order : null;
+  }
+
+  /**
+   * A version waiting for the customer, as a readback shows it: what stock says now. Its total stays
+   * only while it's still what the version recorded: any other figure isn't backed, so none is said.
+   */
+  private async asStockedNow(tenant: Tenant, view: OrderView): Promise<OrderView> {
+    if (view.state !== "por_confirmar") return view;
+    const lines = await this.withStock(tenant, view.lines);
+    const short = lines.some((line) => line.inStock !== undefined);
+    const holds = !short && totalOf(lines, deliveryOf(view.fulfillment)).total === view.total;
+    return { ...view, lines, total: holds ? view.total : null };
   }
 
   async onCustomerAction(context: CustomerContext, envelope: ActionEnvelope<CustomerAction>): Promise<EngineResult> {
@@ -457,7 +516,7 @@ export class OrderEngine implements Engine {
     const stored = await store.customerOrder(context, context.customerId, action.orderId);
     if (stored === null) {
       const own = await store.openOrder(context, context.customerId);
-      return result({ type: "rejected", reason: "not_found", order: own?.view ?? null });
+      return result({ type: "rejected", reason: "not_found", order: own === null ? null : await this.asStockedNow(context, own.view) });
     }
     // The key must be the one this action on this order derives: an unrelated string is refused, so a
     // key can only ever name an order that passed the check above.
@@ -470,7 +529,8 @@ export class OrderEngine implements Engine {
     if (first !== null) return result({ type: "duplicate", first });
 
     const { view } = stored;
-    if (action.version !== view.version) return result({ type: "rejected", reason: "stale_version", order: view });
+    // A refused tap reads the order back, so it says what stock says, like any readback.
+    if (action.version !== view.version) return result({ type: "rejected", reason: "stale_version", order: await this.asStockedNow(context, view) });
 
     switch (action.type) {
       case "confirm_order":
@@ -481,9 +541,9 @@ export class OrderEngine implements Engine {
         // With a change waiting for review, the label points into what the customer asked for.
         const base = stored.openRequest ?? view;
         const index = indexOfLabel(base.lines.length, action.lineId);
-        if (index === null) return result({ type: "rejected", reason: "not_found", order: view });
+        if (index === null) return result({ type: "rejected", reason: "not_found", order: await this.asStockedNow(context, view) });
         const next = nextVersion({ version: view.version, lines: base.lines }, { op: "remove", label: action.lineId });
-        if (next === null) return result({ type: "rejected", reason: "not_found", order: view });
+        if (next === null) return result({ type: "rejected", reason: "not_found", order: await this.asStockedNow(context, view) });
         return this.change(context, envelope.operationKey, stored, next.lines, base.fulfillment);
       }
       default:
@@ -653,8 +713,8 @@ export class OrderEngine implements Engine {
   /**
    * Perception's read of the customer's open order: its lines under the labels L1… the engine maps back.
    * `pendingQuestion` is "quantity" while a version waiting for the customer has a line stock can't cover:
-   * its line says what's left, so an answer like "esas 3" can be read as that line's quantity, and the
-   * engine checks it again. Otherwise null: onBurst asks only "ambiguous_product" while it reads a burst.
+   * its line says what's left, and a clarification like "esas 3" answers it (`answerStockQuestion`), checked
+   * against the stock again. Otherwise null: onBurst asks only "ambiguous_product" while it reads a burst.
    * `pendingOptions` and `lastAnswered` are absent: the engine stores neither.
    */
   async perceptionContext(context: CustomerContext): Promise<PerceptionContext> {
@@ -957,6 +1017,9 @@ export class OrderEngine implements Engine {
   private async confirm(context: CustomerContext, operationKey: string, stored: StoredOrder): Promise<EngineResult> {
     const { view } = stored;
     if (view.state !== "por_confirmar") return result({ type: "rejected", reason: "invalid_state", order: view });
+    // Nothing to prepare, in the version or by stock now: nothing is confirmed, and the readback asks what else.
+    const empty = [view, await this.asStockedNow(context, view)].find((shown) => nothingToPrepare(shown.lines));
+    if (empty !== undefined) return result({ type: "readback", order: empty });
     // Confirmed again after a change, the order goes back where it was and keeps its place (D-38).
     const state = stored.firstConfirmedAtMs === null ? "confirmado" : (stored.resumeState ?? "confirmado");
     const confirmedAtMs = stored.firstConfirmedAtMs ?? context.nowMs;
@@ -1095,8 +1158,7 @@ export class OrderEngine implements Engine {
     let cacheFacts: OrderWrite["facts"] = { versionFactId: stored.versionFactId, confirmFactId: stored.confirmFactId };
 
     if (approve) {
-      // Marks belong to the version they were tapped on; a No hay stays out of the new one's total as se_acabo.
-      const lines = request.lines.map((line) => ({ ...line, mark: null }));
+      const lines = keepingNoHay(request.lines, view.lines);
       order = { ...order, version: view.version + 1, lines, fulfillment: request.fulfillment, total: totalOf(lines, deliveryOf(request.fulfillment)).total };
       // The customer's message asking for the change is what the new version and its confirm rest on.
       const asked: EvidenceRef[] = request.jobId === null ? [] : [{ kind: "inbound_message", refId: request.jobId, contentSha256: null }];

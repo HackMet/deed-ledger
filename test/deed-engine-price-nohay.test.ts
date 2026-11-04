@@ -19,7 +19,7 @@ import { ensureLinesTable } from "./helpers/engines";
 import { harness, rows, testEnv } from "./helpers/harness";
 import { engine, save, store as orderStore } from "./helpers/orders";
 import { newPhone, seedIntroducedCustomer } from "./helpers/seed";
-import { textMessage, wamid, webhook } from "./helpers/whatsapp";
+import { buttonReply, textMessage, wamid, webhook } from "./helpers/whatsapp";
 
 const SETTLED_MS = 4_000;
 const SAFE_REPLY = "Dejame revisar bien y ya te confirmo.";
@@ -177,6 +177,84 @@ describe("DEED_ENGINE=1: a confirmed price reaches the order", () => {
   });
 });
 
+describe("DEED_ENGINE=1: the answer to the stock question, in the reader's wire format", () => {
+  const ANSWER = (answer: string, quantity: string | null) => ({ observations: [{ kind: "clarification", answer, pick: null, quantity, evidence: quote(0, answer), issues: [] }] });
+  const SUGAR_ONLY = {
+    observations: [{ kind: "customer_order", lines: [line("5 de azucar", "azucar 1 lb", "5", null, quote(0, "5 de azucar"))], issues: [] }],
+  };
+  const QUESTION = "De Azucar 1 lb ahorita me aparecen 2. ¿Te mando 2 o lo quitamos?";
+
+  async function asked(readings: unknown[]) {
+    const c = await setUp([SUGAR_ONLY, ...readings]);
+    await env.DB.prepare(`INSERT INTO stock_balances (business_id, product_id, qty_milli, updated_at_ms) VALUES (?, ?, 2000, 0)`).bind(c.store.businessId, c.azucar).run();
+    await c.say("5 de azucar");
+    expect(c.h.sentTo(c.phone).at(-1)).toContain(QUESTION);
+    return c;
+  }
+
+  it.each([
+    ["esas 2", "2"],
+    ["sí", null],
+  ])("%s takes the 2 as a new version, which the customer then confirms", async (said, quantity) => {
+    const c = await asked([ANSWER(said, quantity)]);
+    await c.say(said);
+    const v2 = await c.order();
+    expect(v2).toMatchObject({ version: 2, state: "por_confirmar" });
+    expect(v2.lines[0]).toMatchObject({ quantity: "2" });
+    expect(c.h.sentTo(c.phone).at(-1)).not.toContain("me aparecen");
+    expect(c.h.sentTo(c.phone).at(-1)).toContain("¿Te lo preparo así?");
+    await c.say("confirmar");
+    expect((await c.order()).state).toBe("confirmado");
+    expect(c.h.sentTo(c.phone)).not.toContain(SAFE_REPLY);
+  });
+
+  it("an answer it can't read keeps asking the same question, never ¿Cuántos querés?", async () => {
+    const c = await asked([ANSWER("mmm a ver", null)]);
+    await c.say("mmm a ver");
+    expect(c.h.sentTo(c.phone).at(-1)).toContain(QUESTION);
+    expect(c.h.sentTo(c.phone).join("\n")).not.toContain("¿Cuántos");
+    expect(await c.order()).toMatchObject({ version: 1 });
+  });
+
+  it("quitar on the only line leaves nothing to confirm, typed or tapped: it asks what else", async () => {
+    const c = await asked([ANSWER("quitar", null)]);
+    await c.say("quitar");
+    const sold = "¿Qué más te mando? Si no querés nada más, respondé Cancelar.";
+    expect(c.h.sentTo(c.phone).at(-1)).toBe(sold);
+    const empty = await c.order();
+    expect(empty).toMatchObject({ version: 2, state: "por_confirmar", lines: [] });
+
+    await c.say("confirmar");
+    expect(c.h.sentTo(c.phone).at(-1)).toBe(sold);
+    expect((await c.order()).state).toBe("por_confirmar");
+    // An old button, for this very version, is answered the same way.
+    c.h.clock.advance(1_000);
+    await c.h.post(
+      webhook(c.store.phoneNumberId, {
+        messages: [buttonReply({ from: c.phone, id: wamid(), timestampS: Math.floor(c.h.clock.now() / 1000), replyId: `confirm:${empty.orderId}:v2`, title: "Confirmar" })],
+      }),
+    );
+    c.h.clock.advance(SETTLED_MS);
+    await c.h.deliver(c.h.takeRingsFor(c.store.businessId));
+    expect(c.h.sentTo(c.phone).at(-1)).toBe(sold);
+    expect((await c.order()).state).toBe("por_confirmar");
+    expect(c.h.sentTo(c.phone).join("\n")).not.toContain("quedó anotado");
+
+    await c.say("cancelar");
+    expect(await orderStore.openOrder(c.tenant, (await rows<{ id: string }>(`SELECT id FROM customers WHERE business_id = ?`, c.store.businessId))[0]!.id)).toBeNull();
+  });
+
+  it("an order with only a sold-out line isn't confirmed by a typed confirmar", async () => {
+    const c = await setUp([SUGAR_ONLY]);
+    await env.DB.prepare(`INSERT INTO stock_balances (business_id, product_id, qty_milli, updated_at_ms) VALUES (?, ?, 0, 0)`).bind(c.store.businessId, c.azucar).run();
+    await c.say("5 de azucar");
+    await c.say("confirmar");
+    expect((await c.order()).state).toBe("por_confirmar");
+    expect(c.h.sentTo(c.phone).at(-1)).toContain("¿Qué más te mando?");
+    expect(await rows(`SELECT 1 FROM facts WHERE business_id = ? AND kind = 'order_confirm'`, c.store.businessId)).toEqual([]);
+  });
+});
+
 describe("DEED_ENGINE=1: No hay on a matched line", () => {
   /** A confirmed, priced pickup order being packed. */
   async function packing() {
@@ -304,6 +382,87 @@ describe("DEED_ENGINE=1: No hay on a matched line", () => {
       ["L2", "se_acabo", null],
       ["L3", "no_se", null],
     ]);
+  });
+
+  describe("a change asked before the No hay and approved after it", () => {
+    const change = (edits: readonly unknown[]) => ({ observations: [{ kind: "order_change", edits, issues: [] }] });
+    const addRice = edit("add", { text: "1 de arroz", name: "arroz 1 lb", quantity: "1", evidence: quote(0, "1 de arroz") });
+
+    async function changing(reading: unknown, tapFirst: boolean, marked = "L2", words = "y 1 de arroz") {
+      const c = await setUp([ORDER(), reading]);
+      await c.setPrice(c.arroz, 1800);
+      await c.setPrice(c.azucar, 2000);
+      await c.say(SAID);
+      await c.say("confirmar");
+      await c.tap({ type: "start_preparing" });
+      if (tapFirst) await c.tap({ type: "mark_line", lineId: marked, mark: "no_hay" });
+      await c.say(words);
+      if (!tapFirst) await c.tap({ type: "mark_line", lineId: marked, mark: "no_hay" });
+      const requestId = (await c.order()).openChangeRequest!.id;
+      const owner = c.store.members[0]!.userId;
+      c.h.clock.advance(1_000);
+      await save(
+        await engine.onConsoleAction(
+          { businessId: c.store.businessId, memberId: owner, role: "owner", canApproveFiado: false, nowMs: c.h.clock.now() },
+          { operationKey: reviewKey(requestId), actor: { type: "member", memberId: owner, role: "owner" }, action: { type: "review_change", changeRequestId: requestId, decision: "approve", reason: "Va" } },
+        ),
+      );
+      return c;
+    }
+
+    it("gives the same total and the same sin X in both orders of events", async () => {
+      const heard = await Promise.all(
+        [true, false].map(async (tapFirst) => {
+          const c = await changing(change([addRice]), tapFirst);
+          const order = await c.order();
+          expect(order.lines.map((l) => [l.lineId, l.availability, l.mark])).toEqual([
+            ["L1", "no_se", null],
+            ["L2", "se_acabo", null],
+            ["L3", "no_se", null],
+          ]);
+          await c.tap({ type: "mark_ready" });
+          expect(await c.pendientes("claim_blocked")).toBe(0);
+          return { total: order.total, ready: c.h.sentTo(c.phone).at(-1) };
+        }),
+      );
+      expect(heard[0]).toEqual({ total: 7200, ready: expect.stringContaining("Total: L 72, sin Azucar 1 lb.") });
+      expect(heard[1]).toEqual(heard[0]);
+    });
+
+    it("keeps the mark on its own line when a removal renumbers the lines", async () => {
+      const removeRice = edit("remove", { ref: "L1", said: "arroz", evidence: quote(0, "arroz") });
+      const c = await changing(change([removeRice, addRice]), false);
+      const order = await c.order();
+      // Azucar was L2, now L1, with the new arroz after it: only the azucar stays out.
+      expect(order.lines.map((l) => [l.productName, l.availability])).toEqual([
+        ["Azucar 1 lb", "se_acabo"],
+        ["Arroz 1 lb", "no_se"],
+      ]);
+      expect(order.total).toBe(1800);
+    });
+
+    it("brings back no mark for a line the change removed", async () => {
+      const removeSugar = edit("remove", { ref: "L2", said: "azucar", evidence: quote(0, "azucar") });
+      const c = await changing(change([removeSugar]), false, "L2", "sin azucar");
+      const order = await c.order();
+      expect(order.lines.map((l) => [l.productName, l.availability])).toEqual([["Arroz 1 lb", "no_se"]]);
+      expect(order.total).toBe(5400);
+    });
+
+    it("keeps a marked line out when the change only set its quantity", async () => {
+      const moreSugar = edit("set_quantity", { ref: "L2", said: "azucar", quantity: "5", evidence: quote(0, "azucar") });
+      const c = await changing(change([moreSugar]), false, "L2", "5 de azucar");
+      const order = await c.order();
+      expect(order.lines[1]).toMatchObject({ quantity: "5", availability: "se_acabo" });
+      expect(order.total).toBe(5400);
+    });
+
+    it("the added line of the marked product isn't the marked one", async () => {
+      const c = await changing(change([addRice]), false, "L1");
+      const order = await c.order();
+      expect(order.lines.map((l) => l.availability)).toEqual(["se_acabo", "no_se", "no_se"]);
+      expect(order.total).toBe(5800);
+    });
   });
 
   it("still says the notice when Listo follows before the notice went out", async () => {

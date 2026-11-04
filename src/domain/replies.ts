@@ -23,7 +23,7 @@ import type {
   QuestionCode,
   StoreHours,
 } from "./contract/outcomes";
-import { countedLineAmount, countsTowardTotal, orderSubtotal } from "./money";
+import { countedLineAmount, countsTowardTotal, nothingToPrepare, orderSubtotal } from "./money";
 import type { SavedPlace } from "./place";
 import { formatStoreHours, isUsableStoreHours, storeHoursKey } from "./store-hours";
 import { isWeightUnit } from "./planner/validate";
@@ -804,14 +804,13 @@ function samePlaceReply(order: OrderView | null, place: SavedPlace | null, noted
 function readbackReply(template: "readback" | "order_changed" | "rejected_tap", title: string, order: OrderView): RenderedReply {
   const awaiting = order.state === "por_confirmar";
   const claims: ClaimCheck[] = [stateIn(order, [order.state]), ...order.lines.flatMap(stockLeft)];
-  const items = [title, ...order.lines.map(readbackLine)];
+  const items = order.lines.length === 0 ? [] : [title, ...order.lines.map(readbackLine)];
   const later = order.lines.filter(confirmedLater);
   if (later.length > 0) {
     items.push(later.length === order.lines.length ? `${COPY.confirmLater}.` : `${COPY.confirmLater}: ${spokenList(later.map(itemName))}.`);
   }
   const short = order.lines.find((line) => line.inStock !== undefined);
-  const soldOut = order.lines.some((line) => !line.restricted && line.availability === "se_acabo");
-  const nothingLeft = soldOut && !order.lines.some(countsTowardTotal);
+  const nothingLeft = nothingToPrepare(order.lines);
   // Stock's own question comes first, one at a time. Its answer is written: the order then reads back again.
   const buttons = awaiting && short === undefined && !nothingLeft ? decisionButtons(order) : [];
   // Without buttons to tap, the typed choices are the instruction itself.

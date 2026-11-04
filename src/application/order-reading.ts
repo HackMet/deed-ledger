@@ -9,6 +9,7 @@
  * reading comes back with its plan. A planner failure leaves the plan out: the classic path.
  */
 import type { BurstReading, Observation, PerceptionContext } from "../domain/contract/observation";
+import type { OrderView } from "../domain/contract/outcomes";
 import { type BurstMessage, isSupportedImage } from "../domain/perception/burst";
 import { LEASE_TTL_MS, READING_MAX_MS, TRANSCRIBE_MAX_MS } from "../domain/processing";
 import type { CustomerContext, Engine, LineMatch } from "./engine";
@@ -40,6 +41,8 @@ export interface OrderReadingSource {
   perceptionContext(context: CustomerContext): Promise<PerceptionContext>;
   /** The store's catalog for matching by code: names, known aliases, barcodes. */
   catalog(tenant: Tenant): Promise<readonly CatalogProduct[]>;
+  /** The open order while stock's own question waits on it, as the stock has it now; null otherwise. */
+  shortOrder?(context: CustomerContext): Promise<OrderView | null>;
 }
 
 /** The engine's reads for perception, when it has them. */

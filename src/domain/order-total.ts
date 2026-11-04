@@ -3,6 +3,7 @@ import type { Centavos } from "./contract/numbers";
 import { toThousandths } from "./contract/numbers";
 import type { LineMark } from "./contract/actions";
 import type { OrderLineView, OrderView } from "./contract/outcomes";
+import { wordsWithoutQuantity } from "./orders";
 
 export interface OrderTotal {
   /**
@@ -23,6 +24,24 @@ export function isExcludedFromTotal(line: Pick<OrderLineView, "restricted" | "av
 /** A line as staff marked it. No hay means it's out, which also leaves it out of the total. */
 export function withLineMark(line: OrderLineView, mark: LineMark): OrderLineView {
   return { ...line, mark, availability: mark === "no_hay" ? "se_acabo" : line.availability };
+}
+
+/**
+ * The lines of an approved change. Marks belong to the version they were tapped on, but a line a live
+ * No hay holds out stays out as se_acabo, whichever came first, the request or the tap. Labels renumber
+ * when a line is removed, so the marked line is found by its product and words, each line matched once;
+ * a marked line the change removed finds nothing.
+ */
+export function keepingNoHay(asked: readonly OrderLineView[], current: readonly OrderLineView[]): readonly OrderLineView[] {
+  const sameLine = (line: OrderLineView) => (line.productId === null ? `|${wordsWithoutQuantity(line.text, line.quantity)}` : `${line.productId}|${line.text}`);
+  const out = new Set<number>();
+  for (const marked of current.filter((line) => line.mark === "no_hay")) {
+    const free = (line: OrderLineView, index: number) => !out.has(index) && sameLine(line) === sameLine(marked);
+    const exact = asked.findIndex((line, index) => free(line, index) && line.quantity === marked.quantity);
+    const at = exact >= 0 ? exact : asked.findIndex(free);
+    if (at >= 0) out.add(at);
+  }
+  return asked.map((line, index) => ({ ...line, mark: null, availability: out.has(index) ? "se_acabo" : line.availability }));
 }
 
 /** What receiving the order costs: nothing at the counter, the set fee for delivery, unknown until it's said. */

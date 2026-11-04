@@ -20,7 +20,7 @@ Last updated: Wed Nov 4, 2026, morning Honduras time, by Claude Code.
     stays out of the video.
   - **Decided (D-55, D-56):** the contract additions are accepted, and C11's code stays invisible. Angel also says the
     customer doesn't need the quantity shown while a change waits, so the `statusReply` diff is dropped.
-  - **New request, not built:** when the stock is short, offer what there is. The engine has no stock read yet.
+  - **Short stock (branch `claude/flow-price-nohay`, D-57 proposed):** a short line asks "¿Te mando 2 o lo quitamos?", and its written answer makes a new version the customer confirms. An unreadable answer asks again. An order with nothing to prepare can't be confirmed. Still open: a typed "confirmar" under the stock question commits the full amount.
   - **Waiting on Angel:** append-only triggers in the store's migrations (C5), `saidName`, and the real order with Muse.
 - **Deed core (`src/deed-core/`, in PR #71):** the fact batch lives in `src/deed-core/d1-store.ts`. The store's evidence
   rules are policy data (`src/domain/store-policy.ts`), its drafts and stock a host extension

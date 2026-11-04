@@ -5,6 +5,8 @@ import type { Claim, OrderLineView, OrderView } from "../src/domain/contract/out
 import { firstCheck, flattenClaims, renderOutcome } from "../src/domain/replies";
 import { stockVerdict } from "../src/domain/stock-offer";
 import { OrderEngine } from "../src/application/engine/order-engine";
+import { createOrderHandler, type OrderHandlerDeps } from "../src/application/order-handler";
+import type { JobInput } from "../src/application/ports";
 import { D1FactLedger } from "../src/infrastructure/d1/fact-ledger";
 import { D1StockBalances } from "../src/infrastructure/d1/stock-balances";
 import { firstOrder, ids, readbackOrder } from "./fixtures/contract";
@@ -256,6 +258,193 @@ describe("the readback with the store's stock, on local D1", () => {
     if (left.outcome.type !== "readback") throw new Error(left.outcome.type);
     expect(left.outcome.order.lines).toHaveLength(3);
     expect(left.outcome.order.lines.some((line) => line.inStock !== undefined)).toBe(false);
+  });
+
+  describe("an answer read as the prompt asks: a clarification", () => {
+    const answered = (answer: string, quantity: string | null): BurstReading => ({
+      observations: [{ kind: "clarification", answer, pick: null, quantity, evidence: { source: "text", message: 0, start: 0, end: answer.length }, issues: [] }],
+      calls: [],
+    });
+    const say = (s: Awaited<ReturnType<typeof stocked>>, answer: string, quantity: string | null = null) =>
+      engine.onBurst(s.context({ nowMs: T0 + 1, jobId: `answer-${answer}` }), answered(answer, quantity), []);
+
+    it.each([
+      ["esas 2", "2"],
+      ["esas 2", null],
+      ["sí", null],
+      ["dale, mandame esas", null],
+      ["mejor 1", "1"],
+    ])("%s (quantity %s) takes that amount as a new version, and only the customer's confirm commits it", async (words, quantity) => {
+      const s = await stocked({ jabon: 2000 });
+      const v1 = await place(s);
+      const took = await say(s, words, quantity);
+      if (took.outcome.type !== "readback") throw new Error(took.outcome.type);
+      const v2 = took.outcome.order;
+      expect(v2.version).toBe(2);
+      expect(lineOf(v2, "L3")).toMatchObject({ availability: "hay", quantity: quantity ?? "2" });
+      expect(lineOf(v2, "L3").inStock).toBeUndefined();
+      await save(took);
+      const row = () => env.DB.prepare(`SELECT o.state, l.qty_milli FROM orders o JOIN order_lines l ON l.order_id = o.id AND l.version = o.current_version WHERE o.id = ? AND l.line_no = 3`).bind(v1.orderId).first();
+      expect(await row()).toEqual({ state: "por_confirmar", qty_milli: Number(quantity ?? "2") * 1000 });
+      await save(await engine.onCustomerAction(s.context({ nowMs: T0 + 2, jobId: "c" }), tap(v2.orderId, 2)));
+      expect(await row()).toEqual({ state: "confirmado", qty_milli: Number(quantity ?? "2") * 1000 });
+    });
+
+    it.each(["quitar", "quitalo", "no lo quiero"])("%s removes the line", async (words) => {
+      const s = await stocked({ jabon: 2000 });
+      const v1 = await place(s);
+      const left = await say(s, words);
+      if (left.outcome.type !== "readback") throw new Error(left.outcome.type);
+      expect(left.outcome.order.version).toBe(2);
+      expect(left.outcome.order.lines.map((line) => line.productId)).toEqual(v1.lines.filter((line) => line.lineId !== "L3").map((line) => line.productId));
+    });
+
+    it.each([
+      ["mmm no sé", null],
+      ["no", null],
+      ["no, esas no", null],
+      ["no lo quites", null],
+      ["5", "5"],
+    ])("%s (quantity %s) can't be read as an answer: nothing saved, the same question again", async (words, quantity) => {
+      const s = await stocked({ jabon: 2000 });
+      const v1 = await place(s);
+      const again = await say(s, words, quantity);
+      expect(again.commits).toEqual([]);
+      expect(again.outcome.type).toBe("readback");
+      if (again.outcome.type !== "readback") return;
+      expect(again.outcome.order).toMatchObject({ version: 1, orderId: v1.orderId });
+      const reply = renderOutcome(again.outcome, CUSTOMER)!;
+      expect(reply.body).toContain("ahorita me aparecen 2. ¿Te mando 2 o lo quitamos?");
+      expect(reply.body).not.toContain("¿Cuántos");
+      expect(reply.buttons).toEqual([]);
+    });
+
+    it("the second short line is asked next, one at a time", async () => {
+      const s = await stocked({ arroz: 1000, jabon: 2000 });
+      await place(s);
+      const took = await say(s, "sí");
+      if (took.outcome.type !== "readback") throw new Error(took.outcome.type);
+      expect(lineOf(took.outcome.order, "L2")).toMatchObject({ quantity: "1" });
+      expect(lineOf(took.outcome.order, "L3").inStock).toBe("2");
+      expect(renderOutcome(took.outcome, CUSTOMER)!.body).toContain("ahorita me aparecen 2. ¿Te mando 2 o lo quitamos?");
+    });
+
+    it("with no short line a clarification changes nothing", async () => {
+      const s = await stocked({ jabon: 9000 });
+      await place(s);
+      const outcome = await say(s, "sí");
+      expect(outcome.outcome.type).toBe("nothing");
+      expect(outcome.commits).toEqual([]);
+    });
+
+    it("the handler's never-silent fallback restates stock's question, never ¿Cuántos querés?", async () => {
+      const s = await stocked({ jabon: 2000 });
+      await place(s);
+      const context = s.context();
+      const handler = createOrderHandler({
+        engine,
+        jobs: { unreadBurst: async () => [] },
+        customers: { ofConversation: async () => ({ id: ids.customer, name: "Ana", nameAskedAtMs: null, lastReadback: null }) },
+        clock: { now: () => T0 + 1 },
+        log: { info: () => {}, warn: () => {}, error: () => {} },
+        pendientes: { raise: async () => {} },
+        reader: { read: async () => { throw new Error("not read"); } },
+      } as unknown as OrderHandlerDeps);
+      const { replies } = await handler.handle({
+        lease: { businessId: context.businessId, conversationId: context.conversationId },
+        job: { id: "j", kind: "text", textBody: "x", receivedAtMs: T0 + 1, attempts: 0 },
+        isNewestOfBurst: true,
+      } as unknown as JobInput);
+      expect(replies).toHaveLength(1);
+      expect(replies[0]!.body).toContain("ahorita me aparecen 2. ¿Te mando 2 o lo quitamos?");
+      expect(replies[0]!.claims).toBeDefined();
+    });
+  });
+
+  it("a stale tap reads back the stock question, with no Confirmar", async () => {
+    const s = await stocked({ jabon: 9000 });
+    const v1 = await place(s);
+    await save(await engine.onBurst(s.context({ nowMs: T0 + 1, jobId: "ten" }), edit("L3", "10"), []));
+
+    const stale = await engine.onCustomerAction(s.context({ nowMs: T0 + 2, jobId: "old-tap" }), tap(v1.orderId, 1));
+    if (stale.outcome.type !== "rejected") throw new Error(stale.outcome.type);
+    expect(stale.outcome.reason).toBe("stale_version");
+    const reply = renderOutcome(stale.outcome, CUSTOMER)!;
+    expect(reply.body).toContain("Tu pedido cambió desde ese mensaje.");
+    expect(reply.body).toContain("ahorita me aparecen 9. ¿Te mando 9 o lo quitamos?");
+    expect(reply.buttons).toEqual([]);
+    expect(firstCheck(reply.claims, { kind: "outcome", outcome: stale.outcome, customerId: ids.customer })).toBe(true);
+    expect((await engine.verifyClaims(s.context(), flattenClaims(reply.claims))).every(Boolean)).toBe(true);
+  });
+
+  it("a stale tap with enough stock still reads back as before, with the buttons", async () => {
+    const s = await stocked({ jabon: 9000 });
+    const v1 = await place(s);
+    await save(await engine.onBurst(s.context({ nowMs: T0 + 1, jobId: "four" }), edit("L3", "4"), []));
+    const stale = await engine.onCustomerAction(s.context({ nowMs: T0 + 2, jobId: "old-tap" }), tap(v1.orderId, 1));
+    expect(renderOutcome(stale.outcome, CUSTOMER)!.buttons.map((button) => button.title)).toEqual(["Confirmar", "Corregir", "Cancelar"]);
+  });
+
+  describe("nothing to prepare is never confirmed", () => {
+    const sold = "¿Qué más te mando? Si no querés nada más, respondé Cancelar.";
+    const confirmTry = async (s: Awaited<ReturnType<typeof stocked>>, order: OrderView) => {
+      const tried = await engine.onCustomerAction(s.context({ nowMs: T0 + 9, jobId: "try" }), tap(order.orderId, order.version));
+      expect(tried.commits).toEqual([]);
+      if (tried.outcome.type !== "readback") throw new Error(tried.outcome.type);
+      const reply = renderOutcome(tried.outcome, CUSTOMER)!;
+      expect(reply.body).toContain(sold);
+      expect(reply.body).not.toContain("quedó anotado");
+      expect(reply.buttons).toEqual([]);
+      expect((await store.openOrder(s.context(), ids.customer))?.view).toMatchObject({ state: "por_confirmar", version: order.version });
+    };
+    const removeAll = (labels: readonly string[]): BurstReading => ({
+      observations: [
+        {
+          kind: "order_change",
+          edits: labels.map((ref) => ({ op: "remove" as const, target: { ref, said: "eso" }, evidence: { source: "text" as const, message: 0, start: 0, end: 3 } })),
+          issues: [],
+        },
+      ],
+      calls: [],
+    });
+
+    it("an order with no lines: it asks what else, and offers no Confirmar", async () => {
+      const s = await stocked({});
+      await place(s);
+      const emptied = await engine.onBurst(s.context({ nowMs: T0 + 1, jobId: "all" }), removeAll(["L1", "L2", "L3", "L4"]), []);
+      if (emptied.outcome.type !== "readback") throw new Error(emptied.outcome.type);
+      await save(emptied);
+      const reply = renderOutcome(emptied.outcome, CUSTOMER)!;
+      expect(reply.body).toBe(sold);
+      expect(reply.buttons).toEqual([]);
+      await confirmTry(s, emptied.outcome.order);
+    });
+
+    it("an order with only sold-out lines", async () => {
+      const s = await stocked({ arroz: 0, jabon: 0, azucar: 0 });
+      await place(s);
+      const out = await engine.onBurst(s.context({ nowMs: T0 + 1, jobId: "unmatched" }), removeAll(["L1"]), []);
+      if (out.outcome.type !== "readback") throw new Error(out.outcome.type);
+      await save(out);
+      await confirmTry(s, out.outcome.order);
+    });
+
+    it("stock that sold out after the readback", async () => {
+      const s = await stocked({ arroz: 5000, jabon: 5000, azucar: 5000 });
+      await place(s);
+      const out = await engine.onBurst(s.context({ nowMs: T0 + 1, jobId: "unmatched" }), removeAll(["L1"]), []);
+      if (out.outcome.type !== "readback") throw new Error(out.outcome.type);
+      await save(out);
+      for (const productId of [s.arroz, s.jabon, s.azucar]) await setBalance(s.businessId, productId, 0);
+      await confirmTry(s, out.outcome.order);
+    });
+
+    it("a sold-out line beside another line still confirms", async () => {
+      const s = await stocked({ arroz: 0 });
+      const order = await place(s);
+      const confirmed = await engine.onCustomerAction(s.context({ nowMs: T0 + 1, jobId: "c" }), tap(order.orderId, 1));
+      expect(confirmed.outcome.type).toBe("order_confirmed");
+    });
   });
 
   it("a balance that changes before the confirm: the reply's claim stops holding, the version's guards decide", async () => {
