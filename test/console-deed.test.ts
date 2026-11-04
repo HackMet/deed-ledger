@@ -1,3 +1,4 @@
+import type { Claim } from "../src/domain/contract/outcomes";
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
@@ -342,6 +343,44 @@ describe("/console/deed/buscar: a typed code or reference reaches the order's en
     for (const typed of [code, (await orderCode(later.id))!]) {
       expect((await search(h, typed, cookie)).headers.get("location"), typed).toBe(libroOf(orderId));
     }
+  });
+
+  describe("the WhatsApp ID of a sent message", () => {
+    async function sent(businessId: string, id: string, claims: readonly Claim[] | null): Promise<string> {
+      const account = await env.DB.prepare(`SELECT id FROM channel_accounts WHERE business_id = ?`).bind(businessId).first<{ id: string }>();
+      const wamid = `wamid.${id}`;
+      await env.DB.prepare(
+        `INSERT INTO outbound_messages (id, business_id, channel_account_id, recipient_hash, seq, kind, body_text, dedupe_key, status,
+           expires_at_ms, created_at_ms, updated_at_ms, sent_at_ms, claims_json, provider_message_id)
+         VALUES (?, ?, ?, 'hash-synthetic', (SELECT COALESCE(MAX(seq), 0) + 1 FROM outbound_messages), 'reply', 'Tu pedido está confirmado.',
+           ?, 'sent', ?, ?, ?, ?, ?, ?)`,
+      )
+        .bind(id, businessId, account!.id, `dedupe:${id}`, T0 + 3_600_000, T0, T0, T0, claims === null ? null : JSON.stringify(claims.map((claim) => ({ anyOf: [claim] }))), wamid)
+        .run();
+      return wamid;
+    }
+    const about = (orderId: string): Claim => ({ type: "order_state", orderId, version: 1, state: "confirmado" });
+
+    it("reaches the entry of the order the message is about, and only in this store", async () => {
+      const s = await storeWithMembers();
+      const { orderId } = await confirmedOrder(s);
+      const wamid = await sent(s.businessId, crypto.randomUUID(), [about(orderId)]);
+      const h = harness({ engine: checkedEngine });
+      const cookie = await login(h, s, "staff");
+      expect((await search(h, wamid, cookie)).headers.get("location")).toBe(libroOf(orderId));
+      const other = await storeWithMembers();
+      expect((await search(h, wamid, await login(h, other, "staff"))).status).toBe(404);
+    });
+
+    it("finds nothing for a message about no order, about two, or that was never sent", async () => {
+      const s = await storeWithMembers();
+      const { orderId } = await confirmedOrder(s);
+      const none = await sent(s.businessId, crypto.randomUUID(), null);
+      const two = await sent(s.businessId, crypto.randomUUID(), [about(orderId), about("order-elsewhere")]);
+      const h = harness({ engine: checkedEngine });
+      const cookie = await login(h, s, "staff");
+      for (const typed of [none, two, "wamid.unknown"]) expect((await search(h, typed, cookie)).status, typed).toBe(404);
+    });
   });
 
   it("links from the feed to a search page that doesn't reload while someone types", async () => {

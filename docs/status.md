@@ -18,8 +18,10 @@ Last updated: Wed Nov 4, 2026, morning Honduras time, by Claude Code.
   - **`claude/demo-fixes` goes in only through this PR.** Its reviews and their fixes are in the PR. Codex was not run: it isn't installed here.
   - **Answers to customer messages in the demo are templates;** notices after a staff tap are the product's. "Le pasé tu cambio…" exists only there. Real WhatsApp doesn't say it, so it
     stays out of the video until Angel matches it.
-  - **Waiting on Angel:** the `statusReply` copy for a pending change, not committed; append-only triggers in the
-    store's migrations (C5).
+  - **Decided (D-55, D-56):** the contract additions are accepted, and C11's code stays invisible. Angel also says the
+    customer doesn't need the quantity shown while a change waits, so the `statusReply` diff is dropped.
+  - **New request, not built:** when the stock is short, offer what there is. The engine has no stock read yet.
+  - **Waiting on Angel:** append-only triggers in the store's migrations (C5), `saidName`, and the real order with Muse.
 - **Deed core (`src/deed-core/`, in PR #71):** the fact batch lives in `src/deed-core/d1-store.ts`. The store's evidence
   rules are policy data (`src/domain/store-policy.ts`), its drafts and stock a host extension
   (`src/infrastructure/d1/store-extension.ts`) (D-53, D-54). The store's tables keep their kind CHECKs: they are the
@@ -209,9 +211,7 @@ Gate: Saturday Oct 31, 8:00 PM Honduras time.
 | Repository license, and when it goes public (right before submitting) | Team | Oct 26 |
 | Decisions made since Oct 28 aren't in [decisions.md](decisions.md) yet | Angel → Claude Code | Oct 28 |
 | Product and team name: "Johan AI" is a working title | Team | Oct 27 |
-| K12 contract additions (`review_change`, `change_approved`, `change_declined`, `OrderView.openChangeRequest`, `OrderView.lastReview`) are Proposed and need Angel's OK | Angel | Nov 3 |
 | K12 touched two of Angel's files: `src/domain/copy.ts` gains the owner-facing copy `CHANGE_AFTER_READY` (new copy, not compile-only), and `test/secrets.test.ts` lists `0024_change_requests.sql` (compile-only); both need Angel's OK | Angel | Nov 3 |
-| K13 contract additions (`en_camino`, `dispatch`, `order_dispatched`) are Proposed and need Angel's OK | Angel | Nov 3 |
 | K21 touched Angel's files: `config.ts` (`deedEngine`), `wrangler.jsonc` (`DEED_ENGINE: "0"`), `worker-configuration.d.ts` (regenerated) and `composition.ts` (engine choice; the Deed checks recorder). Whether to turn `DEED_ENGINE` on is his call | Angel | Nov 3 |
 | K20 adds migration `0027_deed_checks.sql` and lists it in Angel's `test/secrets.test.ts` (compile-only) | Angel | Nov 3 |
 | K14 Muse Spark receipt reader: needs PR #63's `MuseSparkProvider` and Q2; prompt draft in [prompts/receipt-reading.md](prompts/receipt-reading.md). K14 touched Angel's `test/secrets.test.ts` (lists `0026_console_receipts.sql`, compile-only) and `LogFields` (`draftId`) | Angel | Nov 3 |

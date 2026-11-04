@@ -30,7 +30,7 @@ This engine has never run deployed. Everything in the README's "Tested from a ph
 | `src/application/perception/agent.ts` | Exposes `readerConfiguration` for the agent id | Review |
 | `src/integrations/perception/recorded-receipt-reader.ts` | New: invoices are read from recordings, not by Muse | Review |
 | `src/domain/replies.ts`, `src/domain/copy.ts` | Copy for K12 and K13, including `CHANGE_AFTER_READY` | Check the Spanish |
-| `src/domain/contract/actions.ts`, `outcomes.ts` | `review_change`, `dispatch`, `change_approved`, `change_declined`, `order_dispatched`, `payment_rejected`, `en_camino`, `openChangeRequest`, `lastReview` | **Accept or replace** |
+| `src/domain/contract/actions.ts`, `outcomes.ts` | `review_change`, `dispatch`, `change_approved`, `change_declined`, `order_dispatched`, `payment_rejected`, `en_camino`, `openChangeRequest`, `lastReview` | Accepted (D-55) |
 | `src/interfaces/http/console/*` | Deed, Libro, Pedidos, Facturas, Negocio and Productos screens | Which stays: Tienda or Precios |
 | `package.json` | `npm test` also runs two `node:test` files | Note it |
 | `scripts/lib/sim.mjs` | Sets `DEED_ENGINE` to `"0"` for the simulator | Review |
@@ -49,7 +49,7 @@ Also waiting on him: decisions D-41 to D-44 and the migration numbers.
 
 1. **The planner doesn't run on this engine.** `OrderEngine` has no `plannerContext`, so `CONVERSATION=planner` falls back to the classic reader with no error, and alias proposals stop. On Nov 3, on the previous engine, the eval completed 27 to 28 of 32 conversations on the planner and 12 to 16 on classic. Kerly hasn't decided on this; don't build it without asking.
 2. **Nothing has run deployed:** remote D1, Queues, R2, real WhatsApp and real Muse are all untested on this engine. `wrangler deploy --dry-run` wasn't run, so bundle size is unmeasured.
-3. **Copy mismatch.** While a change waits for the store, the demo says "Le pasé tu cambio a la tienda. Queda así si lo aprueban: …". Real WhatsApp says "Tu pedido ya está en la fila. Te aviso apenas esté listo." or "Vas segundo en la fila. Te aviso apenas esté listo." The proposed `statusReply` change is in the PR body, uncommitted, and no test covers it. That demo message stays out of the video until they match.
+3. **Demo copy.** While a change waits, the demo says "Le pasé tu cambio a la tienda…". Real WhatsApp says "Tu pedido ya está en la fila…", and Angel decided it needn't show the quantity. Keep that demo line out of the video.
 4. **C5:** append-only is enforced with triggers in the core's schema, not in the store. Store triggers would go on a separate branch, if Angel accepts them.
 5. **Codex review:** not done; codex isn't installed on Kerly's machine.
 6. **An unmatched line shows one quantity only when its words start with that quantity in a form the rule reads.** A line's words are the customer's free text, so this is a stated limit, not a solved problem.
@@ -62,12 +62,13 @@ Also waiting on him: decisions D-41 to D-44 and the migration numbers.
 
 9. **No total on this engine.** `order-engine.ts:352` sets every line's `unitPrice` to null, so every order's total is null and the real reply says "El total te lo confirmo". No wrong total is possible, and none is shown. Prices need a decision.
 
-10. **C11 is still partial.** Staff can search an order's code or reference at `/console/deed/buscar`, but on this engine no customer message carries one. Local branch `claude/c11-ref` adds a last line `Ref. a1b2c3d4` to customer messages about an order, in `src/application/replies.ts`. It stays out of this PR until Angel accepts it.
+10. **C11's code is invisible (D-56).** A message resolves to its entry through its WhatsApp ID at `/console/deed/buscar`. Fixed messages with no order claim, such as "Tu cambio fue aprobado", resolve to nothing. `claude/c11-ref` isn't used.
+11. **Not built: offering what there is when the stock is short.** Angel asked for it. The engine has no stock read yet, and `availability` is always `no_se`.
 
 ## Conformance
 
-- ✅ C1, C2, C3, C4, C6, C9, C10. The known limits of C3 and C10 are in the README.
-- ⚠️ C5, C7, C8, C11, each stated in the README.
+- ✅ C1, C2, C3, C4, C6, C9, C10, C11. The known limits of C3, C10 and C11 are in the README.
+- ⚠️ C5, C7, C8, each stated in the README.
 
 ## Under review
 
@@ -75,12 +76,12 @@ Also waiting on him: decisions D-41 to D-44 and the migration numbers.
 
 ## Angel's steps, in order
 
-1. Read the PR's "Before merging" section and accept or replace the contract additions.
+1. Read the PR's "Before merging" section.
 2. Check the demo store's catalog on the remote database.
 3. Run `npx wrangler deploy --dry-run` to measure the bundle.
 4. Merge #71. That deploys.
 5. **Run one real order end to end with Muse on the deployed Worker: order, readback, confirm, Listo, "listo". This is the hackathon's gate.**
-6. Decide on the `statusReply` copy and the C5 triggers.
+6. Decide on `saidName` and the C5 triggers.
 
 Code freeze for the video: 17:00 Guayaquil time, which is 16:00 Honduras time. Submission deadline: 8:00 PM Honduras time, November 4.
 
