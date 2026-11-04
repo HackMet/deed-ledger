@@ -84,6 +84,7 @@ interface LineRow {
   unit_price_centavos: number | null;
   unit: string | null;
   restricted: number;
+  excluded_from_total: number;
 }
 
 const ORDER_SELECT = `SELECT o.id, o.customer_id, o.state, o.current_version, o.first_confirmed_at_ms,
@@ -459,7 +460,7 @@ export class D1OrderStore implements OrderStore {
     const { results } = await this.db
       .prepare(
         `SELECT l.line_no, l.product_id, p.canonical_name AS product_name, l.customer_text, l.qty_milli,
-           l.unit_price_centavos, l.unit, l.restricted
+           l.unit_price_centavos, l.unit, l.restricted, l.excluded_from_total
          FROM order_lines l
          LEFT JOIN products p ON p.business_id = l.business_id AND p.id = l.product_id
          WHERE l.business_id = ? AND l.order_id = ? AND l.version = ?
@@ -524,7 +525,8 @@ function lineView(row: LineRow): OrderLineView {
     quantity: row.qty_milli === null ? null : fromThousandths(row.qty_milli),
     unit: row.unit,
     unitPrice: row.unit_price_centavos,
-    availability: "no_se",
+    // A line is left out of the total for being restricted or out of stock. "Hay" isn't stored: unknown.
+    availability: row.excluded_from_total === 1 && row.restricted === 0 ? "se_acabo" : "no_se",
     restricted: row.restricted === 1,
     mark: null,
     substitute: null,

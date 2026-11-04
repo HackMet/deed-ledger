@@ -26,6 +26,7 @@ import type {
   PreparationCard,
 } from "../../domain/contract/outcomes";
 import { deriveOrderState, type OrderFact } from "../../domain/order-state";
+import { stockVerdict } from "../../domain/stock-offer";
 import { totalOf } from "../../domain/order-total";
 import { indexOfLabel, labelOf, nextVersion } from "../../domain/orders";
 import { isPrice, priceKey } from "../../domain/price";
@@ -33,6 +34,7 @@ import type { EvidenceRef, FactCommit } from "../../domain/facts";
 import type { CustomerContext, Engine, EngineResult, LineMatch, MemberContext } from "../engine";
 import type { CatalogProduct } from "../perception/matching";
 import { DEED_CLAIM_KINDS, type DeedCheckSource, type DeedChecks } from "./deed-checks";
+import type { StockBalances } from "./stock-balances";
 import type { Clock, Commit, IdSource, Logger, Tenant } from "../ports";
 
 export interface StoredOrder {
@@ -297,7 +299,8 @@ export class OrderEngine implements Engine {
    * `checks` is the Deed's record (K20): optional, written after each decision and never in its batch.
    * `clock` stamps the claim checks, which carry no time of their own; `log` gets a failed record's IDs.
    * `agentId` (C11) is the runtime's id for the agent configuration; the engine stamps it on each customer
-   * fact and never reads it from a reading.
+   * fact and never reads it from a reading. `stock` is read for each readback and each availability claim;
+   * without it every line stays unknown.
    */
   constructor(
     private readonly deps: {
@@ -305,6 +308,7 @@ export class OrderEngine implements Engine {
       readonly ids: IdSource;
       readonly ledger: OrderFactLedger;
       readonly checks?: DeedChecks;
+      readonly stock?: StockBalances;
       readonly clock?: Clock;
       readonly log?: Logger;
       readonly agentId?: string;
@@ -639,18 +643,23 @@ export class OrderEngine implements Engine {
 
   /**
    * Perception's read of the customer's open order: its lines under the labels L1… the engine maps back.
-   * PENDING: `pendingQuestion` is always null. onBurst asks only "ambiguous_product" while it reads a
-   * burst; it has no rule that asks about an open order's missing quantity, so there is no question to
-   * report. `pendingOptions` and `lastAnswered` are absent: the engine stores neither.
+   * `pendingQuestion` is "quantity" while a version waiting for the customer has a line stock can't cover:
+   * its line says what's left, so an answer like "esas 3" can be read as that line's quantity, and the
+   * engine checks it again. Otherwise null: onBurst asks only "ambiguous_product" while it reads a burst.
+   * `pendingOptions` and `lastAnswered` are absent: the engine stores neither.
    */
   async perceptionContext(context: CustomerContext): Promise<PerceptionContext> {
     const open = await this.deps.store.openOrder(context, context.customerId);
+    if (open === null) return { openOrder: null, pendingQuestion: null };
+    const lines = open.view.state === "por_confirmar" ? await this.withStock(context, open.view.lines) : open.view.lines;
     return {
-      openOrder:
-        open === null
-          ? null
-          : { lines: open.view.lines.map((line, n) => ({ ref: `L${n + 1}`, text: `${line.productName ?? line.text}: ${line.quantity ?? "?"}` })) },
-      pendingQuestion: null,
+      openOrder: {
+        lines: lines.map((line, n) => ({
+          ref: `L${n + 1}`,
+          text: `${line.productName ?? line.text}: ${line.quantity ?? "?"}${line.inStock === undefined ? "" : ` (solo hay ${line.inStock})`}`,
+        })),
+      },
+      pendingQuestion: lines.some((line) => line.inStock !== undefined) ? "quantity" : null,
     };
   }
 
@@ -779,6 +788,7 @@ export class OrderEngine implements Engine {
     try {
       if (typeof claim !== "object" || claim === null) return false;
       if (claim.type === "unit_price") return await this.verifyPrice(tenant, claim);
+      if (claim.type === "availability") return await this.verifyAvailability(tenant, claim);
       if (claim.type !== "order_state" && claim.type !== "order_total") return false;
       if (typeof claim.orderId !== "string" || !Number.isInteger(claim.version)) return false;
       const { store } = this.deps;
@@ -791,7 +801,7 @@ export class OrderEngine implements Engine {
         return claim.type === "order_state" && claim.state === "cancelado" && deriveOrderState(facts, claim.version, head.state) === "cancelado";
       }
       if (!facts.some((fact) => fact.kind === "order_version" && fact.version === claim.version && fact.live)) return false;
-      // availability, payment_confirmed, balance and store hours aren't stored in this cut.
+      // payment_confirmed, balance and store hours aren't stored in this cut.
       if (claim.type === "order_state") return deriveOrderState(facts, claim.version, head.state) === claim.state;
       return head.total !== null && head.total === claim.total;
     } catch {
@@ -805,6 +815,40 @@ export class OrderEngine implements Engine {
     if (typeof claim.productId !== "string" || !isPrice(claim.price)) return false;
     const { confirmed } = await this.deps.store.priceState(tenant, claim.productId, "");
     return confirmed !== null && confirmed.price === claim.price;
+  }
+
+  /** Backed only by a record of this store: no record is unknown, which backs neither "hay" nor "se_acabo". */
+  private async verifyAvailability(tenant: Tenant, claim: Extract<Claim, { type: "availability" }>): Promise<boolean> {
+    if (this.deps.stock === undefined || typeof claim.productId !== "string") return false;
+    const balance = (await this.deps.stock.balances(tenant, [claim.productId])).get(claim.productId);
+    if (balance === undefined) return false;
+    if (claim.availability === "se_acabo") return balance === 0;
+    if (claim.availability !== "hay" || balance === 0) return false;
+    return claim.inStock === undefined || toThousandths(claim.inStock) === balance;
+  }
+
+  /**
+   * Each line as the store's verified stock has it now, read for every readback, whichever version the line
+   * came from: a line takes what's there today. Only says what's there: quantities stay as the customer said.
+   */
+  private async withStock(tenant: Tenant, lines: readonly OrderLineView[]): Promise<readonly OrderLineView[]> {
+    const { stock } = this.deps;
+    if (stock === undefined) return lines;
+    const productIds = [...new Set(lines.flatMap((line) => (line.productId === null ? [] : [line.productId])))];
+    const balances = await stock.balances(tenant, productIds);
+    return lines.map(({ inStock: _before, ...line }) => {
+      const balance = line.productId === null ? undefined : balances.get(line.productId);
+      switch (stockVerdict(line, balance ?? null)) {
+        case "enough":
+          return { ...line, availability: "hay" };
+        case "sold_out":
+          return { ...line, availability: "se_acabo" };
+        case "short":
+          return { ...line, availability: "hay", inStock: fromThousandths(balance!) };
+        default:
+          return { ...line, availability: "no_se" };
+      }
+    });
   }
 
   /**
@@ -848,27 +892,28 @@ export class OrderEngine implements Engine {
   }
 
   /** New content: the next version in por_confirmar, read back. After confirming, D-38. */
-  private change(
+  private async change(
     context: CustomerContext,
     operationKey: string,
     open: StoredOrder | null,
     lines: readonly OrderLineView[],
     fulfillment: OrderView["fulfillment"],
-  ): EngineResult {
+  ): Promise<EngineResult> {
     if (open !== null && !EDITABLE.includes(open.view.state)) {
       return result({ type: "rejected", reason: "invalid_state", order: open.view });
     }
     const labelled = lines.map((line, index) => ({ ...line, lineId: labelOf(index) }));
     // After confirming, a change waits for the owner or staff (K12); before, the customer reconfirms (D-43).
     if (open !== null && CHANGE_WINDOW.includes(open.view.state)) return this.request(context, operationKey, open, labelled, fulfillment);
+    const stocked = await this.withStock(context, labelled);
     const fee = fulfillment === null ? null : fulfillment.mode === "pickup" ? 0 : fulfillment.fee;
     const order: OrderView = {
       orderId: open?.view.orderId ?? this.deps.ids.newId(),
       version: open === null ? 1 : open.view.version + 1,
       state: "por_confirmar",
-      lines: labelled,
+      lines: stocked,
       fulfillment,
-      total: totalOf(labelled, fee).total,
+      total: totalOf(stocked, fee).total,
       queuePosition: null,
       openChangeRequest: null,
       lastReview: open?.view.lastReview ?? null,

@@ -135,6 +135,8 @@ export const COPY = {
   changedTitle: "Listo, así queda tu pedido:",
   staleTapTitle: "Tu pedido cambió desde ese mensaje. Así está ahora:",
   confirmQuestion: "¿Te lo preparo así?",
+  /** Under a readback where nothing is left to prepare: nothing to confirm, the typed way out. */
+  soldOutAll: "¿Qué más te mando? Si no querés nada más, respondé Cancelar.",
   pickup: "Lo recogés en la tienda.",
   /** How the store is paid, as the owner works today (to confirm with him): on pickup or delivery. */
   payOnPickup: "Pagás cuando lo recogés.",
@@ -800,16 +802,29 @@ function samePlaceReply(order: OrderView | null, place: SavedPlace | null, noted
  */
 function readbackReply(template: "readback" | "order_changed" | "rejected_tap", title: string, order: OrderView): RenderedReply {
   const awaiting = order.state === "por_confirmar";
-  const claims: ClaimCheck[] = [stateIn(order, [order.state])];
+  const claims: ClaimCheck[] = [stateIn(order, [order.state]), ...order.lines.flatMap(stockLeft)];
   const items = [title, ...order.lines.map(readbackLine)];
   const later = order.lines.filter(confirmedLater);
   if (later.length > 0) {
     items.push(later.length === order.lines.length ? `${COPY.confirmLater}.` : `${COPY.confirmLater}: ${spokenList(later.map(itemName))}.`);
   }
-  const buttons = awaiting ? decisionButtons(order) : [];
+  const short = order.lines.find((line) => line.inStock !== undefined);
+  const soldOut = order.lines.some((line) => !line.restricted && line.availability === "se_acabo");
+  const nothingLeft = soldOut && !order.lines.some(countsTowardTotal);
+  // Stock's own question comes first, one at a time. Its answer is written: the order then reads back again.
+  const buttons = awaiting && short === undefined && !nothingLeft ? decisionButtons(order) : [];
   // Without buttons to tap, the typed choices are the instruction itself.
-  const question = !awaiting ? null : buttons.length > 0 ? COPY.confirmQuestion : `${COPY.confirmQuestion}\n${COPY.typedFallback}`;
-  const body = joinBlocks(items.join("\n"), [...fulfillmentLines(order), moneyLine(order, claims)].join("\n"), question);
+  const question = !awaiting
+    ? null
+    : short !== undefined
+      ? stockQuestion(short)
+      : nothingLeft
+        ? COPY.soldOutAll
+        : buttons.length > 0
+          ? COPY.confirmQuestion
+          : `${COPY.confirmQuestion}\n${COPY.typedFallback}`;
+  const receiving = nothingLeft ? null : [...fulfillmentLines(order), moneyLine(order, claims)].join("\n");
+  const body = joinBlocks(items.join("\n"), receiving, question);
   const rendered = reply(template, body, claims, buttons);
   return buttons.length === 0 ? rendered : { ...rendered, footer: COPY.fixHint, textFallback: COPY.typedFallbackSoft };
 }
@@ -824,6 +839,7 @@ function readbackLine(line: OrderLineView): string {
   if (line.restricted) return `• ${name}: eso solo lo vendemos aquí en la tienda.`;
   if (!countsTowardTotal(line)) return `• ${name}: ahorita no hay.`;
   if (line.quantity === null) return `• ${name}: falta la cantidad.`;
+  if (line.inStock !== undefined) return `• ${quantityShown(line)} ${name}: me aparecen ${amountLeft(line, line.inStock)}.`;
   // A quantity nobody said is shown openly (D-46): "1 Piña (te puse 1)".
   const assumed = line.quantitySource === "suggested" || line.quantitySource === "store_usual" ? ` (te puse ${formatQuantity(line.quantity, null)})` : "";
   const item = `• ${quantityShown(line)} ${name}${assumed}`;
@@ -831,9 +847,29 @@ function readbackLine(line: OrderLineView): string {
   return confirmedLater(line) || amount === null ? item : `${item} · ${formatLempiras(amount)}`;
 }
 
+/** "3 libras", or "3" for a line counted without a unit. */
+function amountLeft(line: OrderLineView, inStock: DecimalString): string {
+  return formatQuantity(inStock, line.byWeight === true ? (line.unit ?? "libra") : line.unit);
+}
+
+/**
+ * "De Arroz ahorita me aparecen 3. ¿Te mando 3 o lo quitamos?" Says what the records show, never that
+ * it's all the store has (PRD §3.4). No buttons: the answer is written and reads back as a new version.
+ */
+function stockQuestion(line: OrderLineView): string {
+  const left = amountLeft(line, line.inStock!);
+  return `De ${lineName(line)} ahorita me aparecen ${left}. ¿Te mando ${left} o lo quitamos?\nEscribime ${left} o quitar.`;
+}
+
+/** The claim behind the amount a line says is left: the store's verified stock is exactly that now. */
+function stockLeft(line: OrderLineView): ClaimCheck[] {
+  if (line.inStock === undefined || line.productId === null) return [];
+  return [one({ type: "availability", productId: line.productId, availability: "hay", inStock: line.inStock })];
+}
+
 /** A line the summary lists under "De estos te confirmo…": no product, or no confirmed price. */
 function confirmedLater(line: OrderLineView): boolean {
-  if (line.restricted || !countsTowardTotal(line) || line.quantity === null) return false;
+  if (line.restricted || !countsTowardTotal(line) || line.quantity === null || line.inStock !== undefined) return false;
   return line.productId === null || line.unitPrice === null || countedLineAmount(line) === null;
 }
 
@@ -1221,7 +1257,7 @@ function claimKey(claim: Claim): string {
     case "unit_price":
       return `unit_price|${claim.productId}|${claim.price}`;
     case "availability":
-      return `availability|${claim.productId}|${claim.availability}`;
+      return `availability|${claim.productId}|${claim.availability}|${claim.inStock ?? ""}`;
     case "payment_confirmed":
       return `payment_confirmed|${claim.paymentClaimId}|${claim.amount}`;
     case "balance":
@@ -1247,7 +1283,12 @@ export function backedClaims(source: ReplySource): Claim[] {
     }
     for (const line of o.lines) {
       if (line.productId !== null && line.availability !== "no_se") {
-        claims.push({ type: "availability", productId: line.productId, availability: line.availability });
+        claims.push({
+          type: "availability",
+          productId: line.productId,
+          availability: line.availability,
+          ...(line.inStock === undefined ? {} : { inStock: line.inStock }),
+        });
       }
       if (line.substitute !== null && line.substitute.unitPrice !== null) {
         claims.push({ type: "unit_price", productId: line.substitute.productId, price: line.substitute.unitPrice });
