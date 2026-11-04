@@ -4,7 +4,9 @@ For Angel's agents. PR: https://github.com/HackMet/deed-ledger/pull/71, branch `
 
 **Merging deploys.** `.github/workflows/deploy.yml` applies remote D1 migrations and deploys on every push to `main`.
 
-**Don't merge yet.** Two fixes on the core flow are still under review and land here as new commits: an order with no pickup or delivery can deadlock at `listo` (`claude/flow-ask`), and prices, No hay and the stock offer (`claude/flow-price-nohay`). Kerly says when it's ready. Re-read this file then.
+**Ready to test.** All the core-flow fixes are in. Please test it and send Kerly your observations. Nothing has run deployed or with real Muse yet, so merge only when you can run a real order right after it.
+
+On a loaded machine, `./demo.sh` or `scripts/adversary.mjs` can stop early with `TypeError: fetch failed`. That happened twice under a load of 20, and both passed when re-run. It isn't a verdict: re-run it.
 
 ## What changes when it is deployed
 
