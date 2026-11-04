@@ -4,6 +4,8 @@ For Angel's agents. PR: https://github.com/HackMet/deed-ledger/pull/71, branch `
 
 **Merging deploys.** `.github/workflows/deploy.yml` applies remote D1 migrations and deploys on every push to `main`.
 
+**Don't merge yet.** Two fixes on the core flow are still under review and land here as new commits: an order with no pickup or delivery can deadlock at `listo` (`claude/flow-ask`), and prices, No hay and the stock offer (`claude/flow-price-nohay`). Kerly says when it's ready. Re-read this file then.
+
 ## What changes when it is deployed
 
 This engine has never run deployed. Everything in the README's "Tested from a phone" was on the previous engine.
@@ -64,6 +66,19 @@ Also waiting on him: decisions D-41 to D-44 and the migration numbers.
 
 10. **C11's code is invisible (D-56), and C11 stays ⚠️.** Each reply's detail on the order's Libro shows its WhatsApp ID, and a store member posts it to `/console/deed/buscar` (a POST with CSRF; the GET is only the form). The ID stays out of `entrada.json`, because it embeds the phone number. Every message the agent sends about an order now carries an order claim, including "Tu cambio fue aprobado", "No pudimos hacer el cambio", "Va. Decime qué le cambiamos", the crossed-readback answer and "¿Qué más te mando?". The copy didn't change, and a claim that's false at send time blocks the message. Not ✅, because these don't resolve: (a) the owner's own words from Pendientes, which carry no claim because the owner is the authority, and which can be about an order. Angel decides whether that counts. (b) A safe reply in place of a blocked message. That includes every "no hay" notice on a catalog line: `soldOut` claims availability, this engine always has `no_se`, so the first check blocks it and the customer reads "Dejame revisar bien" instead of what ran out. That one is a bug to fix with item 11. (c) A send whose delivery is unknown. (d) An erased customer's messages. `claude/c11-ref` isn't used.
 11. **Not built: offering what there is when the stock is short.** Angel asked for it. The engine has no stock read yet, and `availability` is always `no_se`.
+
+## For Angel: gaps a scenario audit found on `DEED_ENGINE="1"`
+
+Tests that run on `MemoryEngine` don't prove the deployed path: test on `OrderEngine`.
+
+| Gap | Where | Fix |
+|---|---|---|
+| Without `MODEL_API_KEY`, every message gets "Lo estoy revisando" and nobody is told. **Check the live secret today** | `src/application/order-handler.ts:394-400` | Raise a Pendiente |
+| A refused cancel reads as if nothing was asked | `src/domain/replies.ts:956`, `src/application/order-handler.ts:385` | Its own copy and a handoff Pendiente |
+| A send that fails for good alerts nobody, even a readback | `src/application/dispatch.ts:226-231` | Raise a Pendiente when a customer row ends `failed` |
+| Deletion leaves the customer's words and place: `order_lines.customer_text`, `order_versions.place_text`, `operations.outcome_json`, `change_request` bodies. The copy says they go | `src/infrastructure/d1/customer-control-repository.ts:268-329`, `src/domain/customer-controls.ts` | Extend the erasure, or change the copy. **Privacy: settle it before real customers** |
+
+Kerly's side, not fixed either: pins are dropped, delivery can confirm with no address, hours and price questions get no answer, payment receipts are ignored, Tienda products don't feed the engine, a readback never expires. Details: ask Kerly for the audit.
 
 ## Conformance
 
