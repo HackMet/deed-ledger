@@ -7,6 +7,7 @@
  * Customer words quoted back ("el arroz", "frente a la iglesia") are data: trimmed, flattened and
  * capped, never read as instructions.
  */
+import { wordsWithoutQuantity } from "./orders";
 import type { CustomerAction, OrderRef } from "./contract/actions";
 import { type Centavos, type DecimalString, formatLempiras, isDecimalString } from "./contract/numbers";
 import type {
@@ -1166,7 +1167,7 @@ const NUMBER_WORDS: Readonly<Record<string, readonly string[]>> = {
 };
 
 function saidName(line: OrderLineView): string {
-  let said = quote(line.text);
+  let said = quote(wordsWithoutQuantity(line.text, line.quantity));
   if (line.quantity !== null) {
     const number = formatQuantity(line.quantity, null);
     const words = [number, ...(NUMBER_WORDS[number] ?? [])];

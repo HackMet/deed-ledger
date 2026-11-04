@@ -552,3 +552,23 @@ const _claimKinds: Record<Claim["type"], true> = {
   store_hours: true,
 };
 void _claimKinds;
+
+describe("saidName: a line's words show its quantity once", () => {
+  const base = (readback as Extract<EngineOutcome, { type: "readback" }>).order;
+  const order = (text: string, quantity: string, unit: string | null = null): EngineOutcome => ({
+    type: "readback",
+    order: { ...base, lines: [{ ...base.lines[0]!, productId: null, productName: null, text, quantity, unit }] },
+  } as EngineOutcome);
+  const bullet = (outcome: EngineOutcome) => renderOutcome(outcome, {} as never)?.body.split("\n").find((line) => line.startsWith("• "));
+
+  it.each([
+    ["doce panes", "12", "• 12 "],
+    ["2lb frijol", "2", "• 2 "],
+    ["Tres Rosas", "1", "• 1 "],
+  ])("reads %s × %s", (text, quantity, lead) => {
+    const shown = bullet(order(text, quantity))!;
+    expect(shown.startsWith(lead)).toBe(true);
+    expect(shown.toLowerCase()).not.toMatch(/• 12 doce|• 2 2lb/);
+    if (text === "Tres Rosas") expect(shown).toContain("Tres Rosas");
+  });
+});
