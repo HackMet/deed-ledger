@@ -176,7 +176,8 @@ describe("/console/deed/:orderId: the order's facts as a graph", () => {
     expect(before).toContain(`class="node live"`);
     expect(before).not.toContain(`class="node closed"`);
     expect(before).not.toContain("Intento rechazado");
-    expect(before).toContain(`name="t"`);
+    // The replay slider is hidden for now: the page offers no range, though `?t=` still answers.
+    expect(before).not.toContain(`name="t"`);
 
     // After the refusal: the confirm is closed, the refused tap is drawn and linked to the cancel.
     const after = await (await get(h, `${path}?t=${T0 + 5_000}`, cookie)).text();
@@ -188,6 +189,7 @@ describe("/console/deed/:orderId: the order's facts as a graph", () => {
     const live = await (await get(h, path, cookie)).text();
     expect(live).toContain(`class="node closed"`);
     expect(live).not.toContain(`http-equiv="refresh"`);
+    expect(live).not.toContain(`name="t"`);
   });
 
   it("draws a superseded change as its own red arc, apart from the dependency line it shares with the newer change", async () => {

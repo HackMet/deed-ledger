@@ -77,6 +77,9 @@ const toDeedFact = (entry: TrailEntry): DeedFact => ({
   closure: entry.closedBy === null ? null : { closedByFactId: entry.closedBy.factId, reason: entry.closedBy.reason, atMs: entry.closedBy.atMs },
 });
 
+/** The replay slider is hidden until it is fixed; `?t=` still answers, a link can still carry it. */
+const REPLAY_SLIDER = false;
+
 /** The replay's time, from `?t=`: a whole number of milliseconds, or null for the live order. */
 const replayTime = (raw: string | undefined): number | null => (raw !== undefined && /^\d{1,15}$/.test(raw) ? Number(raw) : null);
 
@@ -128,7 +131,7 @@ ${rows.length === 0 ? html`<p class="empty">Todavía no hay verificaciones.</p>`
         tab: "/console/mas",
         // No refresh here: a reload drops the fact panel that is open (`#f-…`) and the `?foco=` path.
         style: STYLE,
-        body: html`${replayForm(times, at)}
+        body: html`${REPLAY_SLIDER ? replayForm(times, at) : ""}
 <p class="meta"><a href="/console/deed/${encodeURIComponent(orderId)}/libro">Ver libro</a></p>
 ${graphSvg(graph, onPath)}
 <p class="hint">Tocá un hecho para ver su detalle.</p>
