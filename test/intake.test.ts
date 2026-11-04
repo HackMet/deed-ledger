@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { RECEIVED_PLACEHOLDER, UNKNOWN_SENDER_NOTICE } from "../src/domain/copy";
-import { failingBatchDb } from "./helpers/fakes";
+import { failingBatchDb, failWritesMatching } from "./helpers/fakes";
 import { harness, rows } from "./helpers/harness";
 import { newPhone, newPhoneNumberId, seedStore } from "./helpers/seed";
 import { imageMessage, statusUpdate, textMessage, wamid, webhook } from "./helpers/whatsapp";
@@ -262,5 +262,47 @@ describe("delivery status callbacks", () => {
     expect((await status("read", T0 + 30, store.phoneNumberId, "wamid.TEST-UNKNOWN")).status).toBe(200);
     expect((await status("bogus", T0 + 40)).status).toBe(200);
     expect(await current()).toBe("read");
+  });
+});
+
+describe("the number customers see", () => {
+  const shownFor = async (businessId: string) =>
+    (await rows<{ n: string | null }>(`SELECT display_phone_number AS n FROM channel_accounts WHERE business_id = ?1`, businessId))[0]!.n;
+  const hola = (phoneNumberId: string, from: string, shown: string, timestampS: number) => {
+    const body = webhook(phoneNumberId, { messages: [textMessage({ from, id: wamid(), timestampS, body: "Hola" })] });
+    body.entry[0]!.changes[0]!.value.metadata.display_phone_number = shown;
+    return body;
+  };
+
+  it("is kept from Meta's webhook on the store's own number, and follows a change", async () => {
+    const h = harness();
+    const { store, phone } = await storeWithOwner();
+    const other = await storeWithOwner();
+    expect(await shownFor(store.businessId)).toBeNull();
+    await h.post(hola(store.phoneNumberId, phone, "15550317081", T0));
+    expect(await shownFor(store.businessId)).toBe("15550317081");
+    expect(await shownFor(other.store.businessId)).toBeNull();
+    await h.post(hola(store.phoneNumberId, phone, "50499998888", T0 + 1));
+    expect(await shownFor(store.businessId)).toBe("50499998888");
+  });
+
+  it("never holds up the messages when it can't be saved, and is tried once, after all of them", async () => {
+    const h = harness({ db: failWritesMatching(env.DB, /UPDATE channel_accounts SET display_phone_number/u) });
+    const { store, phone } = await storeWithOwner();
+    const body = webhook(store.phoneNumberId, {
+      messages: [
+        textMessage({ from: phone, id: wamid(), timestampS: T0, body: "Hola" }),
+        textMessage({ from: phone, id: wamid(), timestampS: T0 + 1, body: "y un pan" }),
+      ],
+    });
+    body.entry[0]!.changes[0]!.value.metadata.display_phone_number = "15550317081";
+    const response = await h.post(body);
+    expect(response.status).toBe(200);
+    expect(await rows(`SELECT id FROM inbound_messages WHERE business_id = ?1`, store.businessId)).toHaveLength(2);
+    expect(h.log.events().filter((event) => event === "display_number_not_saved")).toHaveLength(1);
+    expect(h.log.events().lastIndexOf("inbound_recorded")).toBeLessThan(h.log.events().indexOf("display_number_not_saved"));
+    expect(await shownFor(store.businessId)).toBeNull();
+    expect(h.log.events()).toContain("display_number_not_saved");
+    expect(h.log.lines.join("\n")).not.toContain("15550317081");
   });
 });

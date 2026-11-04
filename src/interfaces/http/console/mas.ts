@@ -7,6 +7,7 @@ import { html } from "hono/html";
 import { PRIVACY_PATH } from "../../../domain/customer-controls";
 import type { ConsoleEnv } from "./auth";
 import { shell } from "./layout";
+import { TRY_STYLE, tryCard } from "./try-number";
 
 const PATH = "/console/mas";
 
@@ -40,15 +41,17 @@ const OPTIONS: readonly Option[] = [
 ];
 
 export function masScreen(app: Hono<ConsoleEnv>) {
-  app.get("/mas", (c) => {
-    const isOwner = c.get("member").role === "owner";
+  app.get("/mas", async (c) => {
+    const member = c.get("member");
+    const isOwner = member.role === "owner";
     const options = OPTIONS.filter((option) => isOwner || !option.ownerOnly);
+    const numbers = await c.get("runtime").deps.tenancy.displayNumbersOf({ businessId: member.businessId });
     return c.html(
       shell(c, {
         title: "Más",
         path: PATH,
-        style: STYLE,
-        body: html`${isOwner ? html`<ul class="options">${row(PAUSE)}</ul>` : ""}
+        style: STYLE + TRY_STYLE,
+        body: html`${tryCard(numbers)}${isOwner ? html`<ul class="options">${row(PAUSE)}</ul>` : ""}
 <h2 class="section">Más opciones</h2>
 <ul class="options">${options.map(row)}</ul>`,
       }),

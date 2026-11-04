@@ -121,6 +121,22 @@ describe("the console menu", () => {
     expect(forStaff).not.toContain("Asistente en pausa");
     expect(forStaff).toContain("Pedido a mano");
   });
+
+  it("offers 'Probar como cliente' with the store's own number once a webhook has said it, to owner and staff", async () => {
+    const { store, owner, staff, page } = await sessions();
+    expect(await (await page("/console/mas", owner)).text()).not.toContain("Probar como cliente");
+
+    await env.DB.prepare(`UPDATE channel_accounts SET display_phone_number = '15550317081' WHERE business_id = ?`).bind(store.businessId).run();
+    const other = await storeWithStaff();
+    await env.DB.prepare(`UPDATE channel_accounts SET display_phone_number = '50499998888' WHERE business_id = ?`).bind(other.businessId).run();
+    for (const cookie of [owner, staff]) {
+      const html = await (await page("/console/mas", cookie)).text();
+      expect(html).toContain("+1 555 031 7081");
+      expect(html).toContain('href="https://wa.me/15550317081?text=Hola%2C%20quiero%20hacer%20un%20pedido"');
+      expect(html).toContain("Probar como cliente");
+      expect(html).not.toContain("50499998888");
+    }
+  });
 });
 
 describe("the top bar", () => {

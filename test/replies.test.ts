@@ -202,7 +202,7 @@ describe("templates", () => {
     const reply = render({ type: "readback", order });
     expect(reply.body).toContain("• 1 Aceite Clover 1 L\n");
     expect(reply.body).toContain("• 1.5 libras de Arroz · L 45");
-    expect(reply.body).toContain("• Azúcar 1 lb: no nos queda.");
+    expect(reply.body).toContain("• Azúcar 1 lb: ahorita no hay.");
     expect(reply.body).toContain("• Six de Salva Vida: eso solo lo vendemos aquí en la tienda.");
     // Only the line the store still has to price, named: not the sold-out or the restricted one.
     expect(reply.body).toContain("De estos te confirmo si hay y el precio: Aceite Clover 1 L.");
@@ -326,7 +326,7 @@ describe("templates", () => {
         { asked: "pan", productId: "p-pan", unitPrice: null, availability: "no_se", restricted: false },
       ],
     });
-    expect(stock.body).toBe(["Huevos: sí hay.", "Leche: se nos acabó.", "Pan: te confirmo si hay."].join("\n"));
+    expect(stock.body).toBe(["Huevos: sí hay.", "Leche: ahorita no hay.", "Pan: te confirmo si hay."].join("\n"));
   });
 
   it("quotes customer words flat and capped, as data", () => {
@@ -373,10 +373,24 @@ describe("notices", () => {
     );
   });
 
+  it("joins what's missing the Spanish way: 'sin a ni b', 'sin a, b ni c'", () => {
+    const out = (names: readonly string[]) =>
+      names.map((text, n) => ({ ...soldOutLine1.lines[0]!, lineId: `gone-${n}`, productId: null, productName: null, text, availability: "se_acabo" as const, mark: "no_hay" as const }));
+    const ready = (names: readonly string[]): OrderView => ({ ...soldOutLine1, state: "listo", total: 28500, lines: [...soldOutLine1.lines, ...out(names)] });
+    expect(renderNotice({ type: "order_ready", order: ready(["calabacitas"]) }).body).toContain(", sin Aceite Clover 1 L ni calabacitas.");
+    expect(renderNotice({ type: "order_ready", order: ready(["calabacitas", "pimienta"]) }).body).toContain(", sin Aceite Clover 1 L, calabacitas ni pimienta.");
+  });
+
+  it("says what's out the same way for one thing or many: never 'no nos queda calabacitas'", () => {
+    const line = { ...soldOutLine1.lines[0]!, lineId: "gone", productId: null, productName: null, text: "calabacitas", availability: "se_acabo" as const, mark: "no_hay" as const };
+    const order: OrderView = { ...soldOutLine1, lines: [...soldOutLine1.lines, line] };
+    expect(renderNotice({ type: "line_unavailable", order, lineId: "gone" }).body).toMatch(/^Perdón, ahorita no hay calabacitas 😔/u);
+  });
+
   it("offers only the substitute staff named, with its price and two buttons", () => {
     const reply = renderNotice(sampleNotice("substitute_offered"));
     expect(reply.body).toBe(
-      "No nos queda Aceite Clover 1 L. ¿Te mandamos Mazola 1 L (L 62) o lo quitamos? Tocá un botón o escribime qué preferís.",
+      "Ahorita no hay Aceite Clover 1 L. ¿Te mandamos Mazola 1 L (L 62) o lo quitamos? Tocá un botón o escribime qué preferís.",
     );
     expect(reply.buttons).toEqual([
       { id: "substitute:order-0001:v2:line-1", title: "Mazola 1 L" },

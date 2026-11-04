@@ -53,6 +53,11 @@ export interface InboundMessageEvent {
   readonly media: InboundMedia | null;
   /** A shared WhatsApp location (kind stays "other"): coordinates from the webhook. Absent means none. */
   readonly location?: Pin | null;
+  /**
+   * The store's number as customers see it (Meta's signed `metadata.display_phone_number`), digits
+   * only. For display ("Probar como cliente"), never to route. Absent or null: not sent or not usable.
+   */
+  readonly displayPhoneNumber?: string | null;
 }
 
 export interface StatusEvent {
@@ -147,6 +152,16 @@ export interface OutgoingButtons extends OutgoingText {
   readonly textFallback?: string;
 }
 
+/** The inbound message a "typing…" indicator answers. Read from D1, never from text or model output. */
+export interface TypingIndicator {
+  /** The store's number the message arrived on (its conversation's channel account). */
+  readonly fromPhoneNumberId: string;
+  /** The provider's ID of that inbound message. It embeds the sender's phone: never logged. */
+  readonly providerMessageId: string;
+}
+
+export type TypingResult = { readonly ok: true } | { readonly ok: false; readonly errorCode: string };
+
 export interface MessagingChannel {
   /** False when credentials are missing: nothing is sent and the outbox keeps the message. */
   readonly configured: boolean;
@@ -159,6 +174,12 @@ export interface MessagingChannel {
    * this method gets plain text.
    */
   sendButtons?(message: OutgoingButtons): Promise<SendResult>;
+  /**
+   * Marks the inbound message (and the conversation's earlier ones) read and shows "typing…" until
+   * the next reply, or 25 s on WhatsApp. Best effort: never retried, and a failure only means the
+   * customer doesn't see it.
+   */
+  showTyping(indicator: TypingIndicator): Promise<TypingResult>;
 }
 
 export interface MediaBytes {
@@ -330,6 +351,8 @@ export interface ChannelAccount {
   readonly id: string;
   readonly businessId: string;
   readonly phoneNumberId: string;
+  /** The number customers write to, digits only, once a webhook has said it. Display only. */
+  readonly displayPhoneNumber?: string | null;
 }
 
 export interface Member {
@@ -342,6 +365,10 @@ export interface TenancyRepository {
   findChannelAccount(phoneNumberId: string): Promise<ChannelAccount | null>;
   findChannelAccountOf(tenant: Tenant, channelAccountId: string): Promise<ChannelAccount | null>;
   findActiveMember(tenant: Tenant, phone: string): Promise<Member | null>;
+  /** Saves the number customers see for this channel account (from a verified webhook). Display only. */
+  rememberDisplayNumber(channel: ChannelAccount, digits: string): Promise<void>;
+  /** The store's numbers customers write to, digits only, oldest first; empty until a webhook said one. */
+  displayNumbersOf(tenant: Tenant): Promise<readonly string[]>;
 }
 
 export interface CustomerMessageInput {
@@ -506,6 +533,11 @@ export interface JobRepository {
   /** Whether a job arrived after the snapshot with that seq was taken. */
   hasArrivalsAfter(conversation: ConversationRef, seq: number): Promise<boolean>;
   getMediaAsset(tenant: Tenant, assetId: string): Promise<MediaAssetForJob | null>;
+  /**
+   * Where an open job's typing indicator goes: its message's provider ID and the store number it
+   * arrived on. Null when the job isn't open in this conversation or its provider ID was erased (#30).
+   */
+  typingTarget(conversation: ConversationRef, jobId: string): Promise<TypingIndicator | null>;
   /**
    * pending (and due) or left processing by a dead lease -> processing under this lease. Only the
    * conversation's next job in order starts: if a message that sorts before it is open (it arrived

@@ -405,7 +405,7 @@ export function renderNotice(notice: CustomerNotice["notice"]): RenderedReply {
       }
       return reply(
         "notice_line_unavailable",
-        `Perdón, no nos queda ${name} 😔${total} Si querés otra cosa en su lugar, decime.`,
+        `Perdón, ahorita no hay ${name} 😔${total} Si querés otra cosa en su lugar, decime.`,
         claims,
       );
     }
@@ -542,11 +542,33 @@ function withEcho(
 /** At most this many items are echoed by name; the rest are counted ("• y 2 más"). */
 const ECHO_MAX_ITEMS = 4;
 
-/** "Anotado ✅" alone, then one "• 2 Arroz 1 lb" per item, up to four; the rest counted. */
+/**
+ * "Anotado ✅" then one "• 2 Arroz 1 lb" per item, up to four, the rest counted; then the items
+ * still without an amount, named once in a sentence. Listed under "Anotado ✅" they would read as
+ * settled, and a per-pound name ("Tomate 1 lb") as a chosen pound.
+ */
 export function echoBlock(lines: readonly OrderLineView[]): string {
-  const shown = lines.slice(0, ECHO_MAX_ITEMS).map((line) => `• ${shortLine(line)}`);
-  if (lines.length > ECHO_MAX_ITEMS) shown.push(`• y ${lines.length - ECHO_MAX_ITEMS} más`);
-  return [COPY.noted, ...shown].join("\n");
+  const { noted, missing } = echoParts(lines);
+  return joinBlocks(noted, missing);
+}
+
+function echoParts(lines: readonly OrderLineView[]): { noted: string | null; missing: string | null } {
+  const settled = lines.filter((line) => !waitsForQuantity(line));
+  const waiting = lines.filter(waitsForQuantity);
+  let noted: string | null = null;
+  if (settled.length > 0) {
+    const shown = settled.slice(0, ECHO_MAX_ITEMS).map((line) => `• ${shortLine(line)}`);
+    if (settled.length > ECHO_MAX_ITEMS) shown.push(`• y ${settled.length - ECHO_MAX_ITEMS} más`);
+    noted = [COPY.noted, ...shown].join("\n");
+  }
+  return { noted, missing: waiting.length > 0 ? missingAmountsBlock(waiting) : null };
+}
+
+/** "Me falta saber cuánto querés de Plátano maduro, Tomate y calabacitas." A note, not a question (D-47). */
+function missingAmountsBlock(lines: readonly OrderLineView[]): string {
+  const names = lines.slice(0, ECHO_MAX_ITEMS).map((line) => (line.productName !== null ? catalogName(line.productName, true) : lineName(line)));
+  if (lines.length > ECHO_MAX_ITEMS) names.push(`${lines.length - ECHO_MAX_ITEMS} más`);
+  return `Me falta saber cuánto querés de ${spokenList(names)}.`;
 }
 
 /** "2 Arroz 1 lb", "2 libras de Pollo entero", "Piña" (no quantity yet). */
@@ -554,12 +576,14 @@ function shortLine(line: OrderLineView): string {
   return line.quantity === null ? itemName(line) : `${quantityShown(line)} ${itemName(line)}`;
 }
 
-// --- Planner path (D-46, D-47): blocks in a fixed order, echo → assumed → step, in one message.
+// --- Planner path (D-46, D-47): blocks in a fixed order, echo → assumed → missing amounts → step,
+// in one message.
 
 /**
  * One question about one kind of thing, after what was understood: what this burst added or
  * changed that the question doesn't name ("Anotado ✅ • 1 Arroz 1 lb"), then what was assumed ("Te
- * puse 1 de piña."), then the question, which names its own lines. Every line the burst brought is
+ * puse 1 de piña."), then what still needs an amount ("Me falta saber cuánto querés de tomate."),
+ * then the question, which names its own lines. Every line the burst brought is
  * accounted for exactly once: the echo's count never silently leaves out the one being asked about.
  */
 function plannedAskReply(
@@ -573,10 +597,11 @@ function plannedAskReply(
     questions.kind === "options" ? questions.lineIds.filter((id) => (questions.options?.[id] ?? []).length > 0) : questions.lineIds,
   );
   const assumed = order.lines.filter((line) => assumedIds.includes(line.lineId) && !asked.has(line.lineId));
-  const echoed = noted.filter((line) => !asked.has(line.lineId) && !assumedIds.includes(line.lineId));
+  const echoed = echoParts(noted.filter((line) => !asked.has(line.lineId) && !assumedIds.includes(line.lineId)));
   const body = joinBlocks(
-    echoed.length > 0 ? echoBlock(echoed) : null,
+    echoed.noted,
     assumed.length > 0 ? assumedBlock(assumed) : null,
+    echoed.missing,
     plannedStepText(order, questions, claims),
   );
   return reply("ask", body, claims);
@@ -592,9 +617,9 @@ export function assumedBlock(lines: readonly OrderLineView[]): string {
   return `Te puse ${said}. ${amounts.size === 1 && lines[0]!.quantity === "1" ? COPY.assumedMore : COPY.assumedOther}`;
 }
 
-/** "a, b y c". */
-function spokenList(items: readonly string[]): string {
-  return items.length <= 1 ? (items[0] ?? "") : `${items.slice(0, -1).join(", ")} y ${items.at(-1)}`;
+/** "a, b y c"; after "sin", "a, b ni c". */
+function spokenList(items: readonly string[], conjunction: "y" | "ni" = "y"): string {
+  return items.length <= 1 ? (items[0] ?? "") : `${items.slice(0, -1).join(", ")} ${conjunction} ${items.at(-1)}`;
 }
 
 function plannedStepText(order: OrderView, questions: AskQuestions, claims: ClaimCheck[]): string {
@@ -797,7 +822,7 @@ function readbackReply(template: "readback" | "order_changed" | "rejected_tap", 
 function readbackLine(line: OrderLineView): string {
   const name = itemName(line);
   if (line.restricted) return `• ${name}: eso solo lo vendemos aquí en la tienda.`;
-  if (!countsTowardTotal(line)) return `• ${name}: no nos queda.`;
+  if (!countsTowardTotal(line)) return `• ${name}: ahorita no hay.`;
   if (line.quantity === null) return `• ${name}: falta la cantidad.`;
   // A quantity nobody said is shown openly (D-46): "1 Piña (te puse 1)".
   const assumed = line.quantitySource === "suggested" || line.quantitySource === "store_usual" ? ` (te puse ${formatQuantity(line.quantity, null)})` : "";
@@ -956,7 +981,7 @@ function answerReply(topic: "price" | "availability", facts: readonly AnswerFact
       lines.push(`${capitalize(asked)}: sí hay.`);
       claims.push(one({ type: "availability", productId: fact.productId, availability: "hay" }));
     } else if (fact.productId !== null && fact.availability === "se_acabo") {
-      lines.push(`${capitalize(asked)}: se nos acabó.`);
+      lines.push(`${capitalize(asked)}: ahorita no hay.`);
       claims.push(one({ type: "availability", productId: fact.productId, availability: "se_acabo" }));
     } else {
       // No record (or no recent evidence): never a guess (PRD "Honest stock").
@@ -1004,7 +1029,7 @@ function balanceReply(balance: Centavos | null, customerId: string): RenderedRep
 function readyReply(order: OrderView): RenderedReply {
   const claims: ClaimCheck[] = [stateIn(order, ["listo"])];
   const missing = order.lines.filter((line) => !line.restricted && !countsTowardTotal(line)).map(lineName);
-  const without = missing.length === 0 ? "" : `, sin ${missing.join(", ")}`;
+  const without = missing.length === 0 ? "" : `, sin ${spokenList(missing, "ni")}`;
   let body: string;
   const ready = order.code === undefined ? "¡Tu pedido ya está listo! 🙌" : `¡Tu pedido #${order.code} ya está listo! 🙌`;
   if (order.total !== null) {
@@ -1045,7 +1070,7 @@ function substituteReply(order: OrderView, lineId: string): RenderedReply {
         ];
   // "Tocá…" only when there is something to tap.
   const fallback = buttons.length > 0 ? COPY.substituteFallback : COPY.substituteFallbackTyped;
-  return reply("notice_substitute_offered", `No nos queda ${lineName(line)}. ${question} ${fallback}`, claims, buttons);
+  return reply("notice_substitute_offered", `Ahorita no hay ${lineName(line)}. ${question} ${fallback}`, claims, buttons);
 }
 
 // --- Helpers

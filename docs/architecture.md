@@ -146,6 +146,8 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
   compares SHA-256 hashes of both verify tokens in constant time.
 - The store comes from `metadata.phone_number_id`, by exact match in `channel_accounts`. With no match, the event is
   dropped and only its type is logged.
+- `metadata.display_phone_number` (digits) is kept on that channel account when it changes, best effort, after the
+  message is saved. It is display only (the console's "Probar como cliente" wa.me link), never used to route.
 - Every event is saved before the 200. A transient failure answers 500, so Meta retries; a constraint violation
   answers 200 with an ID-only log.
 - Anyone writing to the store's number is that store's customer (0004); memberships only matter for the console. A
@@ -264,6 +266,9 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
 
 ### The outbox
 
+- **Read and typing.** Before a burst's first job runs, the consumer marks its newest message read and shows
+  "typing…" until the reply or 25 s (`MessagingChannel.showTyping`), best effort and never for a customer who typed
+  ALTO.
 - **Writing.** Replies are written in the same batch as the job transition that produced them. They are split
   before the batch into parts of at most 4096 UTF-16 code units: at whitespace, else between graphemes. A single
   grapheme longer than the limit is cut by code units, never inside a surrogate pair. Each row gets a send order
@@ -467,7 +472,7 @@ plugs in. Where this differs from the planned [flow](#flow) (media is downloaded
   per day and the delivery fee. Stored in `store_products` and `store_setup_settings` (migration 0019) through
   `D1StoreSetupRepository`, every query scoped by the session's store. The D1 pretend engine maps a product to
   `names: [name]`, `aliases: other names`, `availability: "se_acabo"` when marked "No hay" (unmarked is unknown,
-  never "hay"); an ordered "No hay" product keeps `se_acabo` on its line, so the readback says "no nos queda" and
+  never "hay"); an ordered "No hay" product keeps `se_acabo` on its line, so the readback says "ahorita no hay" and
   leaves it out of the total. The spec's catalog (`products`, `product_names`, `prices`, `availability_evidence`)
   and spoken setup session live in the teammate's engine and replace these tables once ready. The dev console keeps
   `DEMO_CATALOG`.

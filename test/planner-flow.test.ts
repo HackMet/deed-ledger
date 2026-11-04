@@ -198,9 +198,47 @@ const building = (lines: OrderLineView[]): OrderView => ({ orderId: "o-1", versi
 
 describe("reply blocks (planner path)", () => {
   it("echoes up to four names, then counts the rest: never 'tus N productos'", () => {
-    const lines = ["Plátanos", "Piña", "Sandía", "Catsup", "Arroz", "Sal"].map((name, n) => view(`l${n}`, name));
-    expect(echoBlock(lines)).toBe("Anotado ✅\n• Plátanos\n• Piña\n• Sandía\n• Catsup\n• y 2 más");
-    expect(echoBlock(lines.slice(0, 2))).toBe("Anotado ✅\n• Plátanos\n• Piña");
+    const lines = ["Plátanos", "Piña", "Sandía", "Catsup", "Arroz", "Sal"].map((name, n) => view(`l${n}`, name, { quantity: "2" }));
+    expect(echoBlock(lines)).toBe("Anotado ✅\n• 2 Plátanos\n• 2 Piña\n• 2 Sandía\n• 2 Catsup\n• y 2 más");
+    expect(echoBlock(lines.slice(0, 2))).toBe("Anotado ✅\n• 2 Plátanos\n• 2 Piña");
+  });
+
+  it("never lists an item without an amount as noted: it says the amount is still missing", () => {
+    const tomate = view("t", "tomates", { productId: "p-t", productName: "Tomate 1 lb", unitPrice: 1800 });
+    const platano = view("p", "platanos", { productId: "p-p", productName: "Plátano maduro (unidad)", unitPrice: 500 });
+    expect(echoBlock([platano, tomate, view("c", "calabacitas")])).toBe("Me falta saber cuánto querés de Plátano maduro, Tomate y calabacitas.");
+    const many = ["arroz", "frijoles", "azucar", "cafe", "leche", "sal"].map((name, n) => view(`m${n}`, name));
+    expect(echoBlock(many)).toBe("Me falta saber cuánto querés de arroz, frijoles, azucar, cafe y 2 más.");
+    expect(echoBlock([view("a", "arroz", { quantity: "2" }), tomate])).toBe("Anotado ✅\n• 2 Arroz\n\nMe falta saber cuánto querés de Tomate.");
+  });
+
+  it("a list photo with no amounts: what was assumed, then what's missing, then one kind of question", () => {
+    const lines = [
+      view("p", "platanos", { productId: "p-p", productName: "Plátano maduro (unidad)", unitPrice: 500 }),
+      view("n", "piña", { productId: "p-n", productName: "Piña (unidad)", unitPrice: 3500, quantity: "1", quantitySource: "suggested" }),
+      view("t", "tomates", { productId: "p-t", productName: "Tomate 1 lb", unitPrice: 1800 }),
+      view("o", "pollo"),
+    ];
+    const outcome: EngineOutcome = {
+      type: "ask",
+      question: "ambiguous_product",
+      line: 3,
+      order: building(lines),
+      questions: {
+        kind: "options",
+        lineIds: ["o"],
+        options: { o: [{ productId: "p-o", name: "Pollo entero 1 lb", unitPrice: 4500 }] },
+      },
+      assumed: ["n"],
+      noted: ["p", "n", "t", "o"],
+    };
+    expect(body(outcome)).toBe(
+      [
+        "Te puse 1 de Piña. Si querés más, decime.",
+        "Me falta saber cuánto querés de Plátano maduro y Tomate.",
+        "Para pollo tengo:\n1. Pollo entero 1 lb · L 45\n¿Cuál te mando? Respondé con el número o el nombre.",
+      ].join("\n\n"),
+    );
   });
 
   it("accounts for every item once: the one being asked about is named in the question, not dropped from a count", () => {

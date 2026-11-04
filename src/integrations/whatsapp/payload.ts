@@ -49,8 +49,9 @@ export function parseWebhookPayload(body: unknown): ParsedWebhook | null {
         skipped++;
         continue;
       }
+      const displayPhoneNumber = isRecord(value.metadata) ? shownNumber(value.metadata.display_phone_number) : null;
       for (const raw of list(value.messages)) {
-        const event = parseMessage(phoneNumberId, raw);
+        const event = parseMessage(phoneNumberId, raw, displayPhoneNumber);
         if (event === null) skipped++;
         else events.push(event);
       }
@@ -64,7 +65,13 @@ export function parseWebhookPayload(body: unknown): ParsedWebhook | null {
   return { events, skipped };
 }
 
-function parseMessage(phoneNumberId: string, raw: unknown): InboundMessageEvent | null {
+/** Meta's `display_phone_number` ("15550783881" in its reference), digits only; null if not a number. */
+function shownNumber(value: unknown): string | null {
+  const digits = (text(value) ?? "").replace(/[\s()+.-]/gu, "");
+  return /^\d{8,15}$/u.test(digits) ? digits : null;
+}
+
+function parseMessage(phoneNumberId: string, raw: unknown, displayPhoneNumber: string | null): InboundMessageEvent | null {
   if (!isRecord(raw)) return null;
   const sender = text(raw.from);
   const senderPhone = sender === null ? null : normalizePhone(sender);
@@ -120,6 +127,7 @@ function parseMessage(phoneNumberId: string, raw: unknown): InboundMessageEvent 
     contextMessageId: isRecord(raw.context) ? text(raw.context.id) : null,
     media,
     location,
+    displayPhoneNumber,
   };
 }
 

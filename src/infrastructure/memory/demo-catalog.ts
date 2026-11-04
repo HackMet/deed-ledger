@@ -1,6 +1,6 @@
 /**
  * A synthetic product list for the dev console's pretend engine. Products, prices and stock are
- * made up. Two products carry stock evidence so a demo shows "sí hay" and "se nos acabó"; the rest
+ * made up. Two products carry stock evidence so a demo shows "sí hay" and "ahorita no hay"; the rest
  * are "no sé", as a product with no recent count would be.
  */
 import type { Availability } from "../../domain/contract/outcomes";

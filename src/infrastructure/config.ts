@@ -76,6 +76,22 @@ export interface Config {
    * testing on a number whose store has no real customers, unless the owner wants it.
    */
   readonly testCommands: boolean;
+  /**
+   * The store's daily Muse Spark budget in micro-USD, from MODEL_DAILY_CAP_USD ("15", "7.5"; above 0,
+   * at most US$100). Null (blank or not a valid amount): the US$2 default in metered-call.ts.
+   */
+  readonly modelDailyCapMicroUsd: number | null;
+}
+
+/** Above this the setting is taken as a typo ("1500") and the default holds. */
+export const MAX_DAILY_CAP_MICRO_USD = 100_000_000;
+
+/** "15" or "7.5" US dollars as exact integer micro-USD (no floating point); null for anything else. */
+export function dailyCapMicroUsd(value: unknown): number | null {
+  const match = /^(\d{1,3})(?:\.(\d{1,6}))?$/u.exec(String(value ?? "").trim());
+  if (match === null) return null;
+  const micro = Number(match[1]) * 1_000_000 + Number((match[2] ?? "").padEnd(6, "0"));
+  return micro > 0 && micro <= MAX_DAILY_CAP_MICRO_USD ? micro : null;
 }
 
 export function readConfig(env: Env): Config {
@@ -99,6 +115,7 @@ export function readConfig(env: Env): Config {
     fastTextModel: modelSettings(env.FAST_TEXT_REASONING_EFFORT, DEFAULT_FAST_TEXT_EFFORT, env.PROMPT_CACHE_RETENTION),
     publicBaseUrl: String(env.PUBLIC_BASE_URL ?? "").replace(/\/+$/u, ""),
     testCommands: String(env.TEST_COMMANDS ?? "") === "1",
+    modelDailyCapMicroUsd: dailyCapMicroUsd(env.MODEL_DAILY_CAP_USD),
   };
 }
 

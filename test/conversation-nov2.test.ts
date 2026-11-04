@@ -311,7 +311,7 @@ describe("the order, built from what the customer says", () => {
     } as never);
     const notice = marked.notices[0]!.notice;
     expect(notice.type === "line_unavailable" && notice.order.total).toBe(3600);
-    expect(renderNotice(notice).body).toBe("Perdón, no nos queda Detergente Xedex 500 g 😔 Tu pedido queda en L 36. Si querés otra cosa en su lugar, decime.");
+    expect(renderNotice(notice).body).toBe("Perdón, ahorita no hay Detergente Xedex 500 g 😔 Tu pedido queda en L 36. Si querés otra cosa en su lugar, decime.");
   });
 });
 
