@@ -2,8 +2,8 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import type { BurstReading } from "../src/domain/contract/observation";
 import { readingSourceOf } from "../src/application/order-reading";
-import { firstOrder, ids } from "./fixtures/contract";
-import { engine, newStore, placeFirstOrder, T0 } from "./helpers/orders";
+import { firstOrder } from "./fixtures/contract";
+import { engine, newStore, placeFirstOrder, save } from "./helpers/orders";
 
 /** The first order with the second line's quantity missing: the customer's list said "arroz" and no number. */
 const missingQuantity: BurstReading = {
@@ -76,12 +76,17 @@ describe("the engine's reads for perception", () => {
     });
   });
 
-  it("a line with no quantity reads as '?'; pendingQuestion stays null until the engine asks about quantities", async () => {
-    // PENDING: OrderEngine.onBurst has no question about a missing quantity, so there is no ask to echo.
+  it("a line with no quantity reads as '?', and pendingQuestion reports the engine's question", async () => {
     const s = await newStore();
-    await placeFirstOrder(s, ids.customer, T0, missingQuantity);
+    await save(await engine.onBurst(s.context(), missingQuantity, s.matches));
     const context = await engine.perceptionContext(s.context());
     expect(context.openOrder?.lines[1]).toEqual({ ref: "L2", text: "arroz-1lb: ?" });
-    expect(context.pendingQuestion).toBeNull();
+    expect(context.pendingQuestion).toBe("quantity");
+  });
+
+  it("an open order that doesn't say how it is received reports pickup_or_delivery", async () => {
+    const s = await newStore();
+    await save(await engine.onBurst(s.context(), firstOrder, s.matches));
+    expect((await engine.perceptionContext(s.context())).pendingQuestion).toBe("pickup_or_delivery");
   });
 });

@@ -12,7 +12,7 @@ import { orderCode } from "../src/domain/order-code";
 import { orderRef } from "../src/domain/order-ref";
 import { D1FactLedger } from "../src/infrastructure/d1/fact-ledger";
 import { hashToken, newToken } from "../src/infrastructure/tokens";
-import { firstOrder, ids, moreSugar } from "./fixtures/contract";
+import { ids, moreSugar } from "./fixtures/contract";
 import { type Harness, harness } from "./helpers/harness";
 import { T0, newStore, placeFirstOrder, save, store, tap } from "./helpers/orders";
 import { newPhone, seedStore } from "./helpers/seed";
@@ -112,7 +112,7 @@ const cancelTap = (orderId: string, version: number): ActionEnvelope<CustomerAct
  * cancelled. The cancel closes the confirm, so the change request rests on a closed fact.
  */
 async function cancelledWithChange(s: Store): Promise<{ orderId: string; confirmId: string; changeId: string }> {
-  const v1 = await placeFirstOrder(s, ids.customer, T0, firstOrder);
+  const v1 = await placeFirstOrder(s, ids.customer, T0);
   const context = s.context({ nowMs: T0 + 1_000 });
   await save(await checkedEngine.onCustomerAction(context, tap(v1.orderId, 1)));
   const line = v1.lines[0]!.lineId;
@@ -232,7 +232,7 @@ describe("/console/deed/:orderId: the order's facts as a graph", () => {
     const mine = await storeWithMembers();
     const theirs = await newStore();
     const { orderId } = await cancelledWithChange(mine);
-    const foreign = await placeFirstOrder(theirs, ids.customer, T0, firstOrder);
+    const foreign = await placeFirstOrder(theirs, ids.customer, T0);
     const h = harness({ engine: checkedEngine });
     const staffCookie = await login(h, mine, "staff");
     const ownerCookie = await login(h, mine, "owner");
@@ -255,7 +255,7 @@ describe("/console/deed/:orderId: the order's facts as a graph", () => {
 
 /** A placed order its customer confirmed: its id, its code as staff say it, and its reference. */
 async function confirmedOrder(s: Store): Promise<{ orderId: string; code: string; ref: string }> {
-  const v1 = await placeFirstOrder(s, ids.customer, T0, firstOrder);
+  const v1 = await placeFirstOrder(s, ids.customer, T0);
   await save(await checkedEngine.onCustomerAction(s.context({ nowMs: T0 + 1_000 }), tap(v1.orderId, 1)));
   const confirm = await env.DB.prepare(`SELECT id FROM facts WHERE business_id = ? AND kind = 'order_confirm'`)
     .bind(s.businessId)
@@ -430,7 +430,7 @@ describe("/console/deed/verificaciones: every check, newest first, for the store
     expect(refused.outcome).toMatchObject({ type: "rejected", reason: "invalid_state" });
 
     const other = await newStore();
-    const foreign = await placeFirstOrder(other, ids.customer, T0, firstOrder);
+    const foreign = await placeFirstOrder(other, ids.customer, T0);
     await staffTap({ ...member, businessId: other.businessId }, "mark_ready", foreign.orderId, 1);
 
     const h = harness({ engine: checkedEngine });

@@ -96,8 +96,8 @@ renders the WhatsApp copy.
   `courierMemberId`, and it rests on the live confirm and the live `ready` tap; a delivery order's `delivered` rests
   on the confirm and the live dispatch. A pickup order's `delivered` rests on the confirm, as before.
 - `dispatch` only for `fulfillment.mode = "delivery"` at `listo`; `mark_delivered` from `en_camino` (delivery) or
-  `listo` (pickup). A `null` fulfillment is neither: both answer `rejected`/`invalid_state`, never a guess. This
-  changes `mark_delivered` for a `listo` order with no fulfillment, which K2b accepted.
+  `listo` (pickup). A `null` fulfillment is never guessed: `dispatch` answers `rejected`/`invalid_state`, and since
+  D-57 `mark_delivered` closes it from `listo` with the fulfillment left `null`, on a person's word.
 - A courier id that isn't an active member of this store answers `rejected`/`not_found` with the order.
 - A customer's cancel (or change) from `en_camino` on answers `rejected`/`invalid_state`; the copy is
   `CANCEL_AFTER_DISPATCH` ("Ya va en camino; hablá con la tienda.") in `src/domain/copy.ts`.

@@ -269,7 +269,8 @@ ${answer("decline", "Rechazar ✗")}
 
 /**
  * K13: the next step out the door. A ready delivery order is dispatched with a courier; once out, or
- * ready for pickup, it is marked delivered. With no fulfillment recorded, neither: the screen says why.
+ * ready for pickup, it is marked delivered. With no fulfillment recorded, it can't be dispatched: the
+ * screen says why, and staff can still say the customer has it, which closes the order with it left unknown.
  */
 function stepBox(trail: OrderTrail, orderId: string, csrf: string, members: readonly Courier[]) {
   if (trail.cancelled || trail.delivered) return "";
@@ -277,7 +278,10 @@ function stepBox(trail: OrderTrail, orderId: string, csrf: string, members: read
   const hidden = (paso: keyof typeof STEPS) => html`<input type="hidden" name="csrf" value="${csrf}">
 <input type="hidden" name="paso" value="${paso}"><input type="hidden" name="version" value="${trail.version}">`;
   if (trail.state === "listo" && trail.fulfillment === null) {
-    return html`<p class="notice">Falta saber si lo recogen o se lo llevamos. Preguntale al cliente.</p>`;
+    return html`<p class="notice">Falta saber si lo recogen o se lo llevamos. Preguntale al cliente.</p>
+<section class="step"><form method="post" action="${action}">${hidden("entregar")}
+<button type="submit">Ya lo tiene el cliente ✓</button>
+</form></section>`;
   }
   if (trail.state === "listo" && trail.fulfillment === "delivery") {
     return html`<section class="step"><form method="post" action="${action}">${hidden("despachar")}

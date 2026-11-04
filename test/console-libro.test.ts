@@ -6,7 +6,7 @@ import { INVITE_TTL_MS } from "../src/domain/console-auth";
 import { type DeedEntry, entryOf, recheckEntry } from "../src/domain/deed-recheck";
 import { D1LibroReads } from "../src/infrastructure/d1/libro-reads";
 import { hashToken, newToken } from "../src/infrastructure/tokens";
-import { firstOrder, ids } from "./fixtures/contract";
+import { ids } from "./fixtures/contract";
 import { type Harness, harness } from "./helpers/harness";
 import { T0, engine, newStore, placeFirstOrder, save, tap } from "./helpers/orders";
 import { newPhone, seedStore } from "./helpers/seed";
@@ -151,7 +151,7 @@ async function insertReply(businessId: string, claims: readonly Claim[], over: {
 }
 
 async function confirmedOrder(s: Store): Promise<{ orderId: string; confirmId: string }> {
-  const placed = await placeFirstOrder(s, ids.customer, T0, firstOrder);
+  const placed = await placeFirstOrder(s, ids.customer, T0);
   await save(await engine.onCustomerAction(s.context({ nowMs: T0 + 1_000 }), tap(placed.orderId, 1)));
   const confirm = await env.DB.prepare(`SELECT id FROM facts WHERE business_id = ? AND kind = 'order_confirm'`)
     .bind(s.businessId)

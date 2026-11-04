@@ -24,6 +24,7 @@ import type {
   OrderState,
   OrderView,
   PreparationCard,
+  QuestionCode,
 } from "../../domain/contract/outcomes";
 import { deriveOrderState, type OrderFact } from "../../domain/order-state";
 import { totalOf } from "../../domain/order-total";
@@ -218,13 +219,13 @@ const STAFF_STEPS: Readonly<Record<StaffAction["type"], { from: OrderState; to: 
 /**
  * K13: the state a staff action must find, given how the order leaves the store. Dispatch is for a
  * delivery order only, and a delivery order is delivered once it is en_camino. A fulfillment nobody
- * recorded is neither: dispatch and delivery are refused (null), never guessed.
+ * recorded is never guessed: dispatch is refused (null), and staff saying the customer has it closes the
+ * order from listo with the fulfillment left unknown, so no such order blocks its customer for good.
  */
 function fromState(action: StaffAction, fulfillment: OrderView["fulfillment"]): OrderState | null {
   if (action.type !== "dispatch" && action.type !== "mark_delivered") return STAFF_STEPS[action.type].from;
-  if (fulfillment === null) return null;
-  if (action.type === "dispatch") return fulfillment.mode === "delivery" ? "listo" : null;
-  return fulfillment.mode === "delivery" ? "en_camino" : "listo";
+  if (action.type === "dispatch") return fulfillment?.mode === "delivery" ? "listo" : null;
+  return fulfillment?.mode === "delivery" ? "en_camino" : "listo";
 }
 
 /** The step a dispatch or a delivery acts on (K13), whose fact it rests on; null for the other steps. */
@@ -263,6 +264,21 @@ export function fromThousandths(milli: number): string {
 function canonicalQuantity(quantity: string | null): string | null {
   const milli = quantity === null ? null : toThousandths(quantity);
   return milli === null || milli === 0 ? null : fromThousandths(milli);
+}
+
+/** A line waiting on how much: absent is unknown, never a default. Restricted lines are sold only in the store. */
+const waitsForQuantity = (line: OrderLineView): boolean => line.quantity === null && !line.restricted;
+
+/** What must be answered about the lines before they can be confirmed; null when nothing. */
+function quantityQuestion(lines: readonly OrderLineView[]): { readonly question: QuestionCode; readonly line: number | null } | null {
+  const waiting = lines.filter(waitsForQuantity);
+  if (waiting.length === 0) return null;
+  return waiting.length === 1 ? { question: "quantity", line: lines.indexOf(waiting[0]!) } : { question: "quantities", line: null };
+}
+
+/** What must be answered before this order can be confirmed, one question at a time; null when nothing. */
+function nextQuestion(view: Pick<OrderView, "lines" | "fulfillment">): { readonly question: QuestionCode; readonly line: number | null } | null {
+  return quantityQuestion(view.lines) ?? (view.fulfillment === null ? { question: "pickup_or_delivery", line: null } : null);
 }
 
 const result = (outcome: EngineOutcome, commits: readonly Commit[] = []): EngineResult => ({ outcome, notices: [], commits });
@@ -337,16 +353,19 @@ export class OrderEngine implements Engine {
 
     const open = await store.openOrder(context, context.customerId);
     const names = await store.productNames(context, [...new Set(matches.map((m) => m.productId))]);
+    // A line perception couldn't read keeps the customer's words and has no quantity to trust, so it can't be confirmed.
+    const unreadable = new Set<OrderLineView>();
     const lineFrom = (item: ItemLine, observation: number, line: number): OrderLineView => {
+      const illegible = reading.observations[observation]?.issues.some((issue) => issue.code === "illegible" && issue.line === line) === true;
       const match = matches.find((m) => m.observation === observation && m.line === line);
       // A match counts only for a product of this store.
       const productId = match !== undefined && names.has(match.productId) ? match.productId : null;
-      return {
+      const view: OrderLineView = {
         lineId: "",
         text: item.text,
         productId,
         productName: productId === null ? null : (names.get(productId) ?? null),
-        quantity: canonicalQuantity(item.quantity),
+        quantity: illegible ? null : canonicalQuantity(item.quantity),
         unit: item.unit,
         // Only the store's confirmed price is quoted, and none is recorded yet: unknown.
         unitPrice: null,
@@ -355,6 +374,8 @@ export class OrderEngine implements Engine {
         mark: null,
         substitute: null,
       };
+      if (illegible) unreadable.add(view);
+      return view;
     };
 
     // With a change waiting for review, a further change adds to what the customer already asked for.
@@ -363,10 +384,13 @@ export class OrderEngine implements Engine {
     let changed = false;
     let cancel = false;
     let info: EngineOutcome | null = null;
+    let partUnread = false;
 
     for (const { observation, index } of observations) {
       switch (observation.kind) {
         case "customer_order":
+          partUnread ||= observation.issues.some((issue) => issue.code === "illegible" && issue.line === null);
+          if (observation.lines.length === 0) break;
           // D-39: with an order open, a new order adds to it.
           lines = [...lines, ...observation.lines.map((item, line) => lineFrom(item, index, line))];
           changed = true;
@@ -388,6 +412,19 @@ export class OrderEngine implements Engine {
           }
           changed ||= observation.mode !== null;
           break;
+        case "clarification": {
+          // The answer to what the order waits on. Only one waiting line can take a bare quantity: more is a question, never a guess.
+          const waiting = open?.view.state === "por_confirmar" ? lines.filter(waitsForQuantity) : [];
+          const quantity = canonicalQuantity(observation.quantity ?? null);
+          if (waiting.length === 1 && quantity !== null) {
+            lines = lines.map((line) => (line === waiting[0] ? { ...line, quantity } : line));
+            changed = true;
+          } else {
+            const asked = open?.view.state === "por_confirmar" ? nextQuestion(open.view) : null;
+            info ??= asked === null ? { type: "nothing" } : { type: "ask", ...asked, order: open!.view, noted: [] };
+          }
+          break;
+        }
         case "order_cancel":
           cancel = true;
           break;
@@ -402,7 +439,7 @@ export class OrderEngine implements Engine {
           info ??= { type: "out_of_scope" };
           break;
         default:
-          // payment_receipt, stop, clarification, customer_name: not in this cut (#11). Nothing saved.
+          // payment_receipt, stop, customer_name: not in this cut (#11). Nothing saved.
           info ??= { type: "nothing" };
       }
     }
@@ -411,7 +448,17 @@ export class OrderEngine implements Engine {
       if (open === null) return result({ type: "rejected", reason: "not_found", order: null });
       return this.cancel(context, operationKey, open);
     }
-    if (changed) return this.change(context, operationKey, open, lines, fulfillment);
+    if (changed) {
+      const line = lines.findIndex((item) => unreadable.has(item));
+      return this.change(context, operationKey, open, lines, fulfillment, line !== -1 ? { line } : partUnread ? { line: null } : null);
+    }
+    // Nothing of the list could be read: there is no line to keep, only the question.
+    if (partUnread) return result({ type: "ask", question: "illegible", line: null, order: open?.view ?? null, noted: [] });
+    // A line still waits on the customer and this burst didn't answer: the question stands, with no readback to go back to.
+    const waiting = open?.view.state === "por_confirmar" ? quantityQuestion(open.view.lines) : null;
+    if (waiting !== null && (info === null || info.type === "nothing" || info.type === "out_of_scope")) {
+      return result({ type: "ask", ...waiting, order: open!.view, noted: [] });
+    }
     return result(info ?? { type: "nothing" });
   }
 
@@ -639,9 +686,8 @@ export class OrderEngine implements Engine {
 
   /**
    * Perception's read of the customer's open order: its lines under the labels L1… the engine maps back.
-   * PENDING: `pendingQuestion` is always null. onBurst asks only "ambiguous_product" while it reads a
-   * burst; it has no rule that asks about an open order's missing quantity, so there is no question to
-   * report. `pendingOptions` and `lastAnswered` are absent: the engine stores neither.
+   * `pendingQuestion` is what confirming that order waits on, so the customer's answer lands.
+   * `pendingOptions` and `lastAnswered` are absent: the engine stores neither.
    */
   async perceptionContext(context: CustomerContext): Promise<PerceptionContext> {
     const open = await this.deps.store.openOrder(context, context.customerId);
@@ -650,7 +696,7 @@ export class OrderEngine implements Engine {
         open === null
           ? null
           : { lines: open.view.lines.map((line, n) => ({ ref: `L${n + 1}`, text: `${line.productName ?? line.text}: ${line.quantity ?? "?"}` })) },
-      pendingQuestion: null,
+      pendingQuestion: open?.view.state === "por_confirmar" ? (nextQuestion(open.view)?.question ?? null) : null,
     };
   }
 
@@ -854,6 +900,7 @@ export class OrderEngine implements Engine {
     open: StoredOrder | null,
     lines: readonly OrderLineView[],
     fulfillment: OrderView["fulfillment"],
+    illegible: { readonly line: number | null } | null = null,
   ): EngineResult {
     if (open !== null && !EDITABLE.includes(open.view.state)) {
       return result({ type: "rejected", reason: "invalid_state", order: open.view });
@@ -874,7 +921,10 @@ export class OrderEngine implements Engine {
       lastReview: open?.view.lastReview ?? null,
     };
     const wasConfirmed = open !== null && open.firstConfirmedAtMs !== null;
-    const outcome: EngineOutcome = wasConfirmed ? { type: "order_changed", order } : { type: "readback", order };
+    // A line still unsettled is asked about before any readback offers Confirmar.
+    const asked = illegible === null ? quantityQuestion(labelled) : { question: "illegible" as const, line: illegible.line };
+    const outcome: EngineOutcome =
+      asked !== null ? { type: "ask", ...asked, order } : wasConfirmed ? { type: "order_changed", order } : { type: "readback", order };
     // v(n+1) rests on v(n) and supersedes it: v(n)'s confirm and status taps die with it.
     const previous = open?.versionFactId ?? null;
     const fact = this.customerFact(context, operationKey, order, {
@@ -898,6 +948,9 @@ export class OrderEngine implements Engine {
   private async confirm(context: CustomerContext, operationKey: string, stored: StoredOrder): Promise<EngineResult> {
     const { view } = stored;
     if (view.state !== "por_confirmar") return result({ type: "rejected", reason: "invalid_state", order: view });
+    // Nothing is confirmed while a question stands. Nothing is saved either: the answer makes a new version.
+    const asked = nextQuestion(view);
+    if (asked !== null) return result({ type: "ask", ...asked, order: view, noted: [] });
     // Confirmed again after a change, the order goes back where it was and keeps its place (D-38).
     const state = stored.firstConfirmedAtMs === null ? "confirmado" : (stored.resumeState ?? "confirmado");
     const confirmedAtMs = stored.firstConfirmedAtMs ?? context.nowMs;

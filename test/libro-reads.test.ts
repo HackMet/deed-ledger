@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import type { Claim } from "../src/domain/contract/outcomes";
 import { D1LibroReads } from "../src/infrastructure/d1/libro-reads";
-import { firstOrder, ids } from "./fixtures/contract";
+import { ids } from "./fixtures/contract";
 import { T0, engine, newStore, placeFirstOrder, save, tap } from "./helpers/orders";
 
 type Store = Awaited<ReturnType<typeof newStore>>;
@@ -62,7 +62,7 @@ async function insertCheck(businessId: string, id: string, over: { orderId: stri
 
 /** A placed order, confirmed by the customer: the store's order with its version and confirm facts. */
 async function confirmedOrder(s: Store): Promise<{ orderId: string; confirmId: string }> {
-  const placed = await placeFirstOrder(s, ids.customer, T0, firstOrder);
+  const placed = await placeFirstOrder(s, ids.customer, T0);
   await save(await engine.onCustomerAction(s.context({ nowMs: T0 + 1_000 }), tap(placed.orderId, 1)));
   const confirm = await env.DB.prepare(`SELECT id FROM facts WHERE business_id = ? AND kind = 'order_confirm' AND json_extract(body_json, '$.orderId') = ?`)
     .bind(s.businessId, placed.orderId)

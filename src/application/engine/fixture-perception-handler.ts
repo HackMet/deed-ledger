@@ -11,7 +11,7 @@
  * Owner of the replacement: Angel (perception). Replacement date: when perception lands, before the
  * Saturday gate can be called met. The engine does not import this file and knows nothing of fixtures.
  */
-import { firstOrder, firstOrderMatches } from "../../../test/fixtures/contract";
+import { firstOrder, firstOrderMatches, pickup } from "../../../test/fixtures/contract";
 import type { ActionEnvelope, CustomerAction } from "../../domain/contract/actions";
 import type { EngineOutcome, OrderView, QuestionCode } from "../../domain/contract/outcomes";
 import { PLACEHOLDER_TTL_MS } from "../../domain/outbox";
@@ -90,7 +90,7 @@ export function fixturePerceptionHandler(deps: {
       let result: EngineResult;
       if (intent === "order") {
         // The fixture matches name fixture product ids; the engine ignores any that this store lacks.
-        result = await deps.engine.onBurst(context, firstOrder, firstOrderMatches);
+        result = await deps.engine.onBurst(context, { ...firstOrder, observations: [...firstOrder.observations, ...pickup.observations] }, firstOrderMatches);
       } else {
         const open = await deps.orders.openOrder(context, context.customerId);
         if (open === null) return reply(isNewestOfBurst, NO_OPEN_ORDER, []);

@@ -7,6 +7,11 @@ Last updated: Wed Nov 4, 2026, morning Honduras time, by Claude Code.
 
 ## Now
 
+- **Ask before confirm (`claude/flow-ask`, D-57 proposed, not deployed):** on `OrderEngine`, a missing quantity, an
+  illegible line or no pickup or delivery is asked before an order confirms, and staff close an order stuck at `listo`
+  with Entregado. Not covered: a change request after confirming can still add a line with no quantity, for staff to
+  approve or decline. An illegible line is asked as `illegible` once, then as `quantity`, since nothing stores the issue.
+
 - **Integration (`claude/integration`, PR #71, Nov 4, not merged):** `claude/deed-core` + `claude/deed-recheck` +
   `claude/demo-fixes`. Gates and open items are in the PR.
   - **C3 met, with known limits in the README.** Its last review passed after more fix rounds than Kerly authorized,
