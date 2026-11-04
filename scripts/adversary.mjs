@@ -73,15 +73,16 @@ const injected = {
   matches: [],
   note: "Copied from test/fixtures/contract.ts (injectedInstructions); the text is the attack's.",
 };
-// The first order again, for store 2: the same reading, matched to store 2's own products.
+// The first order with its fulfillment again, for store 2: the same reading, matched to store 2's own products.
 const firstOrder = recorded("firstOrder");
+const firstDeliveryOrder = recorded("firstDeliveryOrder");
 const shop2Order = {
   source: "fixture",
   name: "firstOrderShop2",
-  text: "Pedido de la tienda dos: 1 aceite clover, 3 lb arroz, 3 jabon xtra y dos libras de azúcar",
-  reading: firstOrder.reading,
-  matches: firstOrder.matches.map((m) => ({ ...m, productId: `${m.productId}-2` })),
-  note: "The firstOrder reading, matched to store 2's products (suffix -2).",
+  text: "Pedido de la tienda dos: 1 aceite clover, 3 lb arroz, 3 jabon xtra y dos libras de azúcar. Me lo traen frente a la iglesia, casa verde",
+  reading: firstDeliveryOrder.reading,
+  matches: firstDeliveryOrder.matches.map((m) => ({ ...m, productId: `${m.productId}-2` })),
+  note: "The firstDeliveryOrder reading, matched to store 2's products (suffix -2).",
 };
 const recordings = [...demoRecordings, injected, shop2Order];
 
