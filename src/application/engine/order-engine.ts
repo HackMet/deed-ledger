@@ -467,10 +467,13 @@ export class OrderEngine implements Engine {
     }
     // Nothing of the list could be read: there is no line to keep, only the question.
     if (partUnread) return result({ type: "ask", question: "illegible", line: null, order: open?.view ?? null, noted: [] });
-    // A line still waits on the customer and this burst didn't answer: the question stands, with no readback to go back to.
-    const waiting = open?.view.state === "por_confirmar" ? quantityQuestion(open.view.lines) : null;
-    if (waiting !== null && (info === null || info.type === "nothing" || info.type === "out_of_scope")) {
-      return result({ type: "ask", ...waiting, order: open!.view, noted: [] });
+    // An order waits on the customer and this burst moved nothing: a line's question stands, otherwise its
+    // readback does, since the customer may never have had one (part of the list was unread). Instructions
+    // found in a message are answered as out of scope, and the next message gets here.
+    const instructions = observations.some(({ observation }) => observation.issues.some((issue) => issue.code === "embedded_instructions"));
+    if (open?.view.state === "por_confirmar" && !instructions && (info === null || info.type === "nothing" || info.type === "out_of_scope" || info.type === "order_status")) {
+      const waiting = quantityQuestion(open.view.lines);
+      return result(waiting === null ? { type: "readback", order: open.view } : { type: "ask", ...waiting, order: open.view, noted: [] });
     }
     return result(info ?? { type: "nothing" });
   }

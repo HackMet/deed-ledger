@@ -11,6 +11,9 @@ Last updated: Wed Nov 4, 2026, morning Honduras time, by Claude Code.
   illegible line or no pickup or delivery is asked before an order confirms, and staff close an order stuck at `listo`
   with Entregado. Not covered: a change request after confirming can still add a line with no quantity, for staff to
   approve or decline. An illegible line is asked as `illegible` once, then as `quantity`, since nothing stores the issue.
+  A list with a part unread is asked once too: the next message that changes nothing gets the readback, or the line's
+  question while a line still waits. Exceptions: instructions found in a message stay out of scope, a handoff stays a
+  handoff, and an empty answer to a list with no fulfillment gets the pickup question first.
 
 - **Integration (`claude/integration`, PR #71, Nov 4, not merged):** `claude/deed-core` + `claude/deed-recheck` +
   `claude/demo-fixes`. Gates and open items are in the PR.
