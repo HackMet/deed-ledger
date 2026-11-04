@@ -9,6 +9,7 @@ import fixture from "./fixtures/deed-scale.csv?raw";
 import committedCsv from "../docs/deed-verdicts.csv?raw";
 import committedPage from "../docs/deed-scale.html?raw";
 import committedNotes from "../docs/deed-scale-notes.json";
+import committedEvidence from "../docs/deed-run-evidence.jsonl?raw";
 import {
   agentIdOf,
   briefOf,
@@ -77,7 +78,8 @@ describe("the page takes the checker's verdict as written", () => {
   it("says what a confirmed run rests on and what a third party cannot repeat", async () => {
     const html = renderPage(await buildScale(parseCsv(csv)));
     expect(html).toContain("el runner lo registró para esa corrida");
-    expect(html).toContain("No puede repetir los veredictos");
+    expect(html).toContain("--evidence docs/deed-run-evidence.jsonl --compare docs/deed-verdicts.csv");
+    expect(html).toContain("Un commit que no esté en su clon se cuenta aparte");
     expect(html).toContain("cualquier otra afirmación, con sha o sin él, no se detecta");
     expect(html).not.toContain("(C3)");
   });
@@ -127,6 +129,17 @@ describe("the page takes the checker's verdict as written", () => {
   it("draws one contradiction row per contradiction", async () => {
     const scale = await buildScale(parseCsv(csv));
     expect(renderPage(scale).split('<tr class="bad">').length - 1).toBe(scale.counts.contradicted);
+  });
+
+  it("the published evidence covers exactly the published rows, and holds only RESULT lines and runner fields", () => {
+    const entries = committedEvidence.trim().split("\n").map((line) => JSON.parse(line));
+    const runs = (list: { run: string }[]) => list.map((e) => e.run).sort();
+    expect(runs(entries)).toEqual(runs(parseCsv(committedCsv)));
+    for (const entry of entries) {
+      expect(Object.keys(entry).sort()).toEqual(["claimed_passed", "final_lines", "report_lines", "result", "run", "started"]);
+      for (const line of entry.final_lines) expect(line.toUpperCase()).toContain("RESULT:");
+      for (const line of entry.report_lines) expect(line.toUpperCase()).toContain("RESULT:");
+    }
   });
 
   it("the committed page is exactly what its committed CSV and notes build", async () => {
