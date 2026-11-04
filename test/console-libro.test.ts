@@ -199,8 +199,8 @@ describe("/console/deed/:orderId/libro: the three lanes", () => {
     expect(body).not.toContain("<script");
     expect(body).not.toContain(REPLY_TEXT);
     for (const phone of s.phones) expect(body).not.toContain(phone);
-    // A Honduran number (504 and eight digits) as a whole token: no UUID's hex group can match it.
-    expect(body).not.toMatch(/(?<![0-9a-zA-Z])504\d{8}(?![0-9a-zA-Z])/);
+    // A member phone (5040 and eight digits) as a whole token: a UUID's last group, bounded by "-", never matches.
+    expect(body).not.toMatch(/(?<![0-9a-zA-Z-])5040\d{8}(?![0-9a-zA-Z-])/);
   });
 
   it("is linked from the order's Deed page and from the Pedidos trail", async () => {
