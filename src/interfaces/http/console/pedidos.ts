@@ -299,7 +299,7 @@ function trailEntry(entry: TrailEntry, names: ReadonlyMap<string, string>) {
   const refs = (ids: readonly string[]) => ids.map((id) => names.get(id) ?? "otro paso").join(", ");
   return html`<li id="${entry.factId}">
 <div class="head"><strong>${KIND_LABELS[entry.kind]}</strong><time>${formatTime(entry.recordedAtMs)}</time></div>
-<p class="meta">${entry.actor}</p>
+<p class="meta">${entry.actor}${entry.agentId === null ? "" : ` · agente ${entry.agentId}`}</p>
 ${entry.courier === null ? "" : html`<p class="courier">En camino con ${courierName(entry.courier)}</p>`}
 ${entry.review === null ? "" : html`<p class="review ${entry.review.decision}">${DECISION_LABELS[entry.review.decision]}: ${entry.review.reason}</p>`}
 ${chips.length === 0 ? "" : html`<p>${chips.map((e) => html`<span class="chip">${EVIDENCE_LABELS[e.kind]}</span>`)}</p>`}

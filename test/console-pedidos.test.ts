@@ -9,7 +9,7 @@ import { orderCode } from "../src/domain/order-code";
 import { hashToken, newToken } from "../src/infrastructure/tokens";
 import { addAndPickup, firstOrder, ids, moreSugar, staleReady } from "./fixtures/contract";
 import { type Harness, harness } from "./helpers/harness";
-import { changeAndApprove, engine, firstDeliveryOrder, firstPickupOrder, newStore, placeFirstOrder, save, T0, tap } from "./helpers/orders";
+import { AGENT_ID, changeAndApprove, engine, firstDeliveryOrder, firstPickupOrder, newStore, placeFirstOrder, save, T0, tap } from "./helpers/orders";
 import { newPhone, seedStore } from "./helpers/seed";
 
 type Store = Awaited<ReturnType<typeof newStore>>;
@@ -208,6 +208,18 @@ describe("K5: the Orders screen reads the ledger", () => {
     expect(page).toContain("Personal");
     expect(page).toContain("miembro");
     expect(page).toContain("Depende de: Pedido confirmado (paso 2)");
+  });
+
+  it("shows the agent beside each customer fact, and none beside a staff tap (C11)", async () => {
+    const h = harness();
+    const s = await storeWithSession();
+    const orderId = await confirmed(s);
+    await save(await engine.onConsoleAction(member(s, T0 + 5000), staffTap("start_preparing", orderId, 1)));
+    const page = await (await get(h, `/console/pedidos/${orderId}`, await login(h, s))).text();
+    // The order_version and the order_confirm are the customer's; the staff tap's line names no agent.
+    expect(page.split(`agente ${AGENT_ID}`)).toHaveLength(3);
+    expect(page).toContain(`Personal</p>`);
+    expect(page).not.toContain(`Personal · agente`);
   });
 
   it("answers 404 for another store's order, the same as for a missing one", async () => {

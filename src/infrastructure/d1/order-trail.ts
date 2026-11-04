@@ -47,6 +47,8 @@ export interface TrailEntry {
   readonly review: { readonly decision: "approve" | "decline"; readonly reason: string } | null;
   /** A dispatch only (K13): the courier it records. */
   readonly courier: Courier | null;
+  /** C11: the agent configuration that made a customer's claim; null on staff and owner facts. */
+  readonly agentId: string | null;
 }
 
 export interface OrderTrail {
@@ -82,6 +84,7 @@ interface FactRow {
   recorded_at_ms: number;
   depends_json: string;
   live: number;
+  agent_id: string | null;
 }
 
 const ORDER_KINDS = `('order_version', 'order_confirm', 'order_cancel', 'order_status', 'change_request', 'change_review')`;
@@ -96,7 +99,7 @@ const isOrderFact = (row: FactRow): row is FactRow & { kind: OrderFact["kind"] }
  */
 export const FACTS_SQL = `WITH RECURSIVE
   mine AS (
-    SELECT id, kind, body_json, recorded_at_ms, operation_key, json_extract(body_json, '$.orderId') AS order_id, rowid AS seq FROM facts
+    SELECT id, kind, body_json, recorded_at_ms, operation_key, agent_id, json_extract(body_json, '$.orderId') AS order_id, rowid AS seq FROM facts
     WHERE business_id = ?1 AND kind IN ${ORDER_KINDS} AND (?2 IS NULL OR json_extract(body_json, '$.orderId') = ?2)
   ),
   anc(root, id) AS (
@@ -104,7 +107,7 @@ export const FACTS_SQL = `WITH RECURSIVE
     UNION
     SELECT a.root, d.depends_on_fact_id FROM fact_dependencies d JOIN anc a ON d.fact_id = a.id WHERE d.business_id = ?1
   )
-SELECT m.id, m.order_id, m.kind, m.body_json, m.recorded_at_ms, m.operation_key,
+SELECT m.id, m.order_id, m.kind, m.body_json, m.recorded_at_ms, m.operation_key, m.agent_id,
   (SELECT json_group_array(d.depends_on_fact_id) FROM fact_dependencies d WHERE d.business_id = ?1 AND d.fact_id = m.id) AS depends_json,
   NOT EXISTS (
     SELECT 1 FROM fact_closures c JOIN anc a ON c.fact_id = a.id AND a.root = m.id
@@ -294,6 +297,7 @@ export class D1OrderTrail {
         blocks: ids.filter((id) => edges.results.some((e) => e.depends_on_fact_id === row.id && e.fact_id === id)),
         review: row.kind === "change_review" ? reviewOf(row) : null,
         courier: courierOf(row, names),
+        agentId: row.agent_id,
       };
     });
     const currentVersion = currentVersionOf(rows, order.current_version);
