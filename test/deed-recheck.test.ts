@@ -112,6 +112,12 @@ describe("recheckEntry: a malformed entry is an error, never a pass", () => {
     ["a fact whose live flag is not true or false", { ...good, input: { ...input, facts: [{ ...input.facts[0], live: "yes" }] } }],
     ["a fact whose witness is of an unknown kind", { ...good, input: { ...input, facts: [{ ...input.facts[0], witness: { kind: "robot", refId: "u1" } }] } }],
     ["a fact whose witness has no refId", { ...good, input: { ...input, facts: [{ ...input.facts[0], witness: { kind: "member" } }] } }],
+    ["a fact whose status is not one of the four", { ...good, input: { ...input, facts: [{ ...input.facts[0], status: "x" }, input.facts[1]] } }],
+    ["a fact whose resume state is not one of the two", { ...good, input: { ...input, facts: [input.facts[0], { ...input.facts[1], resumeState: "cancelado" }] } }],
+    ["a fact whose version is not an integer", { ...good, input: { ...input, facts: [{ ...input.facts[0], version: "1" }, input.facts[1]] } }],
+    ["a line whose version is not an integer", { ...good, input: { ...input, lines: [{ ...input.lines[0], version: "1" }] } }],
+    ["a reply whose status is not text", { ...good, input: { ...input, replies: [{ ...input.replies[0], status: 7 }, input.replies[1]] } }],
+    ["an input whose order id is not text", { ...good, input: { ...input, orderId: 7 } }],
     ["a line whose counted flag is not true or false", { ...good, input: { ...input, lines: [{ ...input.lines[0], counted: "yes" }] } }],
     ["a reply whose provider status is not one of the five", { ...good, input: { ...input, replies: [{ ...input.replies[0], providerStatus: "seen" }, input.replies[1]] } }],
     [

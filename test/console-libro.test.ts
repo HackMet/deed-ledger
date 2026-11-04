@@ -3,7 +3,8 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import type { Claim } from "../src/domain/contract/outcomes";
 import { INVITE_TTL_MS } from "../src/domain/console-auth";
-import { type DeedEntry, recheckEntry } from "../src/domain/deed-recheck";
+import { type DeedEntry, entryOf, recheckEntry } from "../src/domain/deed-recheck";
+import { D1LibroReads } from "../src/infrastructure/d1/libro-reads";
 import { hashToken, newToken } from "../src/infrastructure/tokens";
 import { firstOrder, ids } from "./fixtures/contract";
 import { type Harness, harness } from "./helpers/harness";
@@ -289,6 +290,36 @@ describe("/console/deed/:orderId/entrada.json: the entry a third party re-judges
     expect(entry.verdicts.length).toBeGreaterThan(0);
     const result = recheckEntry(entry);
     expect(result).toEqual({ ok: true, pairs: entry.verdicts.length, same: entry.verdicts.length, differ: [] });
+  });
+
+  it("exports the entry the book holds: the route's entry is the read model's entry, and the screen shows its verdicts", async () => {
+    const s = await storeWithMembers();
+    const { orderId } = await fourStates(s);
+    const h = harness({ engine });
+    const cookie = await login(h, s, "staff");
+    const book = await new D1LibroReads(env.DB).read({ businessId: s.businessId }, orderId);
+    expect(book).not.toBeNull();
+    const entry = JSON.parse(await (await get(h, `/console/deed/${encodeURIComponent(orderId)}/entrada.json`, cookie)).text()) as DeedEntry;
+    expect(entry).toEqual(JSON.parse(JSON.stringify(entryOf(book!))));
+    expect(entry.verdicts.map((verdict) => verdict.state)).toEqual(expect.arrayContaining(["emparejado", "sin_pareja", "en_duda", "bloqueado"]));
+    const page = await (await get(h, `/console/deed/${encodeURIComponent(orderId)}/libro`, cookie)).text();
+    const panels = [...page.matchAll(/<section id="d-(r\d+)" class="panel ([\w-]+)"/g)].map((match) => [match[1], match[2]]);
+    expect(panels).toEqual(entry.verdicts.map((verdict) => [verdict.rowKey, verdict.state ?? "sin-par"]));
+  });
+
+  it("exports a fact that a cancellation closed as not live, and the entry still re-runs with no difference", async () => {
+    const s = await storeWithMembers();
+    const { orderId, confirmId } = await fourStates(s);
+    await env.DB.prepare(
+      `INSERT INTO fact_closures (business_id, fact_id, closed_by_fact_id, reason, closed_at_ms) VALUES (?, ?, 'cancel-fact-synthetic', 'cancelled', ?)`,
+    )
+      .bind(s.businessId, confirmId, T0 + 3_000)
+      .run();
+    const h = harness({ engine });
+    const cookie = await login(h, s, "staff");
+    const entry = JSON.parse(await (await get(h, `/console/deed/${encodeURIComponent(orderId)}/entrada.json`, cookie)).text()) as DeedEntry;
+    expect(entry.input.facts.find((fact) => fact.id === confirmId)?.live).toBe(false);
+    expect(recheckEntry(entry)).toMatchObject({ ok: true, differ: [] });
   });
 
   it("carries IDs, codes, numbers and claims only: no name, no phone, no message text, and no key the allow-list lacks", async () => {
