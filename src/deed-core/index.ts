@@ -4,7 +4,7 @@ export { type Closed, type LedgerView, ancestorsOf, deadAncestors } from "./live
 export { type Corroboration, type PairState, pair } from "./pair";
 export { type BatchPlan, type CoreGuard, DEFAULT_LEDGER_CONFIG, type HostExtension, type LedgerConfig, type LedgerStore, type RefusalError } from "./store";
 export { MemoryLedgerStore } from "./memory-store";
-// D1LedgerStore comes from ./d1-store, written by the D1 step; it is not exported yet.
+export { D1LedgerStore } from "./d1-store";
 export {
   ENTRY_FILE_SCHEMA,
   MalformedEntry,

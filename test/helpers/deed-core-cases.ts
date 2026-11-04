@@ -75,6 +75,14 @@ export const cases: readonly Case[] = [
     ],
   },
   {
+    name: "clinic: refuses a fact id that is used again under a new key",
+    policy: "clinic",
+    steps: [
+      { entry: sample("s1"), expect: "admitted" },
+      { entry: entry({ factId: "s1", kind: "sample_taken", operationKey: "op-s9", evidence: [ev("clinician", "c9")] }), expect: "duplicate" },
+    ],
+  },
+  {
     name: "clinic: refuses a result on a sample that is not there",
     policy: "clinic",
     steps: [{ entry: result("r1", ["nope"]), expect: "dependency_not_live" }],

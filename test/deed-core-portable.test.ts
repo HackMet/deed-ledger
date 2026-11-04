@@ -36,7 +36,8 @@ const portableJudge: EntryJudge<PortableInput, (typeof states)[number]> = {
   },
   rows: ({ policy, entries }) => {
     const store = new MemoryLedgerStore(policies[policy]);
-    return entries.map((item) => ({ rowKey: item.factId, state: reasonOf(store.admitNow("file", item)) as (typeof states)[number] }));
+    // Rows are numbered, not keyed by fact id: a case may reuse a fact id on purpose, and a row key must be unique.
+    return entries.map((item, index) => ({ rowKey: `${index}:${item.factId}`, state: reasonOf(store.admitNow("file", item)) as (typeof states)[number] }));
   },
 };
 
@@ -67,12 +68,13 @@ describe("the core on a memory store: two industries, one table of cases", () =>
   it("reports a verdict that was changed in the file", () => {
     const sample = cases[0]!.steps[0]!.entry;
     const file = entryFile(portableJudge, { policy: "clinic", entries: [sample] });
-    const tampered = { ...file, verdicts: [{ rowKey: sample.factId, state: "duplicate" }] };
+    const rowKey = `0:${sample.factId}`;
+    const tampered = { ...file, verdicts: [{ rowKey, state: "duplicate" }] };
     expect(recheck(portableJudge, tampered)).toEqual({
       ok: true,
       pairs: 1,
       same: 0,
-      differ: [{ rowKey: sample.factId, stored: "duplicate", recomputed: "admitted" }],
+      differ: [{ rowKey, stored: "duplicate", recomputed: "admitted" }],
     });
   });
 });

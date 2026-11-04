@@ -53,6 +53,7 @@ function wordsOf(code: string): string[] {
 describe("the core's boundary", () => {
   it("reads every file of the core", () => {
     expect(scanned.map(([path]) => path.split("/").pop()).sort()).toEqual([
+      "d1-store.ts",
       "index.ts",
       "judge.ts",
       "liveness.ts",

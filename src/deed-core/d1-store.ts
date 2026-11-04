@@ -215,11 +215,11 @@ export function planEntry(
   return { guards, statements, post };
 }
 
-/** Whether the operation key already has an entry in this scope. */
-export async function readUsedKey(db: D1Database, config: LedgerConfig, scope: string, operationKey: string): Promise<boolean> {
+/** Whether the operation key, or the fact id when given, already has an entry in this scope: either one is a duplicate. */
+export async function readUsedKey(db: D1Database, config: LedgerConfig, scope: string, operationKey: string, factId: string | null = null): Promise<boolean> {
   const row = await db
-    .prepare(`SELECT 1 AS used FROM ${plain(config.tables.facts)} WHERE ${plain(config.columns.scope)} = ? AND operation_key = ?`)
-    .bind(scope, operationKey)
+    .prepare(`SELECT 1 AS used FROM ${plain(config.tables.facts)} WHERE ${plain(config.columns.scope)} = ? AND (operation_key = ? OR id = ?)`)
+    .bind(scope, operationKey, factId)
     .first<{ used: number }>();
   return row !== null;
 }
@@ -304,7 +304,7 @@ export class D1LedgerStore implements LedgerStore {
   async admit(scope: string, entry: Entry, nowMs: number): Promise<Verdict> {
     const sameBatch = entry.sameBatch ?? [];
     const state: JudgeState = {
-      keyUsed: await readUsedKey(this.db, this.config, scope, entry.operationKey),
+      keyUsed: await readUsedKey(this.db, this.config, scope, entry.operationKey, entry.factId),
       deadDependencies: await readDeadDependencies(
         this.db,
         this.config,

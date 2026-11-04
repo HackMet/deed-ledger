@@ -86,3 +86,10 @@ CREATE TRIGGER fact_closures_are_never_deleted BEFORE DELETE ON fact_closures
 BEGIN
   SELECT RAISE(ABORT, 'fact closures are append-only');
 END;
+
+-- Batch guards: a D1 batch inserts one row per guard, whose `ok` is NULL unless the guard holds; NOT NULL then aborts
+-- the whole batch. The batch deletes its guard rows as its last statement, so the table stays empty.
+CREATE TABLE batch_guards (
+  guard_id TEXT PRIMARY KEY,
+  ok INTEGER NOT NULL CHECK (ok = 1)
+) STRICT;
