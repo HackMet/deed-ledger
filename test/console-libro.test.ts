@@ -322,6 +322,29 @@ describe("/console/deed/:orderId/entrada.json: the entry a third party re-judges
     expect(recheckEntry(entry)).toMatchObject({ ok: true, differ: [] });
   });
 
+  it("reads the recorded lines and total with literal values, and the judge re-runs the verdict from the entry alone", async () => {
+    const s = await storeWithMembers();
+    const { orderId } = await confirmedOrder(s);
+    // Every line is left out of the total; then one line of version 1 is counted at L 10 for 2.5 units, so the total is L 25.
+    await env.DB.prepare(`UPDATE order_lines SET excluded_from_total = 1 WHERE business_id = ? AND order_id = ?`).bind(s.businessId, orderId).run();
+    await env.DB.prepare(
+      `UPDATE order_lines SET excluded_from_total = 0, unit_price_centavos = 1000, qty_milli = 2500
+       WHERE business_id = ?1 AND order_id = ?2 AND version = 1
+         AND line_no = (SELECT MIN(line_no) FROM order_lines WHERE business_id = ?1 AND order_id = ?2 AND version = 1)`,
+    )
+      .bind(s.businessId, orderId)
+      .run();
+    await insertReply(s.businessId, [{ type: "order_total", orderId, version: 1, total: 2500 }], { providerStatus: "delivered" });
+    const h = harness({ engine });
+    const cookie = await login(h, s, "staff");
+    const entry = JSON.parse(await (await get(h, `/console/deed/${encodeURIComponent(orderId)}/entrada.json`, cookie)).text()) as DeedEntry;
+    expect(entry.input.lines.filter((line) => line.counted)).toEqual([{ version: 1, counted: true, unitPrice: 1000, quantity: "2.5" }]);
+    expect(entry.verdicts.map((verdict) => verdict.state)).toContain("emparejado");
+    expect(recheckEntry(entry)).toMatchObject({ ok: true, differ: [] });
+    const page = await (await get(h, `/console/deed/${encodeURIComponent(orderId)}/libro`, cookie)).text();
+    expect(page).toContain("Total L 25");
+  });
+
   it("carries IDs, codes, numbers and claims only: no name, no phone, no message text, and no key the allow-list lacks", async () => {
     const s = await storeWithMembers();
     const { orderId } = await fourStates(s);
