@@ -9,9 +9,9 @@ Last updated: Wed Nov 4, 2026, morning Honduras time, by Claude Code.
 
 - **Integration (`claude/integration`, PR #71, Nov 4, not merged):** `claude/deed-core` + `claude/deed-recheck` +
   `claude/demo-fixes`. Gates and open items are in the PR.
-  - **C3 partial.** Its last review passed, but only after more fix rounds than Kerly authorized, because `track.sh`
-    relaunched the chain. Not every earlier finding has a test: the command's exit codes are guarded by the demo only.
-    The relaunch scripts in the harness are now disabled.
+  - **C3 met, with known limits in the README.** Its last review passed after more fix rounds than Kerly authorized,
+    because `track.sh` relaunched the chain; those scripts are now disabled. The two findings closed only by the demo now
+    have tests under `npm test`: `test/node/deed-recheck-command.test.mjs` and `test/node/demo-verdicts.test.mjs`.
   - **C10 in progress.** Open disagreements between the pure judge, the memory store and D1 are listed in the README.
     D1 is the correct one in the blocking case, and no false fact reaches it.
   - **Not reviewed independently:** `claude/demo-fixes` and `7e8c379`. Codex was not run: it isn't installed here.

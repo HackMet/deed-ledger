@@ -46,7 +46,7 @@ branding. The other seven can be partial and it is still recognisably Deed.
 |---|---|---|
 | **C1** ★ | **A claim is not a fact.** The actor writes only the claim leg and a pointer to where its counter-leg must appear. Separation of write permissions, enforced structurally. | ✅ built and tested |
 | **C2** ★ | **Every fact carries evidence from a source the actor does not control.** No evidence, no fact. | ✅ built and tested. The order's Libro view (`/console/deed/:pedido/libro`) pairs each claim with its witness. The demo has no WhatsApp statuses, so delivery reads *en duda* there |
-| **C3** ★ | **The verdict is issued by fixed arithmetic, never by a model.** Re-runnable by a third party from the entry alone. | ⚠️ partial. No model issues a verdict, built and tested. `node scripts/deed-recheck.mjs <entry.json>` re-runs an order's verdicts from its exported entry alone (`docs/deed-entry-example.json` is a synthetic one), and `python3 scripts/deed_check_harness.py --evidence docs/deed-run-evidence.jsonl --compare docs/deed-verdicts.csv --out v.csv` re-runs the harness verdicts, counting any commit a clone lacks apart. Two limits: re-runnable means with this repo's source and `npm ci` (for esbuild), which needs the network once; and the check shows the verdicts follow from the entry's input, not that the input is the book. An entry edited consistently on both sides still exits 0, because entries are not signed. The commit guards run in D1, not over an entry. Partial because the command's exit codes are guarded by the demo and not by `npm test`, and other review findings have no test yet |
+| **C3** ★ | **The verdict is issued by fixed arithmetic, never by a model.** Re-runnable by a third party from the entry alone. | ✅ built and tested, with the limits below. No model issues a verdict. `node scripts/deed-recheck.mjs <entry.json>` re-runs an order's verdicts from its exported entry alone (`docs/deed-entry-example.json` is a synthetic one), and `python3 scripts/deed_check_harness.py --evidence docs/deed-run-evidence.jsonl --compare docs/deed-verdicts.csv --out v.csv` re-runs the harness verdicts, counting any commit a clone lacks apart. Two limits: re-runnable means with this repo's source and `npm ci` (for esbuild), which needs the network once; and the check shows the verdicts follow from the entry's input, not that the input is the book. An entry edited consistently on both sides still exits 0, because entries are not signed. The commit guards run in D1, not over an entry |
 | **C4** | **Admission is atomic with the effect.** The fact, the reply and the job's completion live or die in one transaction. "Saved" cannot exist without the fact. | ✅ built and tested |
 | **C5** | **Append-only, with validity.** Never updated, never deleted. A correction is a new fact; a cancellation closes an interval. | ⚠️ in the store, ✅ in the core. Append-only: en el código no existe un camino de UPDATE ni DELETE sobre `facts`, `fact_evidence`, `fact_dependencies` ni `fact_closures`, y las claves únicas impiden los duplicados. El esquema del núcleo (`src/deed-core/schema.sql`) lo hace cumplir con triggers; en la tienda, los triggers quedan para Next. |
 | **C6** ★ | **Dependencies gate at commit time, not with an `if`.** Liveness is derived from closures, never cascaded by writes. | ✅ built and tested |
@@ -55,6 +55,15 @@ branding. The other seven can be partial and it is still recognisably Deed.
 | **C9** | **Nothing identifies, scores, profiles or tracks a person.** The unit is an agent version and an effect class. | ✅ built and tested |
 | **C10** | **The core is agnostic.** No business nouns inside it; a new business flow is a new policy, never an edit to the core. | ⚠️ in progress. Evidence below; open disagreements between its three judges keep it unmarked |
 | **C11** | **The agent is identified, and the identity travels.** Every fact records which agent version made the claim; every customer-facing output carries a code that resolves to that entry. | ⚠️ partial: every customer fact records the agent version (see the limit below). No customer-facing output carries a code yet |
+
+**Known limits of C3.** These have no test:
+
+- Entries aren't signed, so one edited consistently on both sides still exits 0. The check doesn't judge whether the input is the book.
+- An empty entry passes, and the parser accepts negative prices, long decimals and unknown keys. The `DECIMAL` check can be removed with no test failing.
+- `rowKey` is positional, an entry doesn't name its judge's version, and an entry carries a staff member's full UUID and claims the judge ignores.
+- Without esbuild the command exits 1, as if a verdict differed.
+- The demo prints `RESULT: every expectation held` before its recheck, and its tallies can't see a path no demo order reaches, such as a closed fact or a total.
+- `entrada.json` has no `Cache-Control: no-store` and no explicit no-login test (the route does answer 401). "19 pairs" counts rows, 10 of them with no pair.
 
 **C10, in progress.** Un host cuyos efectos son solo hechos escribe una política. Un host que necesita escrituras propias en el mismo batch agrega una extensión fuera del núcleo. En ningún caso se edita el núcleo. (Like an adapter in hexagonal architecture.)
 
@@ -102,7 +111,7 @@ The judge and memory-store fix that closes C10, the store's append-only triggers
 
 | Number | Value | Measured |
 |---|---|---|
-| Tests | 1595 passed, 104 files; typecheck exit 0 | `npm test` and `npm run typecheck` on this branch, November 4, 2026 |
+| Tests | 1595 passed in 104 files, plus 8 under `node:test`; typecheck exit 0 | `npm test` and `npm run typecheck` on this branch, November 4, 2026 |
 | Attacks | 9 attacks that reach the engine: 0 false facts admitted. One more attack is intake only and is not counted | `node scripts/adversary.mjs`, exit 0. Removing a defence on purpose turns its row red, except one K12 case noted in the script's review |
 | Harness runs | 121 run names, last attempt of each (at least 61 earlier attempts were overwritten with no verdict): 63 confirmed, 0 contradictions, 58 with no claim | `deed_check_harness.py` on 2026-11-04, Honduras time, rows in `docs/deed-verdicts.csv`, page in `docs/deed-scale.html`. Confirmed only means the commit exists and the runner recorded it for that run; tests are not re-run. Only the first sha on the `RESULT: COMMITTED` line is read, so any other false statement, with a sha or without one, is not detected. A reader re-runs them from the published evidence, and about a quarter of those shas exist only in local copies |
 
