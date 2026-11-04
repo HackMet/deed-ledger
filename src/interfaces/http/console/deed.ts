@@ -77,6 +77,9 @@ const toDeedFact = (entry: TrailEntry): DeedFact => ({
   closure: entry.closedBy === null ? null : { closedByFactId: entry.closedBy.factId, reason: entry.closedBy.reason, atMs: entry.closedBy.atMs },
 });
 
+/** The replay slider is hidden until it is fixed; `?t=` still answers, a link can still carry it. */
+const REPLAY_SLIDER = false;
+
 /** The replay's time, from `?t=`: a whole number of milliseconds, or null for the live order. */
 const replayTime = (raw: string | undefined): number | null => (raw !== undefined && /^\d{1,15}$/.test(raw) ? Number(raw) : null);
 
@@ -128,7 +131,7 @@ ${rows.length === 0 ? html`<p class="empty">Todavía no hay verificaciones.</p>`
         tab: "/console/mas",
         // No refresh here: a reload drops the fact panel that is open (`#f-…`) and the `?foco=` path.
         style: STYLE,
-        body: html`${replayForm(times, at)}
+        body: html`${REPLAY_SLIDER ? replayForm(times, at) : ""}
 <p class="meta"><a href="/console/deed/${encodeURIComponent(orderId)}/libro">Ver libro</a></p>
 ${graphSvg(graph, onPath)}
 <p class="hint">Tocá un hecho para ver su detalle.</p>
@@ -168,12 +171,22 @@ function graphSvg(graph: DeedGraph, onPath: ReadonlySet<string>) {
 ${drawn.map((edge) => {
   const from = centre(edge.from);
   const to = centre(edge.to);
+  // A closure bows to one side: a change that supersedes the one it rests on shares both boxes with a dependency line.
+  if (edge.type === "closes") return html`<path class="closes" d="${arcBetween(from, to)}"/>`;
   const path = edge.type === "depends" && onPath.has(edge.from) && onPath.has(edge.to) ? " path" : "";
   return html`<line class="${edge.type}${path}" x1="${from.x}" y1="${from.y}" x2="${to.x}" y2="${to.y}"/>`;
 })}
 ${graph.nodes.map((node) => nodeSvg(node, at.get(node.id)!, onPath.has(node.id)))}
 ${graph.refusals.map((refusal) => refusalSvg(refusal, at.get(refusal.id)!))}
 </svg>`;
+}
+
+/** A quadratic curve from one centre to another, its control point 40px off the middle of the chord. */
+function arcBetween(from: { x: number; y: number }, to: { x: number; y: number }): string {
+  const length = Math.hypot(to.x - from.x, to.y - from.y) || 1;
+  const cx = (from.x + to.x) / 2 - ((to.y - from.y) / length) * 40;
+  const cy = (from.y + to.y) / 2 + ((to.x - from.x) / length) * 40;
+  return `M${from.x} ${from.y} Q${cx} ${cy} ${to.x} ${to.y}`;
 }
 
 function nodeSvg(node: DeedNode, spot: { x: number; y: number }, onPath: boolean) {
@@ -259,7 +272,7 @@ const STYLE = `
 .replay input{width:100%;margin:4px 0}
 .graph{display:block;width:100%;height:auto;margin:8px 0;background:var(--card)}
 .graph line{stroke:#9e9e9e;stroke-width:1.5}
-.graph line.closes{stroke:#c62828;stroke-dasharray:2 4}
+.graph path.closes{fill:none;stroke:#c62828;stroke-width:1.5;stroke-dasharray:2 4}
 .graph line.refused{stroke:#9e9e9e;stroke-dasharray:3 3}
 .graph line.depends.path{stroke:#1565c0;stroke-width:3}
 .graph .node{stroke-width:1.5}

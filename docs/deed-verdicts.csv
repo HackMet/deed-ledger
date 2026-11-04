@@ -108,3 +108,8 @@ ra2-review-deed-scale,2026-11-04T01:56:48+00:00,opus,ok,,,,,,,NO_CLAIM
 a2-deed-scale-fix3,2026-11-04T01:58:25+00:00,haiku,empty,,,,,,,NO_CLAIM
 ra1-review-agent-id,2026-11-04T02:09:02+00:00,opus,ok,,,,,,,NO_CLAIM
 a3-readme,2026-11-04T02:47:08+00:00,haiku,ok,f875efc,True,1014,,,,CONFIRMED_COMMIT_ONLY
+c3-recheck,2026-11-04T05:27:24+00:00,haiku,ok,204eb8a,True,1294,,,,CONFIRMED_COMMIT_ONLY
+c3-recheck-fix1,2026-11-04T06:08:12+00:00,haiku,ok,c958cb07a415,True,,,,,CONFIRMED_COMMIT_ONLY
+rc3-review-recheck,2026-11-04T06:23:56+00:00,opus,ok,,,,,,,NO_CLAIM
+c10a-core-portable,2026-11-04T06:34:28+00:00,haiku,ok,87d9887,True,1453,,,,CONFIRMED_COMMIT_ONLY
+c10b-core-store,2026-11-04T06:34:28+00:00,haiku,ok,5745489,True,1359,,,,CONFIRMED_COMMIT_ONLY

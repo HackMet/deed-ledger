@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 import type { MemberContext } from "../src/application/engine";
 import { staffKey } from "../src/application/engine/order-engine";
 import { FactRefusedError, PermanentWriteError } from "../src/application/errors";
-import { changeRequestKey, lineDiff, reviewKey, reviewReason } from "../src/domain/change-request";
+import { changeRequestKey, lineDiff, requestedLines, reviewKey, reviewReason } from "../src/domain/change-request";
+import { PENDING_CHANGE, lineBullets, orderStatusText } from "../src/application/engine/fixture-perception-handler";
 import type { ActionEnvelope, ConsoleAction } from "../src/domain/contract/actions";
 import type { BurstReading } from "../src/domain/contract/observation";
 import type { OrderLineView, OrderView } from "../src/domain/contract/outcomes";
@@ -64,6 +65,53 @@ const agentOf = (id: string) => env.DB.prepare(`SELECT agent_id FROM facts WHERE
 const colourOf = async (s: Store, orderId: string) => (await trail.listOrders(s.context())).find((row) => row.orderId === orderId)?.colour;
 const factsOfKind = (businessId: string, kind: string) =>
   env.DB.prepare(`SELECT id, body_json FROM facts WHERE business_id = ? AND kind = ? ORDER BY rowid`).bind(businessId, kind).all<{ id: string; body_json: string }>().then((r) => r.results);
+
+describe("K12: the customer's change, whole", () => {
+  it("asks 3 lb, hears 3 lb, the approved fact holds 3 lb, and a repeated confirm saves nothing", async () => {
+    const s = await newStore();
+    const v1 = await placeFirstOrder(s);
+    const confirm = tap(v1.orderId, 1);
+    await save(await engine.onCustomerAction(s.context({ nowMs: T0 + 1000 }), confirm));
+    const edit = sugarToFour.observations[0] as Extract<BurstReading["observations"][number], { kind: "order_change" }>;
+    const toThree: BurstReading = { ...sugarToFour, observations: [{ ...edit, edits: [{ ...edit.edits[0]!, quantity: "3" } as never] }] };
+    const result = await engine.onBurst(s.context({ nowMs: T0 + 2000, jobId: crypto.randomUUID() }), toThree, []);
+    await save(result);
+    const order = (result.outcome as { order: OrderView }).order;
+    const sugarOf = (lines: readonly OrderLineView[]) => lines.find((line) => /az[uú]car/i.test(line.productName ?? line.text))!;
+
+    // The order itself still says 2; the customer hears the 3 they asked, and who answers it.
+    expect(sugarOf(order.lines).quantity).toBe("2");
+    const heard = orderStatusText(order);
+    expect(heard.startsWith(PENDING_CHANGE)).toBe(true);
+    expect(heard).toContain(`• 3 ${sugarOf(order.lines).productName}`);
+    expect(heard).not.toContain(`• 2 ${sugarOf(order.lines).productName}`);
+    expect(heard).not.toContain("¿Lo confirmo?");
+
+    const requestFact = (await factsOfKind(s.businessId, "change_request")).at(-1)!;
+    expect(sugarOf((JSON.parse(requestFact.body_json) as { lines: OrderLineView[] }).lines).quantity).toBe("3");
+    const approved = await engine.onConsoleAction(reviewer(s), reviewTap(order.openChangeRequest!.id));
+    await save(approved);
+    const versions = await factsOfKind(s.businessId, "order_version");
+    expect(versions.length).toBe(2);
+    expect(sugarOf((approved.outcome as { order: OrderView }).order.lines).quantity).toBe("3");
+
+    const confirmsBefore = (await factsOfKind(s.businessId, "order_confirm")).length;
+    await save(await engine.onCustomerAction(s.context({ nowMs: T0 + 60_000 }), tap(v1.orderId, 2)));
+    await save(await engine.onCustomerAction(s.context({ nowMs: T0 + 61_000 }), tap(v1.orderId, 2)));
+    expect((await factsOfKind(s.businessId, "order_confirm")).length).toBe(confirmsBefore);
+    expect((await factsOfKind(s.businessId, "order_version")).length).toBe(versions.length);
+  });
+
+  it("shows an added and a removed line of a waiting change, and a line's quantity once", () => {
+    const line = (text: string, quantity: string | null, productName: string | null = null) =>
+      ({ text, quantity, productName, productId: productName === null ? null : `p-${productName}` }) as unknown as OrderLineView;
+    const kept = line("1 aceite clover", "1");
+    const gone = line("arroz", "3", "Arroz");
+    const added = line("sal", "1", "Sal");
+    expect(requestedLines([kept, gone], { added: [added], removed: [gone], changed: [] })).toEqual([kept, added]);
+    expect(lineBullets([kept])).toEqual(["• 1 aceite clover"]);
+  });
+});
 
 describe("K12: a change after confirming is a request the owner or staff answer with a reason", () => {
   it("records the request on the live confirm, keeps the order, and shows it yellow with the diff", async () => {

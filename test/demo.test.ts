@@ -243,6 +243,16 @@ describe("the demo's change and replies (K10 fix 1)", () => {
     expect(others(after)).toEqual(others(before));
   });
 
+  it("reads the unmatched aceite once, with its quantity and the product's words", async () => {
+    const store = await seedStore({ members: [{ phone: newPhone(), role: "owner" }] });
+    const handler = demoRuntime(env, recordings).deps.jobHandler;
+    const lease = { businessId: store.businessId, conversationId: `conversation-${crypto.randomUUID()}`, leaseId: "lease-1" };
+    const v1 = await handler.handle({ ...input(byName("firstOrder").text), lease });
+    const lines = v1.replies![0]!.body.split("\n");
+    expect(lines).toContain("• 1 aceite clover");
+    expect(lines.some((line) => /^• 1 1 /u.test(line))).toBe(false);
+  });
+
   it("answers each outcome in the same words as the fixture perception handler", async () => {
     const outcomes = [askFulfillment, askSize, readback, orderConfirmed, orderStatus, orderChanged, duplicateConfirm, staleRejected];
     for (const outcome of outcomes) {

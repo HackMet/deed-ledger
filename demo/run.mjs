@@ -199,7 +199,7 @@ async function scenario(cookie) {
   console.log("— D: change request approved");
   await placeOrder("D");
   await confirm("D");
-  await customerSays("D", said("moreSugar"), expectReply(/^Tu pedido va así:/, { change_request: 1 }, "a change request (order unchanged); one change_request fact"));
+  await customerSays("D", said("moreSugar"), expectReply(/^Le pasé tu cambio a la tienda\. Queda así si lo aprueban:\n[^]*• 3 Azúcar/, { change_request: 1 }, "a change request (order unchanged); one change_request fact"));
   await run("D", "owner taps Aprobar (“Sí hay, va”)", () => staff.review("D", "approve", "Sí hay, va"), ({ delta, heard }) => ({
     expectation: "change_review +1, order_version +1, order_confirm +1; version 2; D hears “Tu cambio fue aprobado”",
     pass:
@@ -238,7 +238,7 @@ async function scenario(cookie) {
   console.log("— F: change request declined");
   await placeOrder("F");
   await confirm("F");
-  await customerSays("F", said("moreSugar"), expectReply(/^Tu pedido va así:/, { change_request: 1 }, "a change request (order unchanged); one change_request fact"));
+  await customerSays("F", said("moreSugar"), expectReply(/^Le pasé tu cambio a la tienda\. Queda así si lo aprueban:\n[^]*• 3 Azúcar/, { change_request: 1 }, "a change request (order unchanged); one change_request fact"));
   await run("F", "owner taps Rechazar (“ya no hay azúcar”)", () => staff.review("F", "decline", "ya no hay azúcar"), ({ delta, heard }) => ({
     expectation: "change_review +1 only; version 1; F hears “No pudimos hacer el cambio: ya no hay azúcar”",
     pass: sameDelta(delta, { change_review: 1 }) && orderOf(CUSTOMERS.F)?.current_version === 1 && heard.some((m) => /No pudimos hacer el cambio: ya no hay azúcar/.test(m)),
