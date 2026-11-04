@@ -204,28 +204,32 @@ const STAFF_STATUS: Readonly<Record<Exclude<StaffAction["type"], "mark_line">, N
   mark_delivered: "delivered",
 };
 
+/** Staff are free to pack straight from the list: Listo and a line mark don't wait for Empezar. */
+const PACKING: readonly OrderState[] = ["confirmado", "preparando"];
+
 /**
- * Each staff action's only pre-state and the state it leaves. mark_line records a mark and keeps
- * preparando. A delivery order is delivered from en_camino instead (K13): see `fromState`.
+ * Each staff action's pre-states and the state it leaves. mark_line records a mark and leaves
+ * preparando: a first mark is packing started. A delivery order is delivered from en_camino instead
+ * (K13): see `fromStates`.
  */
-const STAFF_STEPS: Readonly<Record<StaffAction["type"], { from: OrderState; to: OrderState; audit: OrderWrite["auditKind"] }>> = {
-  start_preparing: { from: "confirmado", to: "preparando", audit: "order_preparing" },
-  mark_line: { from: "preparando", to: "preparando", audit: "order_line_marked" },
-  mark_ready: { from: "preparando", to: "listo", audit: "order_ready" },
-  dispatch: { from: "listo", to: "en_camino", audit: "order_dispatched" },
-  mark_delivered: { from: "listo", to: "entregado", audit: "order_delivered" },
+const STAFF_STEPS: Readonly<Record<StaffAction["type"], { from: readonly OrderState[]; to: OrderState; audit: OrderWrite["auditKind"] }>> = {
+  start_preparing: { from: ["confirmado"], to: "preparando", audit: "order_preparing" },
+  mark_line: { from: PACKING, to: "preparando", audit: "order_line_marked" },
+  mark_ready: { from: PACKING, to: "listo", audit: "order_ready" },
+  dispatch: { from: ["listo"], to: "en_camino", audit: "order_dispatched" },
+  mark_delivered: { from: ["listo"], to: "entregado", audit: "order_delivered" },
 };
 
 /**
  * K13: the state a staff action must find, given how the order leaves the store. Dispatch is for a
  * delivery order only, and a delivery order is delivered once it is en_camino. A fulfillment nobody
- * recorded is never guessed: dispatch is refused (null), and staff saying the customer has it closes the
+ * recorded is never guessed: dispatch is refused (none), and staff saying the customer has it closes the
  * order from listo with the fulfillment left unknown, so no such order blocks its customer for good.
  */
-function fromState(action: StaffAction, fulfillment: OrderView["fulfillment"]): OrderState | null {
+function fromStates(action: StaffAction, fulfillment: OrderView["fulfillment"]): readonly OrderState[] {
   if (action.type !== "dispatch" && action.type !== "mark_delivered") return STAFF_STEPS[action.type].from;
-  if (action.type === "dispatch") return fulfillment?.mode === "delivery" ? "listo" : null;
-  return fulfillment?.mode === "delivery" ? "en_camino" : "listo";
+  if (action.type === "dispatch") return fulfillment?.mode === "delivery" ? ["listo"] : [];
+  return fulfillment?.mode === "delivery" ? ["en_camino"] : ["listo"];
 }
 
 /** The step a dispatch or a delivery acts on (K13), whose fact it rests on; null for the other steps. */
@@ -282,6 +286,12 @@ function nextQuestion(view: Pick<OrderView, "lines" | "fulfillment">): { readonl
 }
 
 const result = (outcome: EngineOutcome, commits: readonly Commit[] = []): EngineResult => ({ outcome, notices: [], commits });
+
+/** Where the customer's order stands: what to order with none, the readback while it waits on them, its status after. */
+function standing(open: StoredOrder | null): EngineOutcome {
+  if (open === null) return { type: "ask", question: "what_to_order", line: null, order: null };
+  return open.view.state === "por_confirmar" ? { type: "readback", order: open.view } : { type: "order_status", order: open.view };
+}
 
 /** The Deed's row for a refusal's reason (K20): the table's `source`, and the reason the screen names. */
 const DEED_SOURCE: Readonly<Record<"duplicate" | "stale_version" | "invalid_state" | "not_allowed" | "not_found", DeedCheckSource>> = {
@@ -349,9 +359,12 @@ export class OrderEngine implements Engine {
     const observations = reading.observations
       .map((observation, index) => ({ observation, index }))
       .filter(({ observation }) => isCustomerKind(observation.kind));
-    if (observations.length === 0) return result({ type: "rejected", reason: "not_allowed", order: null });
+    if (reading.observations.length > 0 && observations.length === 0) return result({ type: "rejected", reason: "not_allowed", order: null });
 
     const open = await store.openOrder(context, context.customerId);
+    // A reading that came in empty (small talk, nothing asked): say where the order stands.
+    if (reading.observations.length === 0) return result(standing(open));
+
     const names = await store.productNames(context, [...new Set(matches.map((m) => m.productId))]);
     // A line perception couldn't read keeps the customer's words and has no quantity to trust, so it can't be confirmed.
     const unreadable = new Set<OrderLineView>();
@@ -595,7 +608,7 @@ export class OrderEngine implements Engine {
     const { view } = stored;
     if (action.version !== view.version) return refused("stale_version", view);
     const step = STAFF_STEPS[action.type];
-    if (view.state !== fromState(action, view.fulfillment)) return refused("invalid_state", view);
+    if (!fromStates(action, view.fulfillment).includes(view.state)) return refused("invalid_state", view);
     if (action.type === "mark_line" && indexOfLabel(view.lines.length, action.lineId) === null) return refused("not_found", view);
     // The courier id is untrusted: it resolves only to an active member of this store (K13, Q4).
     const courier =
@@ -676,7 +689,18 @@ export class OrderEngine implements Engine {
       closes: null,
       movements: [],
     };
-    return { outcome, notices, commits: [commit, this.deps.ledger.statementsFor(member, fact, member.nowMs)] };
+    // A line marked before Empezar starts the packing: the state the cache now holds needs its own step fact.
+    const started: FactCommit | null =
+      action.type === "mark_line" && view.state === "confirmado"
+        ? {
+            ...fact,
+            factId: this.deps.ids.newId(),
+            operationKey: staffKey({ type: "start_preparing", orderId: view.orderId, version: view.version }),
+            body: { orderId: view.orderId, version: view.version, status: STAFF_STATUS.start_preparing },
+          }
+        : null;
+    const facts = started === null ? [fact] : [started, fact];
+    return { outcome, notices, commits: [commit, ...facts.map((f) => this.deps.ledger.statementsFor(member, f, member.nowMs))] };
   }
 
   /** Perception's read of the store's catalog, for matching by code: exactly the products order lines match against. */

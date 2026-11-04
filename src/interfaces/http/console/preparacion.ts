@@ -304,6 +304,11 @@ function orderActions(card: PreparationCard, csrf: string) {
 <p class="hint">Al marcar Listo se le avisa ${to}${order.total === null ? "" : " con el total"}.</p>
 <form method="post" action="/console/acciones">${hidden(order, "mark_ready", csrf)}<button class="primary">Listo</button></form>`;
   }
+  if (order.state === "listo" && order.fulfillment?.mode === "delivery") {
+    // A delivery order goes out with a courier, picked on its Pedidos page (K13).
+    return html`<p class="hint">Ya está listo. Falta mandarlo con quien lo lleva.</p>
+<a class="button primary" href="/console/pedidos/${encodeURIComponent(order.orderId)}">Despachar</a>`;
+  }
   if (order.state === "listo") {
     const who = card.customerName ?? "el cliente";
     return html`<p class="hint">Ya está listo. Cuando ${who} ya lo tenga, tocá Entregado.</p>
