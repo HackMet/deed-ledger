@@ -148,8 +148,15 @@ const CONFIRM_PROMPT = "¿Lo confirmo? Confirmar / Corregir / Cancelar";
 
 const money = (centavos: number): string => `L ${(centavos / 100).toFixed(2)}`;
 
+/** A line's words: its product's name, or else the customer's text without a quantity it already carries. */
+function wordsOf(line: OrderView["lines"][number]): string {
+  const prefix = `${line.quantity} `;
+  if (line.productName !== null) return line.productName;
+  return line.quantity !== null && line.text.startsWith(prefix) ? line.text.slice(prefix.length) : line.text;
+}
+
 function readback(order: OrderView, lead: string): string {
-  const lines = order.lines.map((line) => `• ${line.quantity === null ? "" : `${line.quantity} `}${line.productName ?? line.text}`.replace(/\s+$/u, ""));
+  const lines = order.lines.map((line) => `• ${line.quantity === null ? "" : `${line.quantity} `}${wordsOf(line)}`.replace(/\s+$/u, ""));
   const total = order.total === null ? [] : [`Total: ${money(order.total)}`];
   return [lead, ...lines, ...total, CONFIRM_PROMPT].join("\n");
 }
