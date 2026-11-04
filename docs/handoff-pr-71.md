@@ -6,6 +6,8 @@ For Angel's agents. PR: https://github.com/HackMet/deed-ledger/pull/71, branch `
 
 ## What changes when it is deployed
 
+This engine has never run deployed. Everything in the README's "Tested from a phone" was on the previous engine.
+
 - `DEED_ENGINE` is `"1"` in `wrangler.jsonc` and wins over `PRETEND_ENGINE`. The app moves from the pretend engine to the real `OrderEngine` on D1.
 - Migrations `0023` to `0028` apply remotely. There is no `0029` (D-54).
 - Orders in flight don't carry over: the pretend engine keeps its state in `pretend_engine_state`, and `OrderEngine` reads `products` and its own tables. Whether the demo store's catalog exists remotely is unchecked.
@@ -50,8 +52,9 @@ Also waiting on him: decisions D-41 to D-44 and the migration numbers.
 3. **Copy mismatch.** While a change waits for the store, the demo says "Le pasé tu cambio a la tienda. Queda así si lo aprueban: …". Real WhatsApp says "Tu pedido ya está en la fila. Te aviso apenas esté listo." or "Vas segundo en la fila. Te aviso apenas esté listo." The proposed `statusReply` change is in the PR body, uncommitted, and no test covers it. That demo message stays out of the video until they match.
 4. **C5:** append-only is enforced with triggers in the core's schema, not in the store. Store triggers would go on a separate branch, if Angel accepts them.
 5. **Codex review:** not done; codex isn't installed on Kerly's machine.
-6. **A brand that starts with its own quantity loses the number on a changed unmatched line:** `Dos Pinos` × 2 reads `Pinos`. `src/interfaces/http/console/preparacion.ts:264`, Angel's, still prints the raw words.
-7. **Local paths in branch history.** `docs/deed-run-evidence.jsonl` no longer holds any, but earlier commits on this branch do (`/home/kerly/...`). Before the repo goes public: squash on merge and delete these branches, or accept it, since the same username is in commit metadata.
+6. **A number that agrees with the quantity reads as the quantity.** On unmatched lines, `Dos Pinos` × 2 reads `Pinos`, with or without a change. A number that becomes equal after a change does the same and shows as a remove plus an add: `2 litros de coca` × 3 → 2, `Tres Rosas` × 1 → 3. The words can't tell a brand or a size from a quantity. Catalog names are never touched. Recognized: digits, decimals, fractions, mixed numbers, `x2`, `media`, and Spanish whole numbers up to cien. `una docena` isn't one.
+7. **`saidName` in `src/domain/replies.ts:1119`, Angel's, has its own shorter rule.** The real readback shows `• 12 Doce panes`, `• 2 2lb frijol` and `• 0.5 libras de 1/2 libra de ajo` on a line nobody changed. It could call `wordsWithoutQuantity` first; he decides. `src/interfaces/http/console/preparacion.ts:264`, also his, prints the raw words.
+8. **Local paths in branch history.** `docs/deed-run-evidence.jsonl` no longer holds any, but earlier commits on this branch do (`/home/kerly/...`). Don't squash on merge without checking: a squash removes `c15155b`, and two published `NO_CLAIM` rows then read as contradictions, so `--compare` reports 2 differ. Accept the paths, since the same username is in commit metadata, or re-run and republish the evidence after squashing.
 
 ## Conformance
 

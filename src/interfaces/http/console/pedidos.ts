@@ -223,7 +223,7 @@ function orderRow(row: OrderListRow) {
   return html`<li class="order ${row.colour}"><a href="/console/pedidos/${encodeURIComponent(row.orderId)}">
 <div class="head"><strong>${row.code ?? "—"}</strong><span>${COLOUR_MARKS[row.colour]}</span></div>
 <p class="meta">${row.customerLabel} · ${STATE_LABELS[row.state]}${row.courier === null ? "" : ` · Lo lleva ${courierName(row.courier)}`}</p>
-<p>${row.lines.map((line) => `${wordsWithoutQuantity(line.text, line.quantity)} × ${line.quantity ?? "?"}`).join(", ")}</p>
+<p>${row.lines.map((line) => `${line.text} × ${line.quantity ?? "?"}`).join(", ")}</p>
 </a></li>`;
 }
 

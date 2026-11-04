@@ -116,9 +116,9 @@ The store's append-only triggers (C5), signatures, watermarks, C2PA, hash chain.
 
 | Number | Value | Measured |
 |---|---|---|
-| Tests | 1628 passed in 104 files, plus 9 under `node:test`; typecheck exit 0 | `npm test` and `npm run typecheck` on this branch, November 4, 2026 |
+| Tests | 1643 passed in 104 files, plus 9 under `node:test`; typecheck exit 0 | `npm test` and `npm run typecheck` on this branch, November 4, 2026 |
 | Attacks | 9 attacks that reach the engine: 0 false facts admitted. One more attack is intake only and is not counted | `node scripts/adversary.mjs`, exit 0. Removing a defence on purpose turns its row red, except one K12 case noted in the script's review |
-| Harness runs | 124 run names, last attempt of each (at least 61 earlier attempts were overwritten with no verdict): 63 confirmed, 0 contradictions, 61 with no claim | `deed_check_harness.py` on 2026-11-04, Honduras time, rows in `docs/deed-verdicts.csv`, page in `docs/deed-scale.html`. Confirmed only means the commit exists and the runner recorded it for that run; tests are not re-run. Only the first sha on the `RESULT: COMMITTED` line is read, so any other false statement, with a sha or without one, is not detected. A reader re-runs them from the published evidence, and about a quarter of those shas exist only in local copies |
+| Harness runs | 125 run names, last attempt of each (at least 61 earlier attempts were overwritten with no verdict): 63 confirmed, 0 contradictions, 62 with no claim | `deed_check_harness.py` on 2026-11-04, Honduras time, rows in `docs/deed-verdicts.csv`, page in `docs/deed-scale.html`. Confirmed only means the commit exists and the runner recorded it for that run; tests are not re-run. Only the first sha on the `RESULT: COMMITTED` line is read, so any other false statement, with a sha or without one, is not detected. A reader re-runs them from the published evidence, and about a quarter of those shas exist only in local copies |
 
 `./demo.sh` runs six synthetic customers (A to F) through the real engine, ledger and console on a local Worker, on recorded perception. Answers to customer messages are demo templates; notices after a staff tap are the product's. It ends by re-checking three exported entries over HTTP. Its `0 differ` holds for the demo's entries only. The export and the check run the same judge in the same tree, so the demo pins its tally of verdicts per order but cannot see every broken path; `npm test` covers those.
 
@@ -188,11 +188,11 @@ customer (D-52). The eval suite can also use Muse Spark to score the replies' Sp
 
 ## Status (November 3, 2026)
 
-- **Live** on Cloudflare Workers (D1, R2, Queues, a one-minute cron). Every merge to `main` runs the tests and
+- **Live** on Cloudflare Workers (D1, R2, Queues, a one-minute cron), on the previous engine until this branch merges. Every merge to `main` runs the tests and
   deploys (`.github/workflows/deploy.yml`); every pull request runs the typecheck and the tests.
 - **The demo** runs a synthetic store, "Tienda demo (sintética)", with 40 made-up products and test commands for the store's own members (`/new`, `/help`).
 - **The order engine and the fact ledger** run the app when `DEED_ENGINE` is `"1"`, the default in `wrangler.jsonc` (`src/application/engine/order-engine.ts`, `src/infrastructure/d1/fact-ledger.ts`): versioned orders, operation keys as the idempotency anchor, an audit trail, cancellations as compensating entries. This engine has no planner read yet, so it runs the classic reader. The numbers below were measured before this engine ran the app, on the pretend engine that kept each store's state in D1 (`src/infrastructure/memory/d1-pretend-engine.ts`).
-- **Tested from a phone** on the live number: a typed order, a voice-note order, and a photo of a handwritten
+- **Tested from a phone** on the live number, on the previous engine, not on `DEED_ENGINE`: a typed order, a voice-note order, and a photo of a handwritten
   11-item list (all 11 read, items the store doesn't carry kept and never priced), each through readback,
   Confirmar, the customer's name, the staff's Listo or No hay, and the customer's notice. Text replies take 9 to 21 s
   (4 to 7 s per model call, plus a 3 s wait for more messages); a photo about 34 s. The target is under 10 s.

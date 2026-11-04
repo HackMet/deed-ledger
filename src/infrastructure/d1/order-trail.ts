@@ -3,6 +3,7 @@
  * Read-only. Colours come from live facts, never from `orders.state`. Every query is scoped to the
  * store; an order of another store is simply not found.
  */
+import { wordsWithoutQuantity } from "../../domain/orders";
 import type { Tenant } from "../../application/ports";
 import type { LineDiff, OrderState } from "../../domain/contract/outcomes";
 import { type OrderFact, deriveOrderState } from "../../domain/order-state";
@@ -245,7 +246,10 @@ export class D1OrderTrail {
         customerLabel: "Cliente",
         lines: lines.results
           .filter((line) => line.order_id === order.id && line.version === currentVersion)
-          .map((line) => ({ text: line.canonical_name ?? line.customer_text, quantity: quantityText(line.qty_milli) })),
+          .map((line) => {
+            const quantity = quantityText(line.qty_milli);
+            return { text: line.canonical_name ?? wordsWithoutQuantity(line.customer_text, quantity), quantity };
+          }),
         state: deriveOrderState(mine.filter(isOrderFact).map(toOrderFact), currentVersion, order.state),
         colour: colourOf(standingOf(mine)),
         courier: liveCourierOf(mine, names),

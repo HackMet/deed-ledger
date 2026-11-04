@@ -34,31 +34,74 @@ export interface NextVersion {
   readonly lines: readonly OrderLineView[];
 }
 
-const NUMBER_WORDS: Readonly<Record<string, number>> = {
-  media: 500, medio: 500, un: 1000, una: 1000, uno: 1000, dos: 2000, tres: 3000, cuatro: 4000, cinco: 5000, seis: 6000,
-  siete: 7000, ocho: 8000, nueve: 9000, diez: 10000, once: 11000, doce: 12000, quince: 15000, veinte: 20000,
-};
-const LEADING_NUMBER = /^x?(\d+\/\d+|\d+(?:[.,]\d+)?)(?:\s+|(?=\p{L}))(?=\S)/iu;
+const UNITS = ["uno", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve"];
+const TEENS = ["diez", "once", "doce", "trece", "catorce", "quince", "dieciseis", "diecisiete", "dieciocho", "diecinueve", "veinte"];
+const TWENTIES = ["veintiuno", "veintidos", "veintitres", "veinticuatro", "veinticinco", "veintiseis", "veintisiete", "veintiocho", "veintinueve"];
+const TENS = ["treinta", "cuarenta", "cincuenta", "sesenta", "setenta", "ochenta", "noventa"];
+
+/** The Spanish whole numbers a customer writes for a quantity, up to cien, in thousandths. */
+const NUMBER_WORDS: ReadonlyMap<string, number> = new Map([
+  ["un", 1000],
+  ["una", 1000],
+  ["veintiun", 21000],
+  ["cien", 100000],
+  ["ciento", 100000],
+  ...UNITS.map((word, i) => [word, (i + 1) * 1000] as const),
+  ...TEENS.map((word, i) => [word, (i + 10) * 1000] as const),
+  ...TWENTIES.map((word, i) => [word, (i + 21) * 1000] as const),
+  ...TENS.map((word, i) => [word, (i + 3) * 10000] as const),
+]);
+const HALF: ReadonlyMap<string, number> = new Map([["media", 500], ["medio", 500]]);
+
+const plain = (word: string): string => word.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+
+const LEADING_NUMBER = /^(?:x\s*)?(?:(\d+)\s+)?(\d+\/\d+|\d+(?:[.,]\d+)?)(?:\s+|(?=\p{L}))(?=\S)/iu;
+const LEADING_WORDS = /^(\p{L}+)(?:\s+y\s+(\p{L}+))?\s+(?=\S)/u;
 const LEADING_WORD = /^(\p{L}+)\s+(?=\S)/u;
 
-function thousandthsOf(number: string): number | null {
+function digitsToThousandths(number: string): number | null {
   const [top, bottom] = number.split("/");
-  if (bottom === undefined) return toThousandths(number.replace(",", "."));
-  const value = (Number(top) * 1000) / Number(bottom);
-  return Number.isInteger(value) ? value : null;
+  if (bottom !== undefined) return Number(bottom) === 0 ? null : Math.round((Number(top) * 1000) / Number(bottom));
+  return toThousandths(number.replace(",", ".").replace(/^0+(?=\d)/, ""));
+}
+
+/** The number a line's words start with, in thousandths, and how long it is. Null when they don't start with one. */
+function leadingNumber(text: string): { readonly value: number; readonly length: number } | null {
+  const digits = LEADING_NUMBER.exec(text);
+  if (digits !== null) {
+    const part = digitsToThousandths(digits[2]!);
+    if (part === null) return null;
+    const whole = digits[1] === undefined ? 0 : (toThousandths(digits[1]) ?? 0);
+    // "2 1/2" is a mixed number, but "2 3 huevos" is not.
+    if (digits[1] !== undefined && !digits[2]!.includes("/")) return null;
+    return { value: whole + part, length: digits[0].length };
+  }
+  const pair = LEADING_WORDS.exec(text);
+  if (pair?.[2] !== undefined) {
+    const first = NUMBER_WORDS.get(plain(pair[1]!));
+    const half = HALF.get(plain(pair[2]));
+    const unit = UNITS.includes(plain(pair[2])) ? NUMBER_WORDS.get(plain(pair[2])) : undefined;
+    if (first !== undefined && half !== undefined) return { value: first + half, length: pair[0].length };
+    if (first !== undefined && first >= 30000 && unit !== undefined) return { value: first + unit, length: pair[0].length };
+  }
+  const word = LEADING_WORD.exec(text);
+  if (word === null) return null;
+  const value = NUMBER_WORDS.get(plain(word[1]!)) ?? HALF.get(plain(word[1]!));
+  return value === undefined ? null : { value, length: word[0].length };
 }
 
 /**
  * The customer's words without a leading number that says the line's own quantity: "2lb azucar" × 2 is "lb azucar".
  * A number that says something else stays, because it is part of the words: "Tres Rosas" × 1, "2 litros de coca" × 3.
+ * Only for the customer's words, never a catalog name. The words can't tell a brand from a quantity when the two agree:
+ * "Dos Pinos" × 2 reads "Pinos".
  */
 export function wordsWithoutQuantity(text: string, quantity: DecimalString | null): string {
   const wanted = quantity === null ? null : toThousandths(quantity);
-  if (wanted === null) return text;
-  const number = LEADING_NUMBER.exec(text);
-  if (number !== null) return thousandthsOf(number[1]!) === wanted ? text.slice(number[0].length) : text;
-  const word = LEADING_WORD.exec(text);
-  return word !== null && NUMBER_WORDS[word[1]!.toLocaleLowerCase("es")] === wanted ? text.slice(word[0].length) : text;
+  const words = text.trim();
+  if (wanted === null) return words;
+  const lead = leadingNumber(words);
+  return lead !== null && lead.value === wanted ? words.slice(lead.length) : words;
 }
 
 /**
