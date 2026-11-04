@@ -20,7 +20,7 @@ const REF = /^[0-9a-f]{8}$/;
 /** The ID WhatsApp gave a sent message: it travels with the message, and the customer never sees it. */
 const WHATSAPP_ID = /^wamid\.\S+$/;
 
-/** What was typed, read as a code or a reference; null when it is neither. */
+/** What was typed, read as a code, a reference or a WhatsApp ID; null when it is none of them. */
 export function parseOrderQuery(raw: string): OrderQuery | null {
   const typed = raw.trim();
   if (WHATSAPP_ID.test(typed)) return { kind: "message", providerMessageId: typed };

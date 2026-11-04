@@ -372,7 +372,7 @@ describe("/console/deed/buscar: a typed code or reference reaches the order's en
       expect((await search(h, wamid, await login(h, other, "staff"))).status).toBe(404);
     });
 
-    it("finds nothing for a message whose claims were blocked, or unreadable", async () => {
+    it("finds nothing for a message whose claims were blocked, or one never sent", async () => {
       const s = await storeWithMembers();
       const { orderId } = await confirmedOrder(s);
       const blockedId = crypto.randomUUID();

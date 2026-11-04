@@ -17,7 +17,7 @@ Last updated: Wed Nov 4, 2026, morning Honduras time, by Claude Code.
     Handoff for Angel's agents: `docs/handoff-pr-71.md`.
   - **`claude/demo-fixes` goes in only through this PR.** Its reviews and their fixes are in the PR. Codex was not run: it isn't installed here.
   - **Answers to customer messages in the demo are templates;** notices after a staff tap are the product's. "Le pasé tu cambio…" exists only there. Real WhatsApp doesn't say it, so it
-    stays out of the video until Angel matches it.
+    stays out of the video.
   - **Decided (D-55, D-56):** the contract additions are accepted, and C11's code stays invisible. Angel also says the
     customer doesn't need the quantity shown while a change waits, so the `statusReply` diff is dropped.
   - **New request, not built:** when the stock is short, offer what there is. The engine has no stock read yet.
