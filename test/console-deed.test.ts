@@ -4,11 +4,12 @@ import { describe, expect, it } from "vitest";
 import type { MemberContext } from "../src/application/engine";
 import { OrderEngine, staffKey } from "../src/application/engine/order-engine";
 import type { ActionEnvelope, ConsoleAction, CustomerAction } from "../src/domain/contract/actions";
+import type { BurstReading } from "../src/domain/contract/observation";
 import { INVITE_TTL_MS } from "../src/domain/console-auth";
 import { D1DeedChecks } from "../src/infrastructure/d1/deed-checks";
 import { D1FactLedger } from "../src/infrastructure/d1/fact-ledger";
 import { hashToken, newToken } from "../src/infrastructure/tokens";
-import { firstOrder, ids } from "./fixtures/contract";
+import { firstOrder, ids, moreSugar } from "./fixtures/contract";
 import { type Harness, harness } from "./helpers/harness";
 import { T0, newStore, placeFirstOrder, save, store, tap } from "./helpers/orders";
 import { newPhone, seedStore } from "./helpers/seed";
@@ -36,6 +37,18 @@ async function get(h: Harness, path: string, cookie?: string) {
   await waitOnExecutionContext(ctx);
   return response;
 }
+
+/** "que sean 4 de azúcar": L4 from 2 to 4, as change-requests.test.ts reads it. */
+const sugarToFour: BurstReading = {
+  ...moreSugar,
+  observations: [
+    {
+      kind: "order_change",
+      edits: [{ op: "set_quantity", target: { ref: "L4", said: "azúcar" }, quantity: "4", evidence: { source: "text", message: 0, start: 0, end: 20 } }],
+      issues: [],
+    },
+  ],
+};
 
 /** A session for a member of the store, opened through the real invite. Returns the cookie. */
 async function login(h: Harness, s: Store, role: "owner" | "staff"): Promise<string> {
@@ -175,6 +188,22 @@ describe("/console/deed/:orderId: the order's facts as a graph", () => {
     const live = await (await get(h, path, cookie)).text();
     expect(live).toContain(`class="node closed"`);
     expect(live).not.toContain(`http-equiv="refresh"`);
+  });
+
+  it("draws a superseded change as its own red arc, apart from the dependency line it shares with the newer change", async () => {
+    const s = await storeWithMembers();
+    const v1 = await placeFirstOrder(s);
+    await save(await checkedEngine.onCustomerAction(s.context({ nowMs: T0 + 1_000 }), tap(v1.orderId, 1)));
+    await save(await checkedEngine.onBurst(s.context({ nowMs: T0 + 2_000, jobId: crypto.randomUUID() }), sugarToFour, []));
+    await save(await checkedEngine.onBurst(s.context({ nowMs: T0 + 3_000, jobId: crypto.randomUUID() }), sugarToFour, []));
+    const h = harness({ engine: checkedEngine });
+    const cookie = await login(h, s, "staff");
+    const body = await (await get(h, `/console/deed/${encodeURIComponent(v1.orderId)}`, cookie)).text();
+    expect(body).toContain(`class="node closed"`);
+    // Both edges join the same two boxes: the supersede is a curved path, so the grey dependency line cannot hide it.
+    expect(body).not.toContain(`<line class="closes"`);
+    expect(body).toMatch(/<path class="closes" d="M[\d.-]+ [\d.-]+ Q[\d.-]+ [\d.-]+ [\d.-]+ [\d.-]+"\/>/);
+    expect(body).toContain(`<line class="depends"`);
   });
 
   it("never draws another store's refusals on this order's graph", async () => {
