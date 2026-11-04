@@ -35,18 +35,17 @@ export class D1OrderLookup {
       .bind(tenant.businessId)
       .all<{ id: string }>();
     if (query.kind === "ref") return orders.find((order) => orderRef(order.id) === query.ref)?.id ?? null;
-    // Each order's code comes from its latest confirm fact, live or not, as the order list shows it.
+    // An approved change confirms again and the code moves on, but the customer may still hold the earlier one.
     const { results: confirms } = await this.db
       .prepare(
         `SELECT json_extract(body_json, '$.orderId') AS order_id, id FROM facts
-         WHERE business_id = ?1 AND kind = 'order_confirm' ORDER BY recorded_at_ms, rowid`,
+         WHERE business_id = ?1 AND kind = 'order_confirm' ORDER BY recorded_at_ms DESC, rowid DESC`,
       )
       .bind(tenant.businessId)
       .all<{ order_id: string; id: string }>();
-    const latestConfirm = new Map(confirms.map((row) => [row.order_id, row.id]));
-    for (const order of orders) {
-      const confirmId = latestConfirm.get(order.id);
-      if (confirmId !== undefined && (await orderCode(confirmId)) === query.code) return order.id;
+    const known = new Set(orders.map((order) => order.id));
+    for (const confirm of confirms) {
+      if (known.has(confirm.order_id) && (await orderCode(confirm.id)) === query.code) return confirm.order_id;
     }
     return null;
   }

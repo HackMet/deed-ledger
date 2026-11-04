@@ -326,14 +326,47 @@ describe("/console/deed/buscar: a typed code or reference reaches the order's en
     expect(found.headers.get("location")).toBeNull();
   });
 
-  it("puts the search field at the top of the feed", async () => {
+  it("still finds the order by its earlier code after a second confirm moved the code on", async () => {
+    const s = await storeWithMembers();
+    const { orderId, code } = await confirmedOrder(s);
+    const row = await env.DB.prepare(`SELECT * FROM facts WHERE business_id = ? AND kind = 'order_confirm'`)
+      .bind(s.businessId)
+      .first<Record<string, unknown>>();
+    const later = { ...row!, id: crypto.randomUUID(), operation_key: `later:${orderId}`, recorded_at_ms: Number(row!.recorded_at_ms) + 1 };
+    const columns = Object.keys(later);
+    await env.DB.prepare(`INSERT INTO facts (${columns.join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`)
+      .bind(...Object.values(later))
+      .run();
+    const h = harness({ engine: checkedEngine });
+    const cookie = await login(h, s, "staff");
+    for (const typed of [code, (await orderCode(later.id))!]) {
+      expect((await search(h, typed, cookie)).headers.get("location"), typed).toBe(libroOf(orderId));
+    }
+  });
+
+  it("links from the feed to a search page that doesn't reload while someone types", async () => {
     const s = await storeWithMembers();
     const h = harness({ engine: checkedEngine });
     const cookie = await login(h, s, "staff");
     const feed = await (await get(h, "/console/deed/verificaciones", cookie)).text();
-    expect(feed).toContain(`<form method="get" action="/console/deed/buscar"`);
-    expect(feed).toContain(`Buscar pedido por código`);
-    expect(feed.indexOf("Buscar pedido por código")).toBeLessThan(feed.indexOf('id="contadores"'));
+    expect(feed).toContain(`href="/console/deed/buscar"`);
+    expect(feed).not.toContain(`name="codigo"`);
+    const page = await get(h, "/console/deed/buscar", cookie);
+    expect(page.status).toBe(200);
+    const body = await page.text();
+    expect(body).toContain(`name="codigo"`);
+    expect(body).not.toContain("http-equiv");
+    expect(body).not.toContain("No encontré");
+  });
+
+  it("keeps the search field on the page that found nothing", async () => {
+    const s = await storeWithMembers();
+    const h = harness({ engine: checkedEngine });
+    const cookie = await login(h, s, "staff");
+    const body = await (await search(h, "#00000", cookie)).text();
+    expect(body).toContain("No encontré un pedido con ese código");
+    expect(body).toContain(`name="codigo"`);
+    expect(body).not.toContain("http-equiv");
   });
 });
 

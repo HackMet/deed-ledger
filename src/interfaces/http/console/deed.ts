@@ -89,8 +89,10 @@ export function deedScreen(app: Hono<ConsoleEnv>) {
   // Before `/deed/:orderId`, so the feed's and the search's names are never read as an order id.
   app.get("/deed/buscar", async (c) => {
     const tenant = { businessId: c.get("member").businessId };
-    const found = await new D1OrderLookup(c.env.DB).find(tenant, c.req.query("codigo") ?? "");
+    const typed = c.req.query("codigo");
+    const found = typed === undefined ? null : await new D1OrderLookup(c.env.DB).find(tenant, typed);
     if (found !== null) return c.redirect(`/console/deed/${encodeURIComponent(found)}/libro`, 302);
+    // No refresh on this page: a reload would empty the field while someone types.
     return c.html(
       await shell(c, {
         title: "Deed",
@@ -99,9 +101,13 @@ export function deedScreen(app: Hono<ConsoleEnv>) {
         path: SEARCH,
         tab: "/console/mas",
         style: STYLE,
-        body: html`<p class="empty">No encontré un pedido con ese código en esta tienda.</p>`,
+        body: html`${typed === undefined ? "" : html`<p class="empty">No encontré un pedido con ese código en esta tienda.</p>`}
+<form method="get" action="${SEARCH}" class="buscar">
+<label>Buscar pedido por código <input type="text" name="codigo" autocomplete="off" autocapitalize="characters" required></label>
+<button type="submit">Buscar</button>
+</form>`,
       }),
-      404,
+      typed === undefined ? 200 : 404,
     );
   });
 
@@ -118,10 +124,7 @@ export function deedScreen(app: Hono<ConsoleEnv>) {
         tab: "/console/mas",
         refreshSeconds: REFRESH_SECONDS,
         style: STYLE,
-        body: html`<form method="get" action="${SEARCH}" class="buscar">
-<label>Buscar pedido por código <input type="text" name="codigo" autocomplete="off" autocapitalize="characters" required></label>
-<button type="submit">Buscar</button>
-</form>
+        body: html`<p class="meta"><a href="${SEARCH}">Buscar pedido por código</a></p>
 <p class="counters" id="contadores">Intentos rechazados ${counters.attempts}</p>
 ${counters.refusedByReason.size === 0 ? "" : html`<ul class="reasons">${[...counters.refusedByReason].map(([reason, n]) => html`<li>${reasonLabel(reason, null)}: ${n}</li>`)}</ul>`}
 <p class="counters" id="afirmaciones">Afirmaciones verificadas ${counters.claims}, pasaron ${counters.claimsPassed}</p>
