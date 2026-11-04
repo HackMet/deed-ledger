@@ -7,9 +7,9 @@ import type { ActionEnvelope, ConsoleAction } from "../src/domain/contract/actio
 import { INVITE_TTL_MS } from "../src/domain/console-auth";
 import { orderCode } from "../src/domain/order-code";
 import { hashToken, newToken } from "../src/infrastructure/tokens";
-import { addAndPickup, firstOrder, ids, moreSugar, staleReady } from "./fixtures/contract";
+import { addAndPickup, ids, moreSugar, staleReady } from "./fixtures/contract";
 import { type Harness, harness } from "./helpers/harness";
-import { AGENT_ID, changeAndApprove, engine, firstDeliveryOrder, firstPickupOrder, newStore, placeFirstOrder, save, T0, tap } from "./helpers/orders";
+import { AGENT_ID, changeAndApprove, engine, firstDeliveryOrder, firstPickupOrder, forgetFulfillment, newStore, placeFirstOrder, save, T0, tap } from "./helpers/orders";
 import { newPhone, seedStore } from "./helpers/seed";
 
 type Store = Awaited<ReturnType<typeof newStore>>;
@@ -596,7 +596,7 @@ describe("K13: Pedidos dispatches a ready delivery order with a courier and show
   });
 
   it("pickup offers Entregado at listo; with no fulfillment recorded, it says what is missing instead", async () => {
-    const h = harness();
+    const h = harness({ engine: recordingEngine().wrapped });
     const s = await storeWithSession();
     const pickupId = await readyOrder(s, firstPickupOrder);
     const cookie = await login(h, s);
@@ -605,10 +605,20 @@ describe("K13: Pedidos dispatches a ready delivery order with a courier and show
     expect(pickupPage).not.toContain("¿Quién lo lleva?");
 
     const t = await storeWithSession();
-    const unknownId = await readyOrder(t, firstOrder);
-    const unknownPage = await (await get(h, `/console/pedidos/${unknownId}`, await login(h, t))).text();
+    const unknownId = await readyOrder(t, firstPickupOrder);
+    await forgetFulfillment(t.businessId, unknownId);
+    const unknownCookie = await login(h, t);
+    const unknownPath = `/console/pedidos/${unknownId}`;
+    const unknownPage = await (await get(h, unknownPath, unknownCookie)).text();
     expect(unknownPage).toContain("Falta saber si lo recogen o se lo llevamos.");
     expect(unknownPage).not.toContain("Entregado ✓");
     expect(unknownPage).not.toContain("¿Quién lo lleva?");
+
+    // The way out: a person says the customer has it, and the order is closed with nothing guessed.
+    expect(unknownPage).toContain("Ya lo tiene el cliente ✓");
+    const csrf = csrfOf(unknownPage);
+    const closed = await post(h, `${unknownPath}/paso`, unknownCookie, { csrf, paso: "entregar", version: "1" });
+    expect(closed.headers.get("location")).toBe(`${unknownPath}?aviso=entregado`);
+    expect(await env.DB.prepare(`SELECT state FROM orders WHERE id = ?`).bind(unknownId).first()).toEqual({ state: "entregado" });
   });
 });

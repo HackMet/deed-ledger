@@ -180,7 +180,10 @@ describe("DEED_ENGINE=1: a confirmed price reaches the order", () => {
 describe("DEED_ENGINE=1: the answer to the stock question, in the reader's wire format", () => {
   const ANSWER = (answer: string, quantity: string | null) => ({ observations: [{ kind: "clarification", answer, pick: null, quantity, evidence: quote(0, answer), issues: [] }] });
   const SUGAR_ONLY = {
-    observations: [{ kind: "customer_order", lines: [line("5 de azucar", "azucar 1 lb", "5", null, quote(0, "5 de azucar"))], issues: [] }],
+    observations: [
+      { kind: "customer_order", lines: [line("5 de azucar", "azucar 1 lb", "5", null, quote(0, "5 de azucar"))], issues: [] },
+      { kind: "fulfillment", mode: "pickup", place_text: null, same_as_before: false, issues: [] },
+    ],
   };
   const QUESTION = "De Azucar 1 lb ahorita me aparecen 2. ¿Te mando 2 o lo quitamos?";
 

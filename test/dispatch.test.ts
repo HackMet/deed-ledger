@@ -7,8 +7,8 @@ import type { BurstReading } from "../src/domain/contract/observation";
 import type { OrderState, OrderView } from "../src/domain/contract/outcomes";
 import { CANCEL_AFTER_DISPATCH } from "../src/domain/copy";
 import { deriveOrderState } from "../src/domain/order-state";
-import { firstOrder, ids, moreSugar } from "./fixtures/contract";
-import { count, engine, firstDeliveryOrder, firstPickupOrder, footprint, newStore, placeFirstOrder, save, store, T0, tap } from "./helpers/orders";
+import { ids, moreSugar } from "./fixtures/contract";
+import { count, engine, firstDeliveryOrder, firstPickupOrder, footprint, forgetFulfillment, newStore, placeFirstOrder, save, store, T0, tap } from "./helpers/orders";
 import { newPhone } from "./helpers/seed";
 
 type Store = Awaited<ReturnType<typeof newStore>>;
@@ -123,7 +123,7 @@ describe("K13: a delivery order goes listo → en_camino → entregado with a co
     expect((await statusFacts(s.businessId, ready.view.orderId)).at(-1)!.dependsOn).toEqual([ready.confirmFactId]);
   });
 
-  it("a pickup order is never dispatched, and an order with no fulfillment is neither dispatched nor delivered", async () => {
+  it("a pickup order is never dispatched, and neither is an order with no fulfillment", async () => {
     const s = await newStore();
     const marvin = await addMember(s.businessId, "Marvin");
     const pickupReady = await orderAt(s, firstPickupOrder, ["start_preparing", "mark_ready"]);
@@ -135,18 +135,36 @@ describe("K13: a delivery order goes listo → en_camino → entregado with a co
     });
 
     const t = await newStore();
-    const unknown = await orderAt(t, firstOrder, ["start_preparing", "mark_ready"]);
+    const placed = await orderAt(t, firstPickupOrder, ["start_preparing", "mark_ready"]);
+    await forgetFulfillment(t.businessId, placed.view.orderId);
+    const unknown = (await store.order(t.context(), placed.view.orderId))!;
     expect(unknown.view.fulfillment).toBeNull();
     const courier = await addMember(t.businessId, "Marvin");
-    for (const tapped of [stepTap("dispatch", unknown.view.orderId, courier), stepTap("mark_delivered", unknown.view.orderId)]) {
-      expect((await engine.onConsoleAction(member(t, T0 + 20_000), tapped)).outcome).toEqual({
-        type: "rejected",
-        reason: "invalid_state",
-        order: unknown.view,
-      });
-    }
+    const tthen = await written(t);
+    expect((await engine.onConsoleAction(member(t, T0 + 20_000), stepTap("dispatch", unknown.view.orderId, courier))).outcome).toEqual({
+      type: "rejected",
+      reason: "invalid_state",
+      order: unknown.view,
+    });
     expect(await written(s)).toEqual(before);
+    expect(await written(t)).toEqual(tthen);
     expect(await derivedAndCached(t, unknown.view.orderId)).toEqual({ derived: "listo", cached: "listo" });
+  });
+
+  it("with no fulfillment recorded, staff saying the customer has it closes the order and guesses no fulfillment", async () => {
+    const s = await newStore();
+    const placed = await orderAt(s, firstPickupOrder, ["start_preparing", "mark_ready"]);
+    const { orderId } = placed.view;
+    await forgetFulfillment(s.businessId, orderId);
+    const delivered = await engine.onConsoleAction(member(s, T0 + 20_000), stepTap("mark_delivered", orderId));
+    expect(delivered).toMatchObject({ outcome: { type: "action_saved", order: { state: "entregado", fulfillment: null } }, notices: [] });
+    await save(delivered);
+    expect(await derivedAndCached(s, orderId)).toEqual({ derived: "entregado", cached: "entregado" });
+    expect((await store.order(s.context(), orderId))!.view.fulfillment).toBeNull();
+    expect((await statusFacts(s.businessId, orderId)).at(-1)!.dependsOn).toEqual([placed.confirmFactId]);
+    expect(await store.openOrder(s.context(), ids.customer)).toBeNull();
+    // A second tap saves once.
+    expect((await engine.onConsoleAction(member(s, T0 + 21_000), stepTap("mark_delivered", orderId))).outcome).toMatchObject({ type: "duplicate" });
   });
 
   it("the courier must be an active member of this store: another store's, an inactive one and a made-up id are not_found", async () => {

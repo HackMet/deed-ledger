@@ -41,6 +41,7 @@ const ORDER_READING = {
       ],
       issues: [],
     },
+    { kind: "fulfillment", mode: "pickup", place_text: null, same_as_before: false, issues: [] },
   ],
 };
 
@@ -126,7 +127,7 @@ async function staffConsole(c: Awaited<ReturnType<typeof setUp>>) {
 describe("DEED_ENGINE=1 through the real reader", () => {
   it("a customer's text burst is read back by the engine, confirmed once, and a repeated confirm saves nothing", async () => {
     const c = await setUp([ORDER_READING]);
-    await c.say("1 lb de arroz y 2 de azucar");
+    await c.say("1 lb de arroz y 2 de azucar, lo recojo");
 
     // The engine's readback reached the outbox, naming the products the store has.
     const reply = c.h.sentTo(c.phone).at(-1);

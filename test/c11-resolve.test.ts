@@ -11,10 +11,10 @@ import { staffKey } from "../src/application/engine/order-engine";
 import type { ConsoleAction } from "../src/domain/contract/actions";
 import { ANSWER_NEW_READBACK, WHAT_TO_CORRECT } from "../src/domain/order-copy";
 import { COPY, flattenClaims, renderNotice, secondCheckHolds } from "../src/domain/replies";
-import { addAndPickup, firstOrder, moreSugar } from "./fixtures/contract";
+import { addAndPickup, moreSugar } from "./fixtures/contract";
 import { csrfFor, csrfOf, login, send } from "./helpers/console";
 import { type Harness, harness, rows } from "./helpers/harness";
-import { engine, newStore, save, store } from "./helpers/orders";
+import { engine, firstPickupOrder, newStore, save, store } from "./helpers/orders";
 import { newPhone } from "./helpers/seed";
 import { buttonReply, textMessage, wamid, webhook } from "./helpers/whatsapp";
 
@@ -67,7 +67,7 @@ async function scene(using: Engine = engine) {
 
 /** The order the customer is reading back, saved by the engine (no model in this test). */
 async function placed(c: Scene, matches: readonly LineMatch[] = c.s.matches): Promise<string> {
-  const result = await engine.onBurst(c.s.context({ customerId: c.customerId, conversationId: c.conversationId, nowMs: c.h.clock.now() }), firstOrder, matches);
+  const result = await engine.onBurst(c.s.context({ customerId: c.customerId, conversationId: c.conversationId, nowMs: c.h.clock.now() }), firstPickupOrder, matches);
   if (result.outcome.type !== "readback") throw new Error(`expected a readback, got ${result.outcome.type}`);
   await save(result);
   return result.outcome.order.orderId;

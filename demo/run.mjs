@@ -143,7 +143,7 @@ async function scenario(cookie) {
     expectation,
     pass: reply !== null && pattern.test(reply) && sameDelta(delta, deltas),
   });
-  const placeOrder = (who, recording = "firstOrder") =>
+  const placeOrder = (who, recording = "firstDeliveryOrder") =>
     customerSays(who, said(recording), expectReply(/^Esto entendí de tu pedido:/, { order_version: 1 }, "a readback; one order_version fact"));
   const confirm = (who) =>
     customerSays(who, "confirmar", expectReply(/Quedó confirmado/, { order_confirm: 1 }, "“Quedó confirmado…”; one order_confirm fact"));
@@ -165,7 +165,7 @@ async function scenario(cookie) {
 
   // A: a delivery order, prepared, dispatched with a courier and delivered.
   console.log("— A: delivery order, from WhatsApp to delivered");
-  await placeOrder("A", "firstDeliveryOrder");
+  await placeOrder("A");
   await confirm("A");
   const proof = query(`SELECT (SELECT count(*) FROM orders) AS orders, (SELECT count(*) FROM facts WHERE kind = 'order_confirm') AS confirms`)[0];
   if (!(proof?.orders >= 1 && proof?.confirms >= 1)) throw new NotRealEngine(`after A's confirm: ${JSON.stringify(proof)} (orders and order_confirm facts must be ≥ 1)`);

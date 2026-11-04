@@ -9,8 +9,8 @@ import { createOrderHandler, type OrderHandlerDeps } from "../src/application/or
 import type { JobInput } from "../src/application/ports";
 import { D1FactLedger } from "../src/infrastructure/d1/fact-ledger";
 import { D1StockBalances } from "../src/infrastructure/d1/stock-balances";
-import { firstOrder, ids, readbackOrder } from "./fixtures/contract";
-import { count, newStore, save, store, T0, tap } from "./helpers/orders";
+import { ids, readbackOrder } from "./fixtures/contract";
+import { count, firstPickupOrder, newStore, save, store, T0, tap } from "./helpers/orders";
 import { newPhone, seedStore } from "./helpers/seed";
 
 const engine = new OrderEngine({ store, ids: { newId: () => crypto.randomUUID() }, ledger: new D1FactLedger(env.DB), stock: new D1StockBalances(env.DB) });
@@ -155,7 +155,7 @@ const edit = (ref: string, quantity: string | null): BurstReading => ({
 });
 
 async function place(s: Awaited<ReturnType<typeof stocked>>, nowMs = T0): Promise<OrderView> {
-  const result = await engine.onBurst(s.context({ nowMs }), firstOrder, s.matches);
+  const result = await engine.onBurst(s.context({ nowMs }), firstPickupOrder, s.matches);
   if (result.outcome.type !== "readback") throw new Error(`expected readback, got ${result.outcome.type}`);
   await save(result);
   return result.outcome.order;
@@ -329,11 +329,11 @@ describe("the readback with the store's stock, on local D1", () => {
       expect(renderOutcome(took.outcome, CUSTOMER)!.body).toContain("ahorita me aparecen 2. ¿Te mando 2 o lo quitamos?");
     });
 
-    it("with no short line a clarification changes nothing", async () => {
+    it("with no short line a clarification changes nothing: the same version is read back", async () => {
       const s = await stocked({ jabon: 9000 });
-      await place(s);
+      const v1 = await place(s);
       const outcome = await say(s, "sí");
-      expect(outcome.outcome.type).toBe("nothing");
+      expect(outcome.outcome).toMatchObject({ type: "readback", order: { orderId: v1.orderId, version: 1 } });
       expect(outcome.commits).toEqual([]);
     });
 

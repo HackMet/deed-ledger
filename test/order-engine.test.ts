@@ -3,17 +3,17 @@ import { describe, expect, it } from "vitest";
 import { burstKey } from "../src/application/engine/order-engine";
 import type { BurstReading } from "../src/domain/contract/observation";
 import { addAndPickup, firstOrder, ids, injectedInstructions, moreSugar } from "./fixtures/contract";
-import { count, engine, footprint, newStore, placeFirstOrder, reviewer, reviewTap, save, store, T0, tap } from "./helpers/orders";
+import { count, engine, firstPickupOrder, footprint, newStore, placeFirstOrder, reviewer, reviewTap, save, store, T0, tap } from "./helpers/orders";
 
 describe("order engine on local D1", () => {
   it("(a) turns a first order into v1 read back, and the confirming tap saves it once", async () => {
     const s = await newStore();
-    const result = await engine.onBurst(s.context(), firstOrder, s.matches);
+    const result = await engine.onBurst(s.context(), firstPickupOrder, s.matches);
 
     expect(result.outcome.type).toBe("readback");
     if (result.outcome.type !== "readback") return;
     const order = result.outcome.order;
-    expect(order).toMatchObject({ version: 1, state: "por_confirmar", fulfillment: null, total: null, queuePosition: null });
+    expect(order).toMatchObject({ version: 1, state: "por_confirmar", fulfillment: { mode: "pickup" }, total: null, queuePosition: null });
     expect(order.lines.map((l) => [l.lineId, l.text, l.quantity, l.unit])).toEqual([
       ["L1", "1 aceite clover", "1", null],
       ["L2", "3 lb arroz", "3", "libra"],
@@ -44,12 +44,12 @@ describe("order engine on local D1", () => {
   it("(b) answers a repeated operation key from the read: duplicate with the first outcome, saved once", async () => {
     const s = await newStore();
     const context = s.context();
-    const first = await engine.onBurst(context, firstOrder, s.matches);
+    const first = await engine.onBurst(context, firstPickupOrder, s.matches);
     await save(first);
     const before = await footprint(s.businessId);
 
     // The same job retried.
-    const again = await engine.onBurst(context, firstOrder, s.matches);
+    const again = await engine.onBurst(context, firstPickupOrder, s.matches);
     expect(again.outcome).toEqual({ type: "duplicate", first: first.outcome });
     // Answered by the read: no commit was even built, so no UNIQUE could have been the one to answer.
     expect(again.commits).toEqual([]);

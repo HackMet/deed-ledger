@@ -357,6 +357,9 @@ async function handlePlaceTap(deps: OrderHandlerDeps, lease: Lease, job: Job, fa
  * A typed yes is Confirmar only when the last message the customer was sent before writing it
  * carried that readback's Confirmar button: after any other message (a question, an answer) the
  * yes may answer that one, so it's read instead.
+ *
+ * Typed, it only answers that readback while its order is still the open one. A finished order keeps
+ * the pointer until the next readback goes out, which an ask holds back: the message is read as usual.
  */
 async function readbackAnswer(deps: OrderHandlerDeps, lease: Lease, job: Job, customer: ConversationCustomer): Promise<Answer | "unseen_readback" | null> {
   if (job.kind === "interactive") {
@@ -366,8 +369,20 @@ async function readbackAnswer(deps: OrderHandlerDeps, lease: Lease, job: Job, cu
   if (job.kind !== "text" || customer.lastReadback === null) return null;
   const { orderId, version, queuedAtMs } = customer.lastReadback;
   const word = typedReadbackWord(job.textBody);
+  if (word === null && !isTypedYes(job.textBody)) return null;
+  const openOrder = (deps.engine as Partial<OpenOrderSource>).openOrderRef;
+  if (openOrder !== undefined) {
+    const open = await openOrder.call(deps.engine, {
+      businessId: lease.businessId,
+      conversationId: lease.conversationId,
+      customerId: customer.id,
+      jobId: job.id,
+      nowMs: deps.clock.now(),
+    });
+    if (open?.orderId !== orderId) return null;
+  }
   if (word !== null) return job.receivedAtMs <= queuedAtMs ? "unseen_readback" : { word, orderId, version };
-  if (!isTypedYes(job.textBody) || job.receivedAtMs <= queuedAtMs || deps.buttonsShown == null) return null;
+  if (job.receivedAtMs <= queuedAtMs || deps.buttonsShown == null) return null;
   const confirmId = decisionKey("confirm", { orderId, version });
   const shown = await deps.buttonsShown.lastButtons(lease, job.receivedAtMs);
   return confirmId !== null && shown.some((button) => button.id === confirmId)

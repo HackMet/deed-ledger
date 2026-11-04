@@ -91,11 +91,15 @@ export const firstDeliveryOrder: BurstReading = {
   ],
 };
 
+/** An order saved before confirm asked pickup or delivery: nothing recorded how it leaves the store. */
+export const forgetFulfillment = (businessId: string, orderId: string) =>
+  env.DB.prepare(`UPDATE order_versions SET fulfillment_mode = NULL WHERE business_id = ? AND order_id = ?`).bind(businessId, orderId).run();
+
 export async function placeFirstOrder(
   s: Awaited<ReturnType<typeof newStore>>,
   customerId: string = ids.customer,
   nowMs = T0,
-  reading: BurstReading = firstOrder,
+  reading: BurstReading = firstPickupOrder,
 ) {
   const result = await engine.onBurst(s.context({ customerId, nowMs }), reading, s.matches);
   if (result.outcome.type !== "readback") throw new Error(`expected readback, got ${result.outcome.type}`);
