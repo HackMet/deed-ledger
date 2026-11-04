@@ -25,6 +25,13 @@ const STATE = process.env.DEMO_STATE ?? ".wrangler/demo-state";
 const ENV_FILE = ".wrangler/demo/demo.env";
 const LOG_FILE = ".wrangler/demo/worker.log";
 const PORT = Number(process.env.DEMO_PORT ?? 8790);
+// One connection per request. query() blocks the event loop in spawnSync for seconds; the local Worker
+// drops idle keep-alive sockets meanwhile, and the next fetch reused a dead one ("other side closed").
+const fetch = (url, init = {}) => {
+  const headers = new Headers(init.headers);
+  headers.set("connection", "close");
+  return globalThis.fetch(url, { ...init, headers });
+};
 const BASE = `http://127.0.0.1:${PORT}`;
 const OWNER = { phone: SIM.ownerPhone, name: "Dueña demo (sintética)" };
 const COURIER = { phone: "50400000090", name: "Mario" };
