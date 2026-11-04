@@ -3,6 +3,7 @@
  * gives a message the ID WhatsApp returned; that ID, posted to the search, reaches the order's Libro, which shows it,
  * and the exported entry never holds it. No row here is seeded with an ID.
  */
+import { OPEN_STATES } from "../src/domain/replies";
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import type { Engine, LineMatch } from "../src/application/engine";
@@ -213,6 +214,12 @@ describe("C11: every customer message about an order resolves to it, from a real
     await c.say("confirmar");
     expect(c.last().body).toBe(COPY.anythingElse);
     await expectResolves(c, orderId, c.last().id);
+  });
+
+  it("counts an order out for delivery as open, so its never-silent line isn't blocked", () => {
+    expect(OPEN_STATES).toContain("en_camino");
+    expect(OPEN_STATES).not.toContain("entregado");
+    expect(OPEN_STATES).not.toContain("cancelado");
   });
 
   it("the ready notice", async () => {

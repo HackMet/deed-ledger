@@ -315,7 +315,7 @@ export function typedDecision(text: string): Decision | null {
 const NO_REPLY = null;
 
 /** An order is open until it's delivered or cancelled. */
-export const OPEN_STATES: readonly OrderState[] = ["armando", "por_confirmar", "confirmado", "preparando", "listo"];
+export const OPEN_STATES: readonly OrderState[] = ["armando", "por_confirmar", "confirmado", "preparando", "listo", "en_camino"];
 
 /**
  * The reply to a customer for an engine outcome, or null when the outcome gets none (a console
