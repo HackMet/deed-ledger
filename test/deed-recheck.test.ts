@@ -165,3 +165,9 @@ describe("docs/deed-entry-example.json: a real entry of the demo's order A", () 
     expect(result.ok && result.differ).toEqual([expect.objectContaining({ stored: "en_duda", recomputed: "emparejado" })]);
   });
 });
+
+describe("recheckEntry: an entry names its domain", () => {
+  it("refuses the book's verdicts filed under another domain", () => {
+    expect(recheckEntry({ ...example, domain: "freight" })).toEqual({ ok: false, error: 'malformed entry: domain must be "deed-libro" (got "freight")' });
+  });
+});

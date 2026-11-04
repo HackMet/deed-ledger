@@ -4,8 +4,10 @@
  * (infrastructure/d1/libro-reads.ts) reads the rows; this module decides every pair's state.
  *
  * Each pair has one of four states. Silence is never red (C7): a reply with no delivery status yet is en
- * duda, and a claim with no fact is red only because the book has nothing to witness it.
+ * duda, and a claim with no fact is red only because the book has nothing to witness it. The pairing is the core's
+ * (`pair` in src/deed-core); this module says what each witness means and keeps the book's words for the states.
  */
+import { type PairState as CorePairState, pair } from "../deed-core";
 import { type Centavos, type DecimalString, formatLempiras } from "./contract/numbers";
 import type { Claim, OrderState } from "./contract/outcomes";
 import type { ClaimCheck } from "./replies";
@@ -15,6 +17,9 @@ type StateClaim = Extract<Claim, { type: "order_state" }>;
 type TotalClaim = Extract<Claim, { type: "order_total" }>;
 
 export type PairState = "emparejado" | "sin_pareja" | "en_duda" | "bloqueado";
+
+/** The book's word for each of the core's pair states: the screens, the demo and the entry file keep these. */
+const WORD_OF: Record<CorePairState, PairState> = { paired: "emparejado", unpaired: "sin_pareja", in_doubt: "en_duda", blocked: "bloqueado" };
 
 export type FactKind = "order_version" | "order_confirm" | "order_cancel" | "order_status" | "change_request" | "change_review";
 
@@ -161,16 +166,20 @@ export function stateOf(fact: LibroFact): OrderState | null {
  */
 export function pairOrderState(claim: { readonly version: number; readonly state: OrderState }, facts: readonly LibroFact[]): { readonly state: PairState; readonly fact: LibroFact | null } {
   const matching = facts.filter((fact) => stateOf(fact) === claim.state && fact.version === claim.version);
-  const live = matching.find((fact) => fact.live);
-  if (live !== undefined) return { state: "emparejado", fact: live };
-  return { state: "sin_pareja", fact: matching.at(-1) ?? null };
+  // No fact for the claim: the book has nothing to witness it, which is a conflict (red), not silence.
+  const witnesses: readonly (LibroFact | null)[] = matching.length > 0 ? matching : [null];
+  const state = pair(claim, witnesses, (_claim, fact) => (fact !== null && fact.live ? "match" : "conflict"));
+  return { state: WORD_OF[state], fact: matching.find((fact) => fact.live) ?? matching.at(-1) ?? null };
 }
 
 /** `order_total` claim ↔ the recorded total of its version: equal pairs; a recorded total that is unknown is in doubt. */
 export function pairOrderTotal(said: Centavos, recorded: Centavos | null): PairState {
-  if (recorded === null) return "en_duda";
-  return said === recorded ? "emparejado" : "sin_pareja";
+  const witnesses: readonly Centavos[] = recorded === null ? [] : [recorded];
+  return WORD_OF[pair(said, witnesses, (claim, total) => (claim === total ? "match" : "conflict"))];
 }
+
+/** One thing the book knows about a reply's delivery: the provider's status for it, or the outbox's status for the row. */
+type DeliverySignal = { readonly provider: ProviderStatus } | { readonly outbox: string };
 
 /**
  * A reply ↔ its delivery. The provider's status is read first: delivered, read or played is green, even on a row
@@ -179,9 +188,16 @@ export function pairOrderTotal(said: Centavos, recorded: Centavos | null): PairS
  * silence is never red.
  */
 export function pairDelivery(reply: Pick<LibroReply, "status" | "providerStatus">): PairState {
-  if (reply.providerStatus === "delivered" || reply.providerStatus === "read" || reply.providerStatus === "played") return "emparejado";
-  if (reply.providerStatus === "failed" || UNSENT.includes(reply.status)) return "sin_pareja";
-  return "en_duda";
+  const signals: DeliverySignal[] = [{ outbox: reply.status }, ...(reply.providerStatus === null ? [] : [{ provider: reply.providerStatus }])];
+  return WORD_OF[
+    pair(reply, signals, (_reply, signal) => {
+      if ("provider" in signal) {
+        if (signal.provider === "delivered" || signal.provider === "read" || signal.provider === "played") return "match";
+        return signal.provider === "failed" ? "conflict" : "silent";
+      }
+      return UNSENT.includes(signal.outbox) ? "conflict" : "silent";
+    })
+  ];
 }
 
 /**

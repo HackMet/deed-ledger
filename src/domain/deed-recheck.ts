@@ -2,61 +2,21 @@
  * The entry a third party can re-judge (C3). An entry is the order's three-lane input as the book read it, and the
  * verdict the book issued for each row. `recheckEntry` runs libroRows on the input alone and compares: no model, no
  * database, no secret takes part, so the same entry gives the same verdicts anywhere. Pure: no I/O.
+ * The file and the comparison are the core's (`entryFile` and `recheck` in src/deed-core); this module names the
+ * book's domain, its states, and checks the input's shape before the judge runs.
  */
+import { type EntryFile, type EntryJudge, MalformedEntry, type Recheck as CoreRecheck, entryFile, recheck } from "../deed-core";
 import { type LibroFact, type LibroInput, type LibroRefusal, type LibroReply, type PairState, type RecordedLine, libroRows } from "./deed-libro";
 import type { Centavos } from "./contract/numbers";
 import type { Claim, OrderState } from "./contract/outcomes";
 import type { ClaimCheck } from "./replies";
 
 export const ENTRY_SCHEMA = 1;
+export const ENTRY_DOMAIN = "deed-libro";
 
-export interface Verdict {
-  readonly rowKey: string;
-  readonly state: PairState | null;
-}
+export type DeedEntry = EntryFile<LibroInput, PairState>;
 
-export interface DeedEntry {
-  readonly schema: typeof ENTRY_SCHEMA;
-  readonly input: LibroInput;
-  readonly verdicts: readonly Verdict[];
-}
-
-/** A row whose stored and recomputed verdicts differ; "missing" when one side has no row with that key. */
-export interface Difference {
-  readonly rowKey: string;
-  readonly stored: PairState | null | "missing";
-  readonly recomputed: PairState | null | "missing";
-}
-
-export type Recheck =
-  | { readonly ok: true; readonly pairs: number; readonly same: number; readonly differ: readonly Difference[] }
-  | { readonly ok: false; readonly error: string };
-
-/** The verdict of each row of the input, keyed by the row's id (r1, r2, …): deterministic for the same input. */
-export function verdictsOf(input: LibroInput): Verdict[] {
-  return libroRows(input).map((row) => ({ rowKey: row.id, state: row.state }));
-}
-
-export function entryOf(input: LibroInput): DeedEntry {
-  return { schema: ENTRY_SCHEMA, input, verdicts: verdictsOf(input) };
-}
-
-/** Re-runs the judge on the entry's input and compares every row with its stored verdict. A malformed entry is an error. */
-export function recheckEntry(entry: unknown): Recheck {
-  const parsed = parseEntry(entry);
-  if (typeof parsed === "string") return { ok: false, error: parsed };
-  const recomputed = new Map(verdictsOf(parsed.input).map((verdict) => [verdict.rowKey, verdict.state]));
-  const stored = new Map(parsed.verdicts.map((verdict) => [verdict.rowKey, verdict.state]));
-  const keys = [...new Set([...recomputed.keys(), ...stored.keys()])];
-  const differ: Difference[] = [];
-  for (const rowKey of keys) {
-    // A null verdict is a real answer (a fact nothing witnessed); only an absent key is "missing".
-    const a = stored.has(rowKey) ? stored.get(rowKey)! : "missing";
-    const b = recomputed.has(rowKey) ? recomputed.get(rowKey)! : "missing";
-    if (a !== b) differ.push({ rowKey, stored: a, recomputed: b });
-  }
-  return { ok: true, pairs: keys.length, same: keys.length - differ.length, differ };
-}
+export type Recheck = CoreRecheck<PairState>;
 
 // --- Shape: every boundary is checked before the judge runs (schema first, then the rules) ------
 
@@ -69,10 +29,8 @@ const PROVIDER_STATUSES = ["sent", "delivered", "read", "played", "failed"] as c
 const ORDER_STATES = ["armando", "por_confirmar", "confirmado", "preparando", "listo", "en_camino", "entregado", "cancelado"] as const satisfies readonly OrderState[];
 const DECIMAL = /^\d+(\.\d+)?$/;
 
-class Malformed extends Error {}
-
 const fail = (where: string, what: string): never => {
-  throw new Malformed(`${where} ${what}`);
+  throw new MalformedEntry(`${where} ${what}`);
 };
 const obj = (value: unknown, where: string): Record<string, unknown> => {
   if (typeof value !== "object" || value === null || Array.isArray(value)) fail(where, "must be an object");
@@ -183,19 +141,24 @@ function parseInput(value: unknown): LibroInput {
   };
 }
 
-/** The entry, or the reason it is not one. Nothing is read past the first refusal. */
-function parseEntry(value: unknown): DeedEntry | string {
-  try {
-    const entry = obj(value, "entry");
-    if (entry.schema !== ENTRY_SCHEMA) fail("schema", `must be ${ENTRY_SCHEMA} (unknown schema ${JSON.stringify(entry.schema)})`);
-    const verdicts = arr(entry.verdicts, "verdicts").map((verdict, i): Verdict => {
-      const v = obj(verdict, `verdicts[${i}]`);
-      return { rowKey: str(v.rowKey, `verdicts[${i}].rowKey`), state: orNull(v.state, (s, w) => one(PAIR_STATES, s, w), `verdicts[${i}].state`) };
-    });
-    if (new Set(verdicts.map((verdict) => verdict.rowKey)).size !== verdicts.length) fail("verdicts", "repeat a rowKey");
-    return { schema: ENTRY_SCHEMA, input: parseInput(entry.input), verdicts };
-  } catch (error) {
-    if (error instanceof Malformed) return `malformed entry: ${error.message}`;
-    throw error;
-  }
+/** The verdict of each row of the input, keyed by the row's id (r1, r2, …): deterministic for the same input. */
+export function verdictsOf(input: LibroInput): { readonly rowKey: string; readonly state: PairState | null }[] {
+  return libroRows(input).map((row) => ({ rowKey: row.id, state: row.state }));
+}
+
+/** The book's judge for the core: its domain, its states, how to read the input, and the rows it issues. */
+const bookJudge: EntryJudge<LibroInput, PairState> = {
+  domain: ENTRY_DOMAIN,
+  states: PAIR_STATES,
+  parse: parseInput,
+  rows: verdictsOf,
+};
+
+export function entryOf(input: LibroInput): DeedEntry {
+  return entryFile(bookJudge, input);
+}
+
+/** Re-runs the judge on the entry's input and compares every row with its stored verdict. A malformed entry is an error. */
+export function recheckEntry(entry: unknown): Recheck {
+  return recheck(bookJudge, entry);
 }

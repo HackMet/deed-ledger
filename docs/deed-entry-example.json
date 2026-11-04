@@ -1,5 +1,6 @@
 {
   "schema": 1,
+  "domain": "deed-libro",
   "input": {
     "orderId": "f3ef4504-ab6c-460a-a523-2a9f7c79bdf4",
     "facts": [

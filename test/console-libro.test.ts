@@ -79,7 +79,7 @@ const MEMBER_NAME = "Dueño Sintético Prueba";
 
 /** The keys each object of the entry may carry. A key the list lacks fails the test, so a new field is listed on purpose. */
 const ENTRY_KEYS = {
-  entry: ["schema", "input", "verdicts"],
+  entry: ["schema", "domain", "input", "verdicts"],
   input: ["orderId", "facts", "lines", "replies", "refusals"],
   fact: ["id", "kind", "operationKey", "recordedAtMs", "version", "status", "resumeState", "live", "witness"],
   witness: ["kind", "refId"],
