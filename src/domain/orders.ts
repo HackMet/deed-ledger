@@ -79,7 +79,8 @@ function leadingNumber(text: string): { readonly value: number; readonly length:
   if (pair?.[2] !== undefined) {
     const first = NUMBER_WORDS.get(plain(pair[1]!));
     const half = HALF.get(plain(pair[2]));
-    const unit = UNITS.includes(plain(pair[2])) ? NUMBER_WORDS.get(plain(pair[2])) : undefined;
+    const second = NUMBER_WORDS.get(plain(pair[2]));
+    const unit = second !== undefined && second < 10000 ? second : undefined;
     if (first !== undefined && half !== undefined) return { value: first + half, length: pair[0].length };
     if (first !== undefined && first >= 30000 && unit !== undefined) return { value: first + unit, length: pair[0].length };
   }
