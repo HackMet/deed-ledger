@@ -108,8 +108,21 @@ describe("pairDelivery: a reply ↔ its delivery; silence is never red", () => {
     expect(pairDelivery({ status: "sent", providerStatus })).toBe("emparejado");
   });
 
-  it.each(["failed", "expired", "unknown_delivery"])("is sin pareja when the row ended unsent (%s)", (status) => {
+  it.each(["failed", "expired"])("is sin pareja when the row ended unsent (%s)", (status) => {
     expect(pairDelivery({ status, providerStatus: null })).toBe("sin_pareja");
+  });
+
+  it("is en duda when the outcome is unknown and no provider status says otherwise, never red", () => {
+    expect(pairDelivery({ status: "unknown_delivery", providerStatus: null })).toBe("en_duda");
+    expect(pairDelivery({ status: "unknown_delivery", providerStatus: "sent" })).toBe("en_duda");
+  });
+
+  it.each(["delivered", "read", "played"] as const)("is emparejado when the provider reports %s, even if the outcome is unknown", (providerStatus) => {
+    expect(pairDelivery({ status: "unknown_delivery", providerStatus })).toBe("emparejado");
+  });
+
+  it("is sin pareja when the provider reports failed, even if the outcome is unknown", () => {
+    expect(pairDelivery({ status: "unknown_delivery", providerStatus: "failed" })).toBe("sin_pareja");
   });
 
   it("is sin pareja when the provider reports failed", () => {
@@ -122,7 +135,7 @@ describe("pairDelivery: a reply ↔ its delivery; silence is never red", () => {
   });
 
   it("is never red for silence: no status, in any row state that is not unsent", () => {
-    for (const status of ["pending", "sending", "sent", "waiting_window"]) {
+    for (const status of ["pending", "sending", "sent", "waiting_window", "unknown_delivery"]) {
       expect(pairDelivery({ status, providerStatus: null })).not.toBe("sin_pareja");
     }
   });
@@ -262,5 +275,67 @@ describe("libroRows: the three lanes, row by row", () => {
     });
     expect(rows.map((row) => row.id)).toEqual(["r1", "r2", "r3", "r4"]);
     expect(rows[0]?.atMs).toBe(1_000);
+  });
+
+  it("draws an unknown outcome in doubt, saying it is not known whether it went out: never red, never 'no se envió'", () => {
+    const rows = libroRows({
+      orderId,
+      facts: [],
+      lines: [],
+      replies: [reply({ id: "m1", status: "unknown_delivery", claims: [listo(1)] })],
+      refusals: [],
+    });
+    const delivery = rows.find((row) => row.world?.kind === "delivery");
+    expect(delivery?.state).toBe("en_duda");
+    expect(delivery?.world?.text).toBe("No se sabe si salió");
+    expect(rows.find((row) => row.agent?.kind === "reply")?.agent?.text).toBe("No se sabe si salió la respuesta");
+  });
+
+  it("draws an unknown outcome that the provider later reported delivered as green, with the provider's word", () => {
+    const rows = libroRows({
+      orderId,
+      facts: [],
+      lines: [],
+      replies: [reply({ id: "m1", status: "unknown_delivery", providerStatus: "delivered", claims: [listo(1)] })],
+      refusals: [],
+    });
+    const delivery = rows.find((row) => row.world?.kind === "delivery");
+    expect(delivery?.state).toBe("emparejado");
+    expect(delivery?.world?.text).toBe("Entregado al teléfono");
+  });
+
+  it.each([
+    ["pending", "Respuesta en cola", "en_duda"],
+    ["sending", "Respuesta en cola", "en_duda"],
+    ["sent", "Respuesta enviada", "en_duda"],
+    ["waiting_window", "Respuesta en espera", "en_duda"],
+    ["failed", "Respuesta no enviada", "sin_pareja"],
+    ["expired", "Respuesta no enviada", "sin_pareja"],
+    ["unknown_delivery", "No se sabe si salió la respuesta", "en_duda"],
+  ] as const)("words a reply in outbox status %s as %j, in state %s", (status, words, state) => {
+    const rows = libroRows({ orderId, facts: [], lines: [], replies: [reply({ id: "m1", status, claims: [listo(1)] })], refusals: [] });
+    const agent = rows.find((row) => row.agent?.kind === "reply");
+    expect(agent?.agent?.text).toBe(words);
+    expect(agent?.state).toBe(state);
+  });
+
+  it("matches a total claim against the lines of its own version only", () => {
+    const rows = libroRows({
+      orderId,
+      facts: [],
+      lines: [line({ version: 1, unitPrice: 1000, quantity: "2" }), line({ version: 2, unitPrice: 1500, quantity: "2" })],
+      replies: [
+        reply({ id: "m1", atMs: 2_000, claims: [{ type: "order_total", orderId, version: 2, total: 3000 }] }),
+        reply({ id: "m2", atMs: 3_000, claims: [{ type: "order_total", orderId, version: 1, total: 2000 }] }),
+        reply({ id: "m3", atMs: 4_000, claims: [{ type: "order_total", orderId, version: 2, total: 2000 }] }),
+      ],
+      refusals: [],
+    });
+    const balances = rows.filter((row) => row.book?.kind === "balance");
+    expect(balances.map((row) => [row.state, row.book?.text])).toEqual([
+      ["emparejado", "Total L 30"],
+      ["emparejado", "Total L 20"],
+      ["sin_pareja", "dijo L 20 · registró L 30"],
+    ]);
   });
 });

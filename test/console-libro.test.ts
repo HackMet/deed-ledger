@@ -188,6 +188,15 @@ describe("/console/deed/:orderId/libro: the three lanes", () => {
     expect(body).toContain("Entregado al teléfono");
   });
 
+  it("leaves the drawing room for its 12 px margins inside a 360 px screen, so the page never scrolls sideways", async () => {
+    const s = await storeWithMembers();
+    const { orderId } = await fourStates(s);
+    const h = harness({ engine });
+    const cookie = await login(h, s, "staff");
+    const body = await (await get(h, `/console/deed/${encodeURIComponent(orderId)}/libro`, cookie)).text();
+    expect(body).toContain("width:calc(100% - 24px);max-width:420px;height:auto;margin:8px 12px;");
+  });
+
   it("writes no ACK or NACK, no external URL and no script, and never the text of a message or a phone", async () => {
     const s = await storeWithMembers();
     const { orderId } = await fourStates(s);

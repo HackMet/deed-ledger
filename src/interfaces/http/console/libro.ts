@@ -149,7 +149,7 @@ ${rows.map((row) => panelOf(row, rows))}`,
 
 const STYLE = `
 .libro{--claim:#3A4BC8;--witness:#0E7C86;--ok:#1F8A4C;--doubt:#B7791F;--bad:#C2362F;--muted:#5B6578;--ink:#141C2E;
-  display:block;width:100%;max-width:420px;height:auto;margin:8px 12px;background:#fff;border:1px solid var(--line);border-radius:10px}
+  display:block;width:calc(100% - 24px);max-width:420px;height:auto;margin:8px 12px;background:#fff;border:1px solid var(--line);border-radius:10px}
 .libro .lane{font:600 11px system-ui,sans-serif;fill:var(--muted)}
 .libro .box{fill:#fff;stroke-width:1.6}
 .libro .c-claim{stroke:var(--claim)}

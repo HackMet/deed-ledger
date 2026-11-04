@@ -124,7 +124,19 @@ const REASON_WORDS: Record<string, string> = {
   not_backed: "no está respaldado por los registros",
 };
 
-const UNSENT = ["failed", "expired", "unknown_delivery"];
+/** Outbox statuses under which the row ended and was not sent. `unknown_delivery` is not one of them: its outcome is unknown. */
+const UNSENT = ["failed", "expired"];
+
+/** The reply's words in the agent's lane, by its outbox status. Only `sent` says it went out. */
+const REPLY_WORDS: Record<string, string> = {
+  pending: "Respuesta en cola",
+  sending: "Respuesta en cola",
+  sent: "Respuesta enviada",
+  waiting_window: "Respuesta en espera",
+  failed: "Respuesta no enviada",
+  expired: "Respuesta no enviada",
+  unknown_delivery: "No se sabe si salió la respuesta",
+};
 
 /** The order state a fact records, or null when none does (a change, or a product mark). A confirm records the state it resumed into. */
 export function stateOf(fact: LibroFact): OrderState | null {
@@ -161,12 +173,14 @@ export function pairOrderTotal(said: Centavos, recorded: Centavos | null): PairS
 }
 
 /**
- * A reply ↔ its delivery. An unsent row, or a provider `failed`, is red. Delivered, read or played is green.
- * Anything else, including no status yet, is in doubt: silence is never red.
+ * A reply ↔ its delivery. The provider's status is read first: delivered, read or played is green, even on a row
+ * whose outcome is unknown; a provider `failed` is red. Without a provider failure, a row that ended unsent (failed,
+ * expired) is red. Anything else is in doubt, including an unknown outcome (unknown_delivery) and no status yet:
+ * silence is never red.
  */
 export function pairDelivery(reply: Pick<LibroReply, "status" | "providerStatus">): PairState {
-  if (UNSENT.includes(reply.status) || reply.providerStatus === "failed") return "sin_pareja";
   if (reply.providerStatus === "delivered" || reply.providerStatus === "read" || reply.providerStatus === "played") return "emparejado";
+  if (reply.providerStatus === "failed" || UNSENT.includes(reply.status)) return "sin_pareja";
   return "en_duda";
 }
 
@@ -238,7 +252,7 @@ const claimCell = (alternatives: readonly (StateClaim | TotalClaim)[], reply: Li
 
 const replyCell = (reply: LibroReply): LibroCell => ({
   kind: "reply",
-  text: UNSENT.includes(reply.status) ? "Respuesta no enviada" : "Respuesta enviada",
+  text: REPLY_WORDS[reply.status] ?? "Estado de respuesta desconocido",
   atMs: reply.atMs,
   factId: null,
   details: [{ term: "Mensaje", value: reply.id }, { term: "Estado", value: reply.status }],
@@ -252,8 +266,16 @@ const DELIVERY_WORDS: Record<ProviderStatus, string> = {
   failed: "Falló el envío",
 };
 
+/** The wording follows pairDelivery: a provider status says what happened; without one, the outbox status does. */
+const deliveryText = (reply: LibroReply): string => {
+  if (reply.providerStatus !== null && reply.providerStatus !== "sent") return DELIVERY_WORDS[reply.providerStatus];
+  if (UNSENT.includes(reply.status)) return "No se envió";
+  if (reply.status === "unknown_delivery") return "No se sabe si salió";
+  return reply.providerStatus === "sent" ? DELIVERY_WORDS.sent : "Sin confirmación de entrega todavía";
+};
+
 const deliveryCell = (reply: LibroReply): LibroCell => {
-  const text = UNSENT.includes(reply.status) ? "No se envió" : reply.providerStatus === null ? "Sin confirmación de entrega todavía" : DELIVERY_WORDS[reply.providerStatus];
+  const text = deliveryText(reply);
   const at = reply.providerStatusAtS === null ? reply.atMs : reply.providerStatusAtS * 1000;
   return {
     kind: "delivery",
