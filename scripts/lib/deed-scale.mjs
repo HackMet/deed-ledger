@@ -120,6 +120,9 @@ export function cusumOf(x, h = CUSUM_H) {
 }
 
 function toRow(csv) {
+  const effect = effectClass(csv.run);
+  // A review is not asked to commit: without a sha it has no claim, whatever verdict the checker wrote.
+  const kind = effect === "review" && csv.claimed_sha === "" ? "no_claim" : verdictKind(csv.verdict);
   return {
     run: csv.run,
     started: csv.started,
@@ -129,9 +132,9 @@ function toRow(csv) {
     shaExists: csv.sha_exists === "True",
     claimedPassed: csv.claimed_passed === "" ? null : Number(csv.claimed_passed),
     verdict: csv.verdict,
-    kind: verdictKind(csv.verdict),
+    kind,
     brief: briefOf(csv.run),
-    effect: effectClass(csv.run),
+    effect,
   };
 }
 
