@@ -5,7 +5,17 @@
  */
 import type { DemoStoreWriter, NewDemoStore } from "../../application/demo-store";
 import type { ReplyButton } from "../../domain/replies";
-import { DEMO_BUSINESS_PREFIX, HOUR_MS, isDemoBusiness } from "../../domain/demo";
+import type { BatchGuard } from "../../application/ports";
+import { DemoLimitError } from "../../application/demo-store";
+import {
+  DEMO_BUSINESS_PREFIX,
+  DEMO_STORES_PER_HOUR,
+  DEMO_STORES_PER_VISITOR_PER_HOUR,
+  DEMO_STORES_TOTAL,
+  HOUR_MS,
+  isDemoBusiness,
+} from "../../domain/demo";
+import { guardedBatch } from "./fence";
 import { readButtonSet } from "./outbox-repository";
 
 export interface DemoStore {
@@ -18,24 +28,35 @@ export interface DemoStore {
 export class D1DemoStoreRepository implements DemoStoreWriter {
   constructor(private readonly db: D1Database) {}
 
-  /** How many demo stores this visitor, and everyone, opened in the hour before `nowMs`. */
-  async recentCounts(visitorHash: string, nowMs: number): Promise<{ readonly visitor: number; readonly everyone: number }> {
+  /** How many demo stores this visitor, and everyone, opened in the hour before `nowMs`, and ever. */
+  async recentCounts(visitorHash: string, nowMs: number): Promise<{ readonly visitor: number; readonly everyone: number; readonly ever: number }> {
     const since = nowMs - HOUR_MS;
     const row = await this.db
       .prepare(
         `SELECT
            (SELECT count(*) FROM demo_stores WHERE visitor_hash = ?1 AND created_at_ms > ?2) AS visitor,
-           (SELECT count(*) FROM demo_stores WHERE created_at_ms > ?2) AS everyone`,
+           (SELECT count(*) FROM demo_stores WHERE created_at_ms > ?2) AS everyone,
+           (SELECT count(*) FROM demo_stores) AS ever`,
       )
       .bind(visitorHash, since)
-      .first<{ visitor: number; everyone: number }>();
-    return { visitor: row?.visitor ?? 0, everyone: row?.everyone ?? 0 };
+      .first<{ visitor: number; everyone: number; ever: number }>();
+    return { visitor: row?.visitor ?? 0, everyone: row?.everyone ?? 0, ever: row?.ever ?? 0 };
   }
 
   async create(store: NewDemoStore): Promise<void> {
     if (!isDemoBusiness(store.businessId)) throw new Error("a demo store's ID must start with demo-");
     const { nowMs } = store;
-    await this.db.batch([
+    // The limits again, inside the batch: two visits that both read "under the limit" can't both open
+    // a store past it. The batch fails as a whole, and the visitor gets the limit page.
+    const underLimits: BatchGuard = {
+      holdsSql: `SELECT CASE WHEN
+          (SELECT count(*) FROM demo_stores WHERE visitor_hash = ? AND created_at_ms > ?) < ?
+          AND (SELECT count(*) FROM demo_stores WHERE created_at_ms > ?) < ?
+          AND (SELECT count(*) FROM demo_stores) < ? THEN 1 END`,
+      params: [store.visitorHash, nowMs - HOUR_MS, DEMO_STORES_PER_VISITOR_PER_HOUR, nowMs - HOUR_MS, DEMO_STORES_PER_HOUR, DEMO_STORES_TOTAL],
+      error: () => new DemoLimitError(),
+    };
+    await guardedBatch(this.db, [underLimits], [
       this.db.prepare(`INSERT INTO businesses (id, name, created_at_ms) VALUES (?, ?, ?)`).bind(store.businessId, store.storeName, nowMs),
       this.db
         .prepare(`INSERT INTO locations (id, business_id, name, created_at_ms) VALUES (?, ?, 'Principal', ?)`)

@@ -170,6 +170,13 @@ const EN: Record<string, string> = {
   "Entrar a la consola": "Sign in to the console", Entrar: "Sign in", Consola: "Console",
   "Para entrar, escaneá el código que te dan en la tienda.": "Store staff sign in with the QR code the store gives them.",
   "¿Querés probarlo? Abrí una tienda de demostración": "Just looking? Try the live demo with a store of your own",
+  // The public demo's limits (demo-walls.ts)
+  "No disponible en la demostración": "Not available in the demo",
+  "En la demostración no se suben fotos. Escribilo y te muestro lo que entendí.": "Photos aren't uploaded in the demo. Type it and I'll show you what I understood.",
+  "En la demostración no se agregan empleados.": "Staff can't be added in the demo.",
+  "Esta ventana tiene abierta una tienda real": "This browser is signed in to a real store",
+  "La demostración no muestra tiendas reales. Abrila en una ventana privada.": "The demo never shows a real store. Open it in a private window.",
+  "Volver al inicio": "Back to Home",
   // Inicio
   "Esto es lo que necesita tu tienda hoy.": "Here's what your store needs today.",
   "Anotar algo": "Add something", "Por atender": "To prepare", "Pedidos por preparar": "Orders to prepare",

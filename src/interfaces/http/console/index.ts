@@ -15,6 +15,7 @@ import {
   sameSiteForms,
 } from "./auth";
 import { bienvenidaScreen } from "./bienvenida";
+import { demoWalls } from "./demo-walls";
 import { deedScreen } from "./deed";
 import { libroScreen } from "./libro";
 import { consoleLanguage, languageRoute } from "./language";
@@ -40,6 +41,8 @@ export function consoleRoutes() {
   app.get("/idioma/:lang", languageRoute);
   registerEntryRoutes(app);
   app.use("*", requireMember);
+  // The public demo's limits, before any upload is read (D-64).
+  app.use("*", demoWalls);
   // Before the CSRF check, which reads the whole body: uploads have a size limit.
   app.use("/anotar", anotarBodyLimit);
   app.use("/facturas/nueva", invoiceUploadLimit);

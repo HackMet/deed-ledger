@@ -1,4 +1,5 @@
 import { MEMBER_MESSAGES_PER_HOUR, orderingTimestampS } from "../domain/processing";
+import { DEMO_MAX_MESSAGES_PER_STORE, isDemoBusiness } from "../domain/demo";
 import { describeError, PermanentWriteError } from "./errors";
 import type { ChannelAccount, ChannelEvent, ConversationRef, Deps, InboundMessageEvent, Tenant } from "./ports";
 
@@ -97,7 +98,9 @@ async function recordCustomerMessage(
     newConversationId: deps.ids.newId(),
     newInboundId: deps.ids.newId(),
     newMediaAssetId: deps.ids.newId(),
-    hourlyCap: MEMBER_MESSAGES_PER_HOUR,
+    // A demo store's phone is held to the demo's message limit in the same batch, so parallel sends
+    // can't pass it together (the route checks the store's whole life first).
+    hourlyCap: isDemoBusiness(tenant.businessId) ? DEMO_MAX_MESSAGES_PER_STORE : MEMBER_MESSAGES_PER_HOUR,
     // A late or retried delivery for a customer deleted since must not create them again (#30).
     // The batch checks the tombstone itself, so a purge that commits meanwhile still wins.
     senderHash: await deps.hasher.hash("sender", event.senderPhone),

@@ -153,8 +153,13 @@ export const COPY = {
   statusBuilding: "Todavía estamos armando tu pedido.",
   statusAwaitingConfirm: "Tu pedido está armado, solo falta que me lo confirmés.",
   statusOnList: "Tu pedido ya está en la fila. Te aviso apenas esté listo.",
-  /** A change asked after confirming waits for the store (K12): the customer hears what was passed on. */
-  changeRequested: "Tu pedido ya estaba confirmado, así que le pasé este cambio a la tienda:",
+  /**
+   * A change asked after confirming waits for the store (K12): the customer hears what is waiting,
+   * true on the turn that asked it and on any later status answer.
+   */
+  changeRequested: "Tu pedido ya está confirmado. Este cambio está esperando que la tienda lo revise:",
+  /** The same, for a change with no line to list (pickup or delivery only). */
+  changeRequestedPlain: "Tu pedido ya está confirmado. Tu cambio está esperando que la tienda lo revise.",
   changeRequestedAfter: "Te aviso apenas lo revisen.",
   statusReady: "Tu pedido ya está listo.",
   statusOnTheWay: "Tu pedido va en camino 🛵",
@@ -981,8 +986,12 @@ function statusReply(template: "order_status", order: OrderView | null): Rendere
     case "confirmado":
     case "preparando": {
       const claims = [stateIn(order, ["confirmado", "preparando"])];
-      const change = changeLines(order.openChangeRequest?.diff);
-      if (change.length > 0) return reply(template, [COPY.changeRequested, ...change, COPY.changeRequestedAfter].join("\n"), claims);
+      const waiting = order.openChangeRequest;
+      if (waiting != null) {
+        const change = changeLines(waiting.diff);
+        const body = change.length > 0 ? [COPY.changeRequested, ...change] : [COPY.changeRequestedPlain];
+        return reply(template, [...body, COPY.changeRequestedAfter].join("\n"), claims);
+      }
       return reply(
         template,
         order.queuePosition === null || order.queuePosition < 1

@@ -62,7 +62,8 @@ ${hasStore ? html`<p><a class="btn" href="/demo/tienda">Back to my demo store</a
 </form>
 </div>
 <p class="small">Nothing here is real: the store, products, prices and customer are made up, and no message goes to WhatsApp.
-Your demo store lasts 24 hours. Staff sign in to a real store with a QR code instead.</p>
+Your demo store lasts 24 hours. Staff sign in to a real store with a QR code instead; opening a demo store
+signs this browser out of a real store's console, so staff should try it in a private window.</p>
 </main>`,
     LANDING_STYLE,
   );
@@ -249,7 +250,14 @@ const PHONE_SCRIPT = String.raw`
     }
     if (typing) chat.insertBefore(m, typing); else chat.appendChild(m);
   }
+  // One poll at a time: every 1.5 s while the phone is on screen, every 10 s while its tab is hidden,
+  // and never again once the store has ended.
+  var timer = null, polling = false, ended = false;
+  function schedule(ms) { clearTimeout(timer); if (!ended) timer = setTimeout(poll, ms); }
+  document.addEventListener("visibilitychange", function () { if (!document.hidden && !polling) schedule(0); });
   function poll() {
+    if (polling || ended) return;
+    polling = true;
     fetch("/demo/telefono/mensajes?despues=" + last, { credentials: "same-origin" })
       .then(function (r) { if (r.status === 401) throw new Error("expired"); return r.json(); })
       .then(function (data) {
@@ -269,8 +277,11 @@ const PHONE_SCRIPT = String.raw`
         setTyping(waitingSince > 0 && Date.now() - waitingSince < 90000);
         if (errorFrom === "poll") showError("");
       })
-      .catch(function (e) { showError(e.message === "expired" ? t("expired") : t("offline"), "poll"); })
-      .finally(function () { setTimeout(poll, 1500); });
+      .catch(function (e) {
+        if (e.message === "expired") ended = true;
+        showError(ended ? t("expired") : t("offline"), "poll");
+      })
+      .finally(function () { polling = false; schedule(document.hidden ? 10000 : 1500); });
   }
   // Why a send was refused, in words a visitor can act on.
   var REFUSED = { limit: 1, budget: 1, expired: 1 };

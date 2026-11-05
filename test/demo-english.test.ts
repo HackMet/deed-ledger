@@ -61,7 +61,7 @@ describe("the demo's English subtitles", () => {
         [
           "Ya vi tu lista 👍",
           "",
-          "Tu pedido ya estaba confirmado, así que le pasé este cambio a la tienda:",
+          "Tu pedido ya está confirmado. Este cambio está esperando que la tienda lo revise:",
           "• Agregar 3 libras de Arroz",
           "• Agregar 2 Aceite Clover 1 L",
           "• 3 Azúcar 1 lb (antes 2)",
@@ -73,7 +73,7 @@ describe("the demo's English subtitles", () => {
       [
         "Got your list 👍",
         "",
-        "Your order was already confirmed, so I passed this change to the store:",
+        "Your order is already confirmed. This change is waiting for the store to review it:",
         "• Add 3 lb Rice",
         "• Add 2 Clover cooking oil 1 L",
         "• 3 Sugar 1 lb (was 2)",
@@ -82,6 +82,15 @@ describe("the demo's English subtitles", () => {
       ].join("\n"),
     );
     expect(replyInEnglish("Vas primero en la fila. Te aviso apenas esté listo.")).toBe("You're first in line. I'll let you know as soon as it's ready.");
+  });
+
+  it("keep the words the assistant reads in Spanish, and say hours, the delivery fee and products plainly", () => {
+    expect(replyInEnglish("Respondé Confirmar, Corregir o Cancelar.")).toBe("Reply Confirmar, Corregir or Cancelar (confirm, fix or cancel).");
+    expect(replyInEnglish("Total: L 74 (L 54 + L 20 de envío).")).toBe("Total: L 74 (L 54 + L 20 delivery fee).");
+    expect(replyInEnglish("Abrimos de lunes a sábado de 6 a. m. a 8 p. m., y el domingo de 7 a. m. a 12 del mediodía.")).toBe(
+      "We're open Monday to Saturday from 6 a.m. to 8 p.m., and Sunday from 7 a.m. to 12 noon.",
+    );
+    expect(replyInEnglish("• 1 Gas para encendedor · L 30")).toBe("• 1 Lighter refill gas · L 30");
   });
 
   it("never guess: an unknown sentence stays Spanish, and a message with nothing known gets no subtitle", () => {

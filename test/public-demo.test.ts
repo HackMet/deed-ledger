@@ -13,11 +13,16 @@ import {
   DEMO_SPEND_POOL_ID,
   DEMO_STORES_PER_VISITOR_PER_HOUR,
   DEMO_VOICE_NOTE_MICRO_USD,
+  demoVisitorKey,
   isDemoPhone,
   isDemoPhoneNumberId,
 } from "../src/domain/demo";
 import { DemoGuardedChannel, DemoGuardedMediaSource, DemoPooledSpendLedger } from "../src/infrastructure/demo-guards";
 import { inboundEvent } from "../src/interfaces/http/demo";
+import { acceptEvents } from "../src/application/intake";
+import { DemoLimitError } from "../src/application/demo-store";
+import { D1DemoStoreRepository } from "../src/infrastructure/d1/demo-store-repository";
+import { DEMO_ANOTAR_MAX_BYTES } from "../src/interfaces/http/console/demo-walls";
 import { hashToken } from "../src/infrastructure/tokens";
 import { D1SpendLedger } from "../src/infrastructure/d1/spend-repository";
 import { FakeChannel, FakeMediaSource } from "./helpers/fakes";
@@ -28,8 +33,12 @@ const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
 const ORIGIN = "https://worker.test";
 
 /** A request as a browser sends it: same origin, the visitor's IP, their cookies. */
-async function call(h: Harness, path: string, init: { method?: string; json?: unknown; cookie?: string; ip?: string; csrf?: string; origin?: string } = {}) {
-  const headers: Record<string, string> = { origin: init.origin ?? ORIGIN, "cf-connecting-ip": init.ip ?? "203.0.113.7" };
+async function call(
+  h: Harness,
+  path: string,
+  init: { method?: string; json?: unknown; body?: string; cookie?: string; ip?: string; csrf?: string; origin?: string; headers?: Record<string, string> } = {},
+) {
+  const headers: Record<string, string> = { origin: init.origin ?? ORIGIN, "cf-connecting-ip": init.ip ?? "203.0.113.7", ...init.headers };
   if (init.cookie !== undefined) headers.cookie = init.cookie;
   if (init.csrf !== undefined) headers["x-csrf"] = init.csrf;
   if (init.json !== undefined) headers["content-type"] = "application/json";
@@ -38,6 +47,7 @@ async function call(h: Harness, path: string, init: { method?: string; json?: un
     headers,
     redirect: "manual",
     ...(init.json === undefined ? {} : { body: JSON.stringify(init.json) }),
+    ...(init.body === undefined ? {} : { body: init.body }),
   });
   const ctx = createExecutionContext();
   const response = await h.worker.fetch(request, h.env, ctx);
@@ -191,14 +201,22 @@ describe("the demo's phone", () => {
     expect((await pool())[0]!.micro_usd).toBe(before + DEMO_VOICE_NOTE_MICRO_USD);
     // Spend the rest of today's pool: the next voice note is refused before it reaches the store.
     const ledger = new D1SpendLedger(env.DB);
-    expect(await ledger.reserve({ businessId: DEMO_SPEND_POOL_ID }, h.clock.now(), DEMO_DAILY_CAP_MICRO_USD - before - DEMO_VOICE_NOTE_MICRO_USD, DEMO_DAILY_CAP_MICRO_USD)).not.toBeNull();
-    const refused = await call(h, "/demo/telefono/enviar", { method: "POST", cookie, csrf, json: { preset: "voz" } });
-    expect(refused.status).toBe(429);
-    expect(await refused.json()).toEqual({ error: "budget" });
-    const audio = await rows<{ n: number }>(`SELECT count(*) AS n FROM inbound_messages WHERE business_id = ? AND kind = 'audio'`, businessId);
-    expect(audio[0]!.n).toBe(1);
-    // Text still goes through: its model calls meet the same cap on their own.
-    expect((await call(h, "/demo/telefono/enviar", { method: "POST", cookie, csrf, json: { text: "hola" } })).status).toBe(200);
+    const filler = await ledger.reserve({ businessId: DEMO_SPEND_POOL_ID }, h.clock.now(), DEMO_DAILY_CAP_MICRO_USD - before - DEMO_VOICE_NOTE_MICRO_USD, DEMO_DAILY_CAP_MICRO_USD);
+    expect(filler).not.toBeNull();
+    try {
+      const refused = await call(h, "/demo/telefono/enviar", { method: "POST", cookie, csrf, json: { preset: "voz" } });
+      expect(refused.status).toBe(429);
+      expect(await refused.json()).toEqual({ error: "budget" });
+      const audio = await rows<{ n: number }>(`SELECT count(*) AS n FROM inbound_messages WHERE business_id = ? AND kind = 'audio'`, businessId);
+      expect(audio[0]!.n).toBe(1);
+      // Nothing else goes in either once the pool is spent: the store couldn't read it.
+      const text = await call(h, "/demo/telefono/enviar", { method: "POST", cookie, csrf, json: { text: "hola" } });
+      expect(text.status).toBe(429);
+      expect(await text.json()).toEqual({ error: "budget" });
+    } finally {
+      // The pool is shared by every test's demo store today: give it back.
+      await ledger.settle(filler!, 0);
+    }
   });
 
   it("refuses a send without the session's CSRF value", async () => {
@@ -350,5 +368,88 @@ describe("the demo's walls", () => {
     const day = Date.UTC(2031, 0, 1, 18);
     expect(await ledger.reserve({ businessId: "demo-a" }, day, DEMO_DAILY_CAP_MICRO_USD - 1, 2_000_000)).not.toBeNull();
     expect(await ledger.reserve({ businessId: "demo-b" }, day, 2, 2_000_000)).toBeNull();
+  });
+});
+
+describe("the demo's limits under load, and in the console", () => {
+  it("re-checks the store limits inside the batch that opens a store, so racing visits can't pass them", async () => {
+    const repo = new D1DemoStoreRepository(env.DB);
+    const visitorHash = `race-${crypto.randomUUID()}`;
+    const nowMs = Date.UTC(2031, 5, 1, 12);
+    const newStore = (n: number) => {
+      const id = crypto.randomUUID();
+      return {
+        businessId: `demo-${id}`,
+        locationId: `loc-${id}`,
+        channelAccountId: `ca-${id}`,
+        phoneNumberId: `0${String(n).padStart(3, "0")}${id.replace(/\D/gu, "").padEnd(12, "7").slice(0, 12)}`,
+        ownerUserId: `user-${id}`,
+        ownerPhone: `0${id.replace(/\D/gu, "").padEnd(14, "3").slice(0, 14)}`,
+        ownerName: "Dueño (demo)",
+        storeName: "Mercadito Demo",
+        customerPhone: `0${id.replace(/\D/gu, "").padEnd(14, "5").slice(0, 14)}`,
+        visitorHash,
+        sessionId: `s-${id}`,
+        sessionTokenHash: `h-${id}`,
+        nowMs,
+        expiresAtMs: nowMs + 60_000,
+      };
+    };
+    // As if five visits had each read "under the limit" first: the batch itself refuses the sixth.
+    for (let n = 0; n < DEMO_STORES_PER_VISITOR_PER_HOUR; n += 1) await repo.create(newStore(n));
+    const sixth = newStore(9);
+    await expect(repo.create(sixth)).rejects.toBeInstanceOf(DemoLimitError);
+    expect(await rows(`SELECT id FROM businesses WHERE id = ?`, sixth.businessId)).toEqual([]);
+    expect(await rows(`SELECT id FROM users WHERE id = ?`, sixth.ownerUserId)).toEqual([]);
+  });
+
+  it("holds a demo store's phone to its message limit inside intake, even past the route's own check", async () => {
+    const h = harness();
+    const { businessId } = await openDemo(h);
+    const store = (await new D1DemoStoreRepository(env.DB).find(businessId, h.clock.now()))!;
+    for (let n = 0; n < DEMO_MAX_MESSAGES_PER_STORE + 3; n += 1) {
+      await acceptEvents(h.deps, [inboundEvent(store, { text: `hola ${n}` }, h.clock.now())!]);
+    }
+    const [count] = await rows<{ n: number }>(`SELECT count(*) AS n FROM inbound_messages WHERE business_id = ?`, businessId);
+    expect(count!.n).toBe(DEMO_MAX_MESSAGES_PER_STORE);
+  });
+
+  it("serves the preset photo and voice note only to a demo session", async () => {
+    const h = harness();
+    const { cookie } = await openDemo(h);
+    expect((await call(h, "/demo/telefono/archivo/lista")).status).toBe(404);
+    expect((await call(h, "/demo/telefono/archivo/lista", { cookie })).status).toBe(200);
+  });
+
+  it("keeps uploads and staff invites out of a demo store's console", async () => {
+    const h = harness();
+    const { cookie } = await openDemo(h);
+    expect((await call(h, "/console/empleados", { cookie })).status).toBe(403);
+    expect((await call(h, "/console/empleados/invitar", { method: "POST", cookie })).status).toBe(403);
+    expect((await call(h, "/console/facturas/nueva", { method: "POST", cookie })).status).toBe(403);
+    const photo = await call(h, "/console/anotar", { method: "POST", cookie, body: "x".repeat(DEMO_ANOTAR_MAX_BYTES + 1) });
+    expect(photo.status).toBe(413);
+    // Reading stays open: the demo's owner sees their store.
+    expect((await call(h, "/console/inicio", { cookie })).status).toBe(200);
+  });
+
+  it("never shows a real store's console inside the demo's frame, and lets no other site frame the app", async () => {
+    const h = harness();
+    const store = await storeWithStaff();
+    const realCookie = await login(h, store.businessId, store.members[0]!.userId);
+    const framed = await call(h, "/console/inicio", { cookie: realCookie, headers: { "sec-fetch-dest": "iframe" } });
+    expect(framed.status).toBe(409);
+    expect((await call(h, "/console/inicio", { cookie: realCookie })).status).toBe(200);
+    // A demo store's console loads in the frame.
+    const demo = await openDemo(h);
+    expect((await call(h, "/console/inicio", { cookie: demo.cookie, headers: { "sec-fetch-dest": "iframe" } })).status).toBe(200);
+    expect((await call(h, "/demo")).headers.get("content-security-policy")).toBe("frame-ancestors 'self'");
+  });
+
+  it("counts an IPv6 visitor by their /64 network", () => {
+    expect(demoVisitorKey("203.0.113.7")).toBe("203.0.113.7");
+    expect(demoVisitorKey("2001:db8:aa:bb:1:2:3:4")).toBe("2001:db8:aa:bb::/64");
+    expect(demoVisitorKey("2001:db8:aa:bb::99")).toBe("2001:db8:aa:bb::/64");
+    expect(demoVisitorKey("2001:db8::1")).toBe("2001:db8:0:0::/64");
   });
 });

@@ -14,8 +14,9 @@ Last updated: Thu Nov 5, 2026, late morning Honduras time, by Claude Code.
   `MODEL_API_KEY=… node scripts/demo-test-server.mjs`** (frozen copy on :8795, fresh database, minute sweep), never
   a `wrangler dev` on a worktree an agent is editing: a save restarts the server and drops the reply in flight.
   The console's order cards now show the name the customer gave (`OrderEngine.preparationList` left it null).
+  Reviewed before merge by Astra, Muse and a Claude reviewer; their findings are fixed or listed in D-64.
   Open: the phone shows a reply before the dispatch's claim check, so a reply the check blocks would still show
-  its original text there.
+  its original text there; expired demo stores are never deleted (bounded by the 3,000-store cap).
 
 - **Ask before confirm (`claude/flow-ask`, D-58 proposed, not deployed):** on `OrderEngine`, a missing quantity, an
   illegible line or no pickup or delivery is asked before an order confirms, and staff close an order stuck at `listo`

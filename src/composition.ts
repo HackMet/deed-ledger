@@ -58,6 +58,7 @@ import { D1SpendLedger } from "./infrastructure/d1/spend-repository";
 import { D1DemoStoreRepository } from "./infrastructure/d1/demo-store-repository";
 import { DemoGuardedChannel, DemoGuardedMediaSource, DemoPooledSpendLedger, type DemoPresetFiles } from "./infrastructure/demo-guards";
 import { LISTA_JPEG_BASE64, VOZ_OGG_BASE64 } from "./infrastructure/demo-preset-files";
+import { DEMO_SPEND_POOL_ID } from "./domain/demo";
 import { D1StoreSetupRepository } from "./infrastructure/d1/store-setup-repository";
 import { D1TenancyRepository } from "./infrastructure/d1/tenancy-repository";
 import { HmacKeyedHasher } from "./infrastructure/keyed-hasher";
@@ -103,6 +104,8 @@ export interface Runtime {
   readonly demoStores: D1DemoStoreRepository;
   /** Model spend, every demo store pooled under the demo's daily cap: the demo charges voice notes to it. */
   readonly demoSpend: DemoPooledSpendLedger;
+  /** What the demo's pool has spent today, in micro-USD. */
+  readonly demoPoolSpent: (nowMs: number) => Promise<number>;
 }
 
 /** One pretend engine per Worker isolate, so the dev console's taps last between requests. */
@@ -236,6 +239,7 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
     retrieval,
     demoStores: new D1DemoStoreRepository(db),
     demoSpend: spendLedger(db),
+    demoPoolSpent: (nowMs) => new D1SpendLedger(db).spentMicroUsd({ businessId: DEMO_SPEND_POOL_ID }, nowMs),
     burstReader:
       overrides.burstReader ??
       buildBurstReader(env, { clock, log }, { db, ...(overrides.modelProvider === undefined ? {} : { provider: overrides.modelProvider }) }),

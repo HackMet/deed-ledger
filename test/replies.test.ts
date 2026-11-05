@@ -296,9 +296,13 @@ describe("templates", () => {
     // The queue place is not repeated, and the claim is still where the order stands.
     expect(rendered.body).not.toContain("fila");
     expect(rendered.claims).toEqual(render({ type: "order_status", order: confirmedOrder }).claims);
-    // An empty diff (nothing to echo) keeps the plain status.
-    const empty = { ...confirmedOrder, openChangeRequest: { id: "request-2", diff: { added: [], removed: [], changed: [] } } };
-    expect(render({ type: "order_status", order: empty }).body).toBe("Vas tercero en la fila. Te aviso apenas esté listo.");
+    // A change with no line to list (pickup or delivery only) still says it waits for the store.
+    const fulfillmentOnly = { ...confirmedOrder, openChangeRequest: { id: "request-2", diff: { added: [], removed: [], changed: [] } } };
+    expect(render({ type: "order_status", order: fulfillmentOnly }).body).toBe(`${COPY.changeRequestedPlain}\n${COPY.changeRequestedAfter}`);
+    // No change waiting: the queue place, as before.
+    expect(render({ type: "order_status", order: { ...confirmedOrder, openChangeRequest: null } }).body).toBe(
+      "Vas tercero en la fila. Te aviso apenas esté listo.",
+    );
   });
 
   it("asks one question at a time, naming the line it's about", () => {

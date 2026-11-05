@@ -15,15 +15,15 @@ import { DEMO_PRESETS } from "../../domain/demo";
 export const FIXED_EN: Readonly<Record<string, string>> = {
   [COPY.safeReply]: "Let me check and I'll confirm.",
   [COPY.slowNotice]: "We got your message, we're looking at it.",
-  [COPY.typedFallback]: "Reply Confirm, Fix or Cancel.",
-  [COPY.typedFallbackSoft]: "_Or write: confirm, fix or cancel._",
+  [COPY.typedFallback]: "Reply Confirmar, Corregir or Cancelar (confirm, fix or cancel).",
+  [COPY.typedFallbackSoft]: "_Or write: confirmar, corregir or cancelar._",
   [COPY.fixHint]: "If something's wrong, write to me or send a voice note.",
   [COPY.confirmLater]: "For these I'll confirm stock and price",
   [COPY.readbackTitle]: "Your order:",
   [COPY.changedTitle]: "Done, here's your order now:",
   [COPY.staleTapTitle]: "Your order changed since that message. Here it is now:",
   [COPY.confirmQuestion]: "Shall I prepare it like this?",
-  [COPY.soldOutAll]: "What else can I send you? If you don't want anything else, reply Cancel.",
+  [COPY.soldOutAll]: "What else can I send you? If you don't want anything else, reply Cancelar (cancel).",
   [COPY.pickup]: "You pick it up at the store.",
   [COPY.payOnPickup]: "You pay when you pick it up.",
   [COPY.payOnDelivery]: "You pay when we deliver it.",
@@ -35,7 +35,8 @@ export const FIXED_EN: Readonly<Record<string, string>> = {
   [COPY.statusBuilding]: "We're still putting your order together.",
   [COPY.statusAwaitingConfirm]: "Your order is ready to go, it just needs your confirmation.",
   [COPY.statusOnList]: "Your order is in line. I'll let you know as soon as it's ready.",
-  [COPY.changeRequested]: "Your order was already confirmed, so I passed this change to the store:",
+  [COPY.changeRequested]: "Your order is already confirmed. This change is waiting for the store to review it:",
+  [COPY.changeRequestedPlain]: "Your order is already confirmed. Your change is waiting for the store to review it.",
   [COPY.changeRequestedAfter]: "I'll let you know as soon as they review it.",
   [COPY.statusReady]: "Your order is ready.",
   [COPY.statusOnTheWay]: "Your order is on its way 🛵",
@@ -62,8 +63,8 @@ export const FIXED_EN: Readonly<Record<string, string>> = {
   [COPY.samePlacePin]: "Last time you sent us your location.",
   [COPY.deliveryToPin]: "We'll take it to the location you sent us.",
   [COPY.welcome]: "At your service! 🙌",
-  [COPY.confirmNudge]: "To get it ready, tap Confirmar ✅",
-  [COPY.confirmNudgeTyped]: "To get it ready, reply Confirmar.",
+  [COPY.confirmNudge]: "To get it ready, tap Confirm ✅",
+  [COPY.confirmNudgeTyped]: "To get it ready, reply Confirmar (confirm).",
   [COPY.anythingElse]: "What else can I send you?",
   [COPY.pickOption]: "Which one should I send? Reply with the number.",
   [COPY.noted]: "Noted ✅",
@@ -125,8 +126,8 @@ const PRODUCTS_EN: readonly (readonly [string, string])[] = (
     ["Aceite Clover", "Clover cooking oil"],
     ["Manteca", "Lard"],
     ["Leche entera", "Whole milk"],
-    ["Mantequilla crema", "Cream butter"],
-    ["Queso seco", "Dry cheese"],
+    ["Mantequilla crema", "Honduran table cream"],
+    ["Queso seco", "Hard salted cheese"],
     ["Café molido", "Ground coffee"],
     ["Pan de molde", "Sliced bread"],
     ["Pan dulce (unidad)", "Sweet bread (each)"],
@@ -141,11 +142,11 @@ const PRODUCTS_EN: readonly (readonly [string, string])[] = (
     ["Papel higiénico (4 rollos)", "Toilet paper (4 rolls)"],
     ["Pasta dental", "Toothpaste"],
     ["Baleadas congeladas (paquete)", "Frozen baleadas (pack)"],
-    ["Tajadas de plátano", "Plantain chips"],
+    ["Tajadas de plátano", "Fried plantain slices"],
     ["Galletas de soda", "Soda crackers"],
     ["Chicle (unidad)", "Gum (each)"],
     ["Bolsa de hielo", "Bag of ice"],
-    ["Gas para encendedor", "Lighter fluid"],
+    ["Gas para encendedor", "Lighter refill gas"],
   ] as const
 )
   .slice()
@@ -166,9 +167,29 @@ function wordsIn(text: string): string {
     .replace(/\bmedia libra de /gu, "½ lb ")
     .replace(/\b(\d+(?:[.,]\d+)?) libras? de /gu, "$1 lb ")
     .replace(/\b(\d+(?:[.,]\d+)?) libras?\b/gu, "$1 lb")
-    .replace(/ de envío\b/gu, " delivery")
+    .replace(/ de envío\b/gu, " delivery fee")
     .replace(/ y /gu, " and ")
     .replace(PRODUCT_PATTERN, (_m, before: string, name: string) => `${before}${PRODUCT_MAP.get(name) ?? name}`);
+}
+
+const DAYS_EN: Readonly<Record<string, string>> = {
+  lunes: "Monday", martes: "Tuesday", "miércoles": "Wednesday", jueves: "Thursday", viernes: "Friday", "sábado": "Saturday", domingo: "Sunday",
+};
+const DAY = "(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)";
+const CLOCK = "(\\d{1,2}(?::\\d{2})? (?:a\\.m\\.|p\\.m\\.|noon))";
+
+/** The hours as `formatStoreHours` says them: "de lunes a sábado de 6 a. m. a 8 p. m., y el domingo …". */
+function hoursIn(when: string): string {
+  return when
+    .replace(/12 del mediodía/gu, "12 noon")
+    .replace(/a\. m\./gu, "a.m.")
+    .replace(/p\. m\./gu, "p.m.")
+    .replace(/\b(lunes|martes|miércoles|jueves|viernes|sábado|domingo)(?![\p{L}])/gu, (day: string) => DAYS_EN[day] ?? day)
+    .replace(new RegExp(`\\bde ${DAY} a ${DAY}`, "gu"), "$1 to $2")
+    .replace(new RegExp(`\\bel ${DAY}`, "gu"), "$1")
+    .replace(new RegExp(`\\bde ${CLOCK} a ${CLOCK}`, "gu"), "from $1 to $2")
+    .replace(/, y /gu, ", and ")
+    .replace(/ y /gu, " and ");
 }
 
 type Rule = readonly [RegExp, (...groups: string[]) => string];
@@ -205,7 +226,7 @@ const RULES: readonly Rule[] = [
   [/^La tienda confirmó tu pago de (L [\d.,]+)\. ¡Gracias!$/u, (amount) => `The store confirmed your payment of ${amount}. Thanks!`],
   [/^No pudimos hacer el cambio: (.+)\.$/u, (reason) => `We couldn't make the change: ${reason}.`],
   [/^Tu pedido va en camino con (.+) 🛵$/u, (name) => `Your order is on its way with ${name} 🛵`],
-  [/^Abrimos (.+)$/u, (when) => `We're open ${when}`],
+  [/^Abrimos (.+)$/u, (when) => `We're open ${hoursIn(when)}`],
   // Bullets: the readback's lines and the echo.
   [/^• Agregar (.+)$/u, (item) => `• Add ${wordsIn(item)}`],
   [/^• Quitar (.+)$/u, (item) => `• Remove ${wordsIn(item)}`],

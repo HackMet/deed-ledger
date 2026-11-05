@@ -21,6 +21,8 @@ export function createHttpApp(makeRuntime: (env: Env) => Runtime) {
   app.use("*", async (c, next) => {
     c.set("runtime", makeRuntime(c.env));
     await next();
+    // Only this site may frame its pages (the demo frames the console and its phone).
+    c.header("Content-Security-Policy", "frame-ancestors 'self'");
   });
 
   app.get("/health", (c) => c.text("ok"));

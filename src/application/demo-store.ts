@@ -40,13 +40,23 @@ export interface NewDemoStore {
 
 export interface DemoStoreWriter {
   /** How many demo stores this visitor, and everyone, opened in the hour before `nowMs`. */
-  recentCounts(visitorHash: string, nowMs: number): Promise<{ readonly visitor: number; readonly everyone: number }>;
+  recentCounts(visitorHash: string, nowMs: number): Promise<{ readonly visitor: number; readonly everyone: number; readonly ever: number }>;
+  /** Throws DemoLimitError when a limit no longer holds as the store is written. */
   create(store: NewDemoStore): Promise<void>;
 }
 
 export interface DemoSetupWriter {
   saveHours(tenant: Tenant, hours: StoreHours | null, nowMs: number): Promise<void>;
   saveDeliveryFee(tenant: Tenant, fee: Centavos | null, nowMs: number): Promise<void>;
+}
+
+/** A store the limits refused inside the creating batch (a visit that raced another one). */
+export class DemoLimitError extends Error {
+  override name = "DemoLimitError";
+
+  constructor() {
+    super("demo store limit reached");
+  }
 }
 
 export const DEMO_STORE_NAME = "Mercadito Demo";
@@ -124,7 +134,7 @@ export type OpenDemoResult =
 export async function openDemoStore(deps: DemoStoreDeps, visitorHash: string): Promise<OpenDemoResult> {
   const nowMs = deps.clock.now();
   const counts = await deps.stores.recentCounts(visitorHash, nowMs);
-  const limit = demoLimitReached(counts.visitor, counts.everyone);
+  const limit = demoLimitReached(counts.visitor, counts.everyone, counts.ever);
   if (limit !== null) {
     deps.log.info("demo_store_limited", { reason: limit });
     return { type: "limited", limit };
@@ -134,22 +144,30 @@ export async function openDemoStore(deps: DemoStoreDeps, visitorHash: string): P
   const ownerUserId = deps.ids.newId();
   const sessionToken = deps.newToken();
   const expiresAtMs = nowMs + DEMO_STORE_TTL_MS;
-  await deps.stores.create({
-    businessId,
-    locationId: deps.ids.newId(),
-    channelAccountId: deps.ids.newId(),
-    phoneNumberId: newDemoPhoneNumberId(deps.random),
-    ownerUserId,
-    ownerPhone: newDemoPhone(deps.random),
-    ownerName: DEMO_OWNER_NAME,
-    storeName: DEMO_STORE_NAME,
-    customerPhone: newDemoPhone(deps.random),
-    visitorHash,
-    sessionId: deps.ids.newId(),
-    sessionTokenHash: await deps.hashToken(sessionToken),
-    nowMs,
-    expiresAtMs,
-  });
+  try {
+    await deps.stores.create({
+      businessId,
+      locationId: deps.ids.newId(),
+      channelAccountId: deps.ids.newId(),
+      phoneNumberId: newDemoPhoneNumberId(deps.random),
+      ownerUserId,
+      ownerPhone: newDemoPhone(deps.random),
+      ownerName: DEMO_OWNER_NAME,
+      storeName: DEMO_STORE_NAME,
+      customerPhone: newDemoPhone(deps.random),
+      visitorHash,
+      sessionId: deps.ids.newId(),
+      sessionTokenHash: await deps.hashToken(sessionToken),
+      nowMs,
+      expiresAtMs,
+    });
+  } catch (error) {
+    if (!(error instanceof DemoLimitError)) throw error;
+    const now = await deps.stores.recentCounts(visitorHash, nowMs);
+    const raced = demoLimitReached(now.visitor, now.everyone, now.ever) ?? "everyone";
+    deps.log.info("demo_store_limited", { reason: raced });
+    return { type: "limited", limit: raced };
+  }
   deps.log.info("demo_store_opened", { businessId });
 
   const owner: MemberContext = { businessId, memberId: ownerUserId, role: "owner", canApproveFiado: true, nowMs };

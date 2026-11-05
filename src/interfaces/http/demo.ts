@@ -9,7 +9,7 @@ import { getCookie, setCookie } from "hono/cookie";
 import { bodyLimit } from "hono/body-limit";
 import { acceptEvents } from "../../application/intake";
 import { openDemoStore } from "../../application/demo-store";
-import type { InboundMessageEvent } from "../../application/ports";
+import type { InboundMessageEvent, SpendReservation } from "../../application/ports";
 import { describeError } from "../../application/errors";
 import { isWellFormedToken, SESSION_COOKIE } from "../../domain/console-auth";
 import {
@@ -18,6 +18,7 @@ import {
   DEMO_MAX_TEXT,
   DEMO_PRESETS,
   DEMO_VOICE_NOTE_MICRO_USD,
+  demoVisitorKey,
   isDemoBusiness,
   isDemoPreset,
 } from "../../domain/demo";
@@ -63,7 +64,7 @@ export function demoRoutes() {
     if (config.linkSigningSecret === "" || config.senderHashSalt === "") return c.text("Not configured", 500);
     // A keyed hash of the visitor's IP, only to limit how many stores one visitor opens an hour.
     const ip = c.req.header("cf-connecting-ip") ?? "local";
-    const visitorHash = await deps.hasher.hash("sender", `demo-visitor:${ip}`);
+    const visitorHash = await deps.hasher.hash("sender", `demo-visitor:${demoVisitorKey(ip)}`);
     const previous = await demoSession(c);
     const opened = await openDemoStore(
       {
@@ -123,7 +124,8 @@ export function demoRoutes() {
   });
 
   // The preset photo and voice note, so the phone can show what the customer sent.
-  app.get("/telefono/archivo/:nombre", (c) => {
+  app.get("/telefono/archivo/:nombre", async (c) => {
+    if ((await demoSession(c)) === null) return c.text("Not found", 404);
     const name = c.req.param("nombre");
     if (name === "lista") return binary(LISTA_JPEG_BASE64, DEMO_PRESETS.lista.mimeType);
     if (name === "voz") return binary(VOZ_OGG_BASE64, "audio/ogg");
@@ -153,9 +155,15 @@ export function demoRoutes() {
         deps.log.info("demo_send_limited", { businessId: session.store.businessId, reason: "messages" });
         return c.json({ error: "limit" }, 429);
       }
+      // Once today's pool is spent, nothing more goes in: the store couldn't read it anyway.
+      if ((await runtime.demoPoolSpent(nowMs)) >= DEMO_DAILY_CAP_MICRO_USD) {
+        deps.log.info("demo_send_limited", { businessId: session.store.businessId, reason: "budget" });
+        return c.json({ error: "budget" }, 429);
+      }
       // A voice note is transcribed before any capped model call, so it pays into the demo's pool first.
+      let charged: SpendReservation | null = null;
       if (event.kind === "audio") {
-        const charged = await runtime.demoSpend.reserve({ businessId: session.store.businessId }, nowMs, DEMO_VOICE_NOTE_MICRO_USD, DEMO_DAILY_CAP_MICRO_USD);
+        charged = await runtime.demoSpend.reserve({ businessId: session.store.businessId }, nowMs, DEMO_VOICE_NOTE_MICRO_USD, DEMO_DAILY_CAP_MICRO_USD);
         if (charged === null) {
           deps.log.info("demo_send_limited", { businessId: session.store.businessId, reason: "budget" });
           return c.json({ error: "budget" }, 429);
@@ -166,6 +174,8 @@ export function demoRoutes() {
         c.executionCtx.waitUntil(afterIntake(deps, outcome));
       } catch (error) {
         deps.log.error("demo_send_failed", { businessId: session.store.businessId, reason: describeError(error) });
+        // The voice note never went in: its charge comes back.
+        if (charged !== null) await runtime.demoSpend.settle(charged, 0);
         return c.json({ error: "retry" }, 500);
       }
       return c.json({ ok: true });

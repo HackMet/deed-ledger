@@ -10,7 +10,7 @@
 //
 //   MODEL_API_KEY=… node scripts/demo-test-server.mjs [--port 8795] [--dir ../hackathon-demo-test] [--no-ai]
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SIM_SECRETS, parseArgs, simChildEnv } from "./lib/sim.mjs";
@@ -24,7 +24,14 @@ if (key === "" && args["no-ai"] === undefined) {
   console.error("MODEL_API_KEY is not set: every reply would be the placeholder. Set it, or pass --no-ai on purpose.");
   process.exit(1);
 }
-if (dest === source) throw new Error("the frozen copy can't be the worktree itself");
+// rsync --delete empties the destination of anything that isn't in the worktree, so it must be a folder
+// this script made: never the worktree, a folder holding it or inside it, or any folder without the marker.
+const MARKER = ".demo-test-copy";
+const inside = (child, parent) => child === parent || child.startsWith(`${parent}/`);
+if (inside(dest, source) || inside(source, dest)) throw new Error(`refusing ${dest}: it holds or is inside the worktree`);
+if (existsSync(dest) && readdirSync(dest).length > 0 && !existsSync(`${dest}/${MARKER}`)) {
+  throw new Error(`refusing ${dest}: it isn't empty and wasn't made by this script`);
+}
 
 const run = (cmd, cmdArgs) => {
   const result = spawnSync(cmd, cmdArgs, { stdio: "inherit" });
@@ -32,7 +39,8 @@ const run = (cmd, cmdArgs) => {
 };
 // The code, without local state or secrets; node_modules hard-linked, so the copy is quick and small.
 mkdirSync(dest, { recursive: true });
-run("rsync", ["-a", "--delete", "--exclude", "/node_modules", "--exclude", "/.wrangler", "--exclude", "/.dev.vars", "--exclude", "/.git", `${source}/`, `${dest}/`]);
+writeFileSync(`${dest}/${MARKER}`, "Made by scripts/demo-test-server.mjs; safe to delete.\n");
+run("rsync", ["-a", "--delete", "--exclude", "/node_modules", "--exclude", "/.wrangler", "--exclude", "/.dev.vars", "--exclude", "/.git", "--exclude", `/${MARKER}`, `${source}/`, `${dest}/`]);
 run("rsync", ["-a", "--delete", `--link-dest=${source}/node_modules`, `${source}/node_modules/`, `${dest}/node_modules/`]);
 
 process.chdir(dest);
