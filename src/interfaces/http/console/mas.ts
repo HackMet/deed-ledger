@@ -1,8 +1,8 @@
 /**
  * Más (wireframe C7): what isn't a daily screen, one entry per job. Anotar is where things are
  * entered, the tabs hold the lists, and Pendientes (the bell) is the one inbox, so nothing here
- * repeats them: prices live in the Productos tab, a new invoice photo starts in Anotar, and how an
- * order came together is reached from that order. Staff see only what isn't the owner's.
+ * repeats them: prices live in the Productos tab and a new invoice photo starts in Anotar. Deed en
+ * vivo is every order's graph and verifications as they happen. Staff see only what isn't the owner's.
  */
 import type { Hono } from "hono";
 import { html } from "hono/html";
@@ -26,6 +26,7 @@ const OPTIONS: readonly Option[] = [
   { label: "Empleados", hint: "Invitar, permisos y quitar.", href: "/console/empleados", ownerOnly: true },
   // The list to review and approve; a new invoice photo is taken from Anotar.
   { label: "Facturas", hint: "La lista de facturas de proveedores.", href: "/console/facturas", ownerOnly: true },
+  { label: "Deed en vivo", hint: "El grafo de cada pedido y cada verificación, al momento.", href: "/console/deed/en-vivo", ownerOnly: false },
   { label: "Aviso de privacidad", hint: "Lo que ven los clientes.", href: PRIVACY_PATH, ownerOnly: false },
 ];
 

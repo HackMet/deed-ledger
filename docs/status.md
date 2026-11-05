@@ -36,6 +36,10 @@ Last updated: Wed Nov 4, 2026, morning Honduras time, by Claude Code.
     stays out of the video until Angel matches it.
   - **Waiting on Angel:** the `statusReply` copy for a pending change, not committed; append-only triggers in the
     store's migrations (C5).
+- **Deed en vivo (`claude/deed-live`, Nov 4):** a console screen, `/console/deed/en-vivo`, in Más for owner and staff:
+  the graph of the order with the newest activity (or one picked with `?pedido=`), above the store's newest checks,
+  refreshing every 3 seconds with the feed's meta refresh and no script. "Historial del pedido" now also shows on
+  `PlannedDeedEngine`: the `instanceof OrderEngine` check hid it on the deployed config.
 - **On top of PR #71 (Nov 4):** the planner on the Deed engine (below), one product list (`CatalogService` the
   only writer, the same ID in `products` and `store_products`, migration `0031`), the console's new look (Inicio,
   five tabs, Pendientes as the one inbox), long price pastes saved 25 products per batch, and the demo runner

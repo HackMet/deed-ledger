@@ -6,6 +6,7 @@
 import type { DeedCheckRow, DeedChecks } from "../../application/engine/deed-checks";
 import type { Tenant } from "../../application/ports";
 import type { DeedRefusal } from "../../domain/deed-graph";
+import { orderCode } from "../../domain/order-code";
 
 export class D1DeedChecks implements DeedChecks {
   constructor(private readonly db: D1Database) {}
@@ -64,8 +65,34 @@ export interface DeedCounters {
   readonly refusedByReason: ReadonlyMap<string, number>;
 }
 
+/** An order with recent activity, for En vivo. The code is null until the order is confirmed. */
+export interface RecentOrder {
+  readonly orderId: string;
+  readonly code: string | null;
+}
+
 export class D1DeedReads {
   constructor(private readonly db: D1Database) {}
+
+  /** The store's orders by their last fact or check, newest first. */
+  async recentOrders(tenant: Tenant, limit: number): Promise<RecentOrder[]> {
+    const { results } = await this.db
+      .prepare(
+        `SELECT a.order_id,
+           (SELECT f.id FROM facts f WHERE f.business_id = ?1 AND f.kind = 'order_confirm' AND json_extract(f.body_json, '$.orderId') = a.order_id
+            ORDER BY f.recorded_at_ms DESC, f.rowid DESC LIMIT 1) AS confirm_id
+         FROM (
+           SELECT json_extract(body_json, '$.orderId') AS order_id, recorded_at_ms AS at_ms FROM facts WHERE business_id = ?1
+           UNION ALL
+           SELECT order_id, at_ms FROM deed_checks WHERE business_id = ?1 AND order_id IS NOT NULL
+         ) a
+         JOIN orders o ON o.business_id = ?1 AND o.id = a.order_id
+         GROUP BY a.order_id ORDER BY MAX(a.at_ms) DESC, a.order_id LIMIT ?2`,
+      )
+      .bind(tenant.businessId, limit)
+      .all<{ order_id: string; confirm_id: string | null }>();
+    return Promise.all(results.map(async (row) => ({ orderId: row.order_id, code: await orderCode(row.confirm_id) })));
+  }
 
   async counters(tenant: Tenant): Promise<DeedCounters> {
     const { results } = await this.db

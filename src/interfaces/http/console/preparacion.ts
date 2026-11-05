@@ -14,6 +14,7 @@ import { type ConsoleActionResult, runConsoleAction } from "../../../application
 import { dispatchOutbox } from "../../../application/dispatch";
 import type { MemberContext } from "../../../application/engine";
 import { OrderEngine, staffKey } from "../../../application/engine/order-engine";
+import { PlannedDeedEngine } from "../../../infrastructure/d1/planned-deed-engine";
 import { describeError } from "../../../application/errors";
 import type { ActionEnvelope, ConsoleAction, LineMark } from "../../../domain/contract/actions";
 import { formatLempiras } from "../../../domain/contract/numbers";
@@ -100,7 +101,7 @@ export function preparacionScreen(app: Hono<ConsoleEnv>) {
         // The order's history (Pedidos, with change approvals) is read from the ledger, which only the
         // real engine writes; with a pretend engine there is no history to link to.
         body: html`${orderPage(card, member.nowMs, c.get("csrf"))}${
-          engine instanceof OrderEngine ? html`<p class="links"><a href="/console/pedidos/${encodeURIComponent(card.order.orderId)}">Historial del pedido</a></p>` : ""
+          engine instanceof OrderEngine || engine instanceof PlannedDeedEngine ? html`<p class="links"><a href="/console/pedidos/${encodeURIComponent(card.order.orderId)}">Historial del pedido</a></p>` : ""
         }`,
       }),
     );
