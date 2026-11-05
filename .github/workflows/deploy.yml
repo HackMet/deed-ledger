@@ -44,5 +44,6 @@ jobs:
           --var PRETEND_ENGINE:1
           --var PUBLIC_BASE_URL:https://store-assistant.atiendeme.workers.dev
           --var CONVERSATION:planner
+          --var CONSOLE_LANG:en
           --var TEST_COMMANDS:1
           --var MODEL_DAILY_CAP_USD:15

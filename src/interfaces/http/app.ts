@@ -89,6 +89,8 @@ export function createHttpApp(makeRuntime: (env: Env) => Runtime) {
     return id === null ? c.text("Unsupported media", 415) : c.json({ id });
   });
 
+  // Someone opening the bare address (a judge, a teammate) lands on the console's login, not "Not found".
+  app.get("/", (c) => c.redirect("/console", 302));
   app.route("/console", consoleRoutes());
   app.route(PRIVACY_PATH, privacyRoutes());
 

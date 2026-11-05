@@ -17,6 +17,7 @@ import {
 import { bienvenidaScreen } from "./bienvenida";
 import { deedScreen } from "./deed";
 import { libroScreen } from "./libro";
+import { consoleLanguage, languageRoute } from "./language";
 import { empleadosScreen } from "./empleados";
 import { facturasScreen } from "./facturas";
 import { inicioScreen } from "./inicio";
@@ -31,9 +32,12 @@ import { tiendaScreen } from "./tienda";
 export function consoleRoutes() {
   const app = new Hono<ConsoleEnv>();
 
+  // Every console page in the visitor's language (ES | EN), the login page included.
+  app.use("*", consoleLanguage);
   // Cross-site and oversized form posts are refused, the login form included. Anotar and the
   // invoice upload take photos and set their own limits below.
   app.use("*", sameSiteForms(["/console/anotar", INVOICE_UPLOAD_PATH]));
+  app.get("/idioma/:lang", languageRoute);
   registerEntryRoutes(app);
   app.use("*", requireMember);
   // Before the CSRF check, which reads the whole body: uploads have a size limit.

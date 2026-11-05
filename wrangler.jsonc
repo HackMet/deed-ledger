@@ -28,6 +28,8 @@
     // "planner" lets the planner (a second Muse Spark call per burst) decide each conversation step
     // (D-45); "classic" (the default) keeps the engine's own questions. The simulator's --planner sets it.
     "CONVERSATION": "classic",
+    // The console's default language when the visitor hasn't picked one: "en", or Spanish when empty.
+    "CONSOLE_LANG": "",
     // Muse Spark's reasoning effort for the reader's call and the planner's: "minimal", "low", "medium",
     // "high", "xhigh", "max", or "default" (the model picks). Blank: the measured defaults in
     // src/infrastructure/config.ts (planner path: reader "low", planner "minimal"; the classic reader
