@@ -211,7 +211,7 @@ function page(c: Context<ConsoleEnv>, tab: "products" | "hours", body: unknown, 
     shell(c, {
       title: "Tienda",
       path: PATH,
-      tab: "/console/mas",
+      tab: "/console/negocio",
       notice: notice !== undefined && Object.hasOwn(NOTICES, notice) ? NOTICES[notice as NoticeKey] : null,
       style: STYLE,
       body: html`${subTabs(tab)}${body}`,

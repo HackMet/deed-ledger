@@ -3,15 +3,15 @@
  * entered, the tabs hold the lists, and Pendientes (the bell) is the one inbox, so nothing here
  * repeats them: prices live in the Productos tab and a new invoice photo starts in Anotar. Deed en
  * vivo is every order's graph and verifications as they happen. Staff see only what isn't the owner's.
+ * A phone reaches these from the Más tab; a wide screen's sidebar lists them itself (layout.ts).
+ * "Probar como cliente" is on Inicio, where it's seen first.
  */
 import type { Hono } from "hono";
 import { html } from "hono/html";
 import { PRIVACY_PATH } from "../../../domain/customer-controls";
+import { isDemoBusiness } from "../../../domain/demo";
 import type { ConsoleEnv } from "./auth";
-import { shell } from "./layout";
-import { TRY_STYLE, tryCard } from "./try-number";
-
-const PATH = "/console/mas";
+import { EMPLEADOS_PATH, MAS_PATH, shell } from "./layout";
 
 interface Option {
   readonly label: string;
@@ -23,7 +23,7 @@ interface Option {
 const OPTIONS: readonly Option[] = [
   // Name, address and notes, with the hours and delivery the assistant answers from (Tienda's setup).
   { label: "Mi tienda", hint: "Nombre, horario, envío, dirección y notas.", href: "/console/negocio", ownerOnly: true },
-  { label: "Empleados", hint: "Invitar, permisos y quitar.", href: "/console/empleados", ownerOnly: true },
+  { label: "Empleados", hint: "Invitar, permisos y quitar.", href: EMPLEADOS_PATH, ownerOnly: true },
   // The list to review and approve; a new invoice photo is taken from Anotar.
   { label: "Facturas", hint: "La lista de facturas de proveedores.", href: "/console/facturas", ownerOnly: true },
   { label: "Deed en vivo", hint: "El grafo de cada pedido y cada verificación, al momento.", href: "/console/deed/en-vivo", ownerOnly: false },
@@ -34,14 +34,15 @@ export function masScreen(app: Hono<ConsoleEnv>) {
   app.get("/mas", async (c) => {
     const member = c.get("member");
     const isOwner = member.role === "owner";
-    const options = OPTIONS.filter((option) => isOwner || !option.ownerOnly);
-    const numbers = await c.get("runtime").deps.tenancy.displayNumbersOf({ businessId: member.businessId });
+    // A demo store can't add staff (D-64), so it isn't offered.
+    const demo = isDemoBusiness(member.businessId);
+    const options = OPTIONS.filter((option) => (isOwner || !option.ownerOnly) && !(demo && option.href === EMPLEADOS_PATH));
     return c.html(
       shell(c, {
         title: "Más",
-        path: PATH,
-        style: STYLE + TRY_STYLE,
-        body: html`${tryCard(numbers)}<ul class="options">${options.map(row)}</ul>`,
+        path: MAS_PATH,
+        style: STYLE,
+        body: html`<ul class="options">${options.map(row)}</ul>`,
       }),
     );
   });

@@ -115,7 +115,7 @@ export function deedScreen(app: Hono<ConsoleEnv>) {
         subtitle: "Verificaciones",
         back: "/console/preparacion",
         path: VERIFICATIONS,
-        tab: "/console/mas",
+        tab: LIVE_PATH,
         refreshSeconds: REFRESH_SECONDS,
         style: STYLE,
         body: html`<p class="meta"><a href="${SEARCH}">Buscar pedido por código</a></p>
@@ -154,9 +154,8 @@ ${rows.length === 0 ? html`<p class="empty">Todavía no hay verificaciones.</p>`
       await shell(c, {
         title: "Deed en vivo",
         subtitle: `Se actualiza cada ${REFRESH_SECONDS} segundos`,
-        back: "/console/mas",
         path: picked === undefined ? LIVE_PATH : `${LIVE_PATH}?pedido=${encodeURIComponent(picked)}`,
-        tab: "/console/mas",
+        tab: LIVE_PATH,
         refreshSeconds: REFRESH_SECONDS,
         style: STYLE,
         body: html`<section class="hero"><p class="live-badge"><span class="dot"></span>LIVE</p>
@@ -197,7 +196,7 @@ ${KEEP_SCROLL}`,
         subtitle: at === null ? "Cómo se armó" : `Cómo se armó · como estaba a las ${formatTime(at)}`,
         back: `/console/pedidos/${encodeURIComponent(orderId)}`,
         path: `/console/deed/${encodeURIComponent(orderId)}`,
-        tab: "/console/mas",
+        tab: LIVE_PATH,
         // No refresh here: a reload drops the fact panel that is open (`#f-…`) and the `?foco=` path.
         style: STYLE,
         body: html`${REPLAY_SLIDER ? replayForm(times, at) : ""}
@@ -227,7 +226,7 @@ async function searchPage(c: Context<ConsoleEnv>, notFound: boolean) {
       subtitle: "Buscar",
       back: VERIFICATIONS,
       path: SEARCH,
-      tab: "/console/mas",
+      tab: LIVE_PATH,
       style: STYLE,
       body: html`${notFound ? html`<p class="empty">No encontré un pedido con ese código en esta tienda.</p>` : ""}
 <form method="post" action="${SEARCH}" class="buscar">${csrfField(c.get("csrf"))}

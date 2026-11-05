@@ -16,8 +16,6 @@ import { csrfField, shell } from "./layout";
 
 const PATH = "/console/empleados";
 const MAX_NAME = 120;
-/** Empleados is opened from Más: the tab it lights, and where "←" goes. */
-const FROM = "/console/mas";
 const SUBTITLE = "Quién entra a la consola";
 
 const NOTICES = {
@@ -39,9 +37,8 @@ export function empleadosScreen(app: Hono<ConsoleEnv>) {
       shell(c, {
         title: "Empleados",
         subtitle: SUBTITLE,
-        back: FROM,
         path: PATH,
-        tab: FROM,
+        tab: PATH,
         notice: notice !== undefined && Object.hasOwn(NOTICES, notice) ? NOTICES[notice as NoticeKey] : null,
         style: STYLE,
         body: html`${inviteForm(csrf)}${members.map((m) => memberCard(m, csrf))}`,
@@ -78,9 +75,8 @@ export function empleadosScreen(app: Hono<ConsoleEnv>) {
       shell(c, {
         title: "Empleados",
         subtitle: SUBTITLE,
-        back: FROM,
         path: PATH,
-        tab: FROM,
+        tab: PATH,
         style: STYLE,
         body: html`<section class="card">
 <h2>¿Quitar a ${name}?</h2>
@@ -143,9 +139,8 @@ async function inviteFor(c: Context<ConsoleEnv>, userId: string) {
     shell(c, {
       title: "Empleados",
       subtitle: SUBTITLE,
-      back: FROM,
       path: PATH,
-      tab: FROM,
+      tab: PATH,
       style: STYLE,
       body: html`<section class="card">
 <h2>Código para ${person.displayName ?? "entrar"}</h2>

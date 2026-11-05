@@ -3,7 +3,8 @@
  * concept: a light top bar with the store's name, the owner's bell (Pendientes, with the open count)
  * and who is logged in; the screen's own title under a small kicker line; an optional notice; the
  * screen's content; and the tab bar (Inicio, Pedidos, Anotar raised in the center, Productos, Más),
- * which becomes a left sidebar on a wide screen. Every screen renders through `shell`; login pages,
+ * which becomes a left sidebar on a wide screen. The sidebar has room for every option, so it lists
+ * Más's entries itself and leaves Más out; a phone's five tabs can't hold them, so Más stays there. Every screen renders through `shell`; login pages,
  * which have no session, use `simplePage`. The shared look (cards, chips, rows, buttons) lives in
  * `BASE_STYLE`; a screen adds only what is its own.
  *
@@ -13,6 +14,8 @@
 import type { Context } from "hono";
 import { html, raw } from "hono/html";
 import { describeError } from "../../../application/errors";
+import { PRIVACY_PATH } from "../../../domain/customer-controls";
+import { isDemoBusiness } from "../../../domain/demo";
 import type { ConsoleMember } from "../../../application/ports";
 import type { ConsoleEnv } from "./auth";
 import { approvals } from "./inbox";
@@ -20,26 +23,50 @@ import { approvals } from "./inbox";
 export const PENDIENTES_PATH = "/console/pendientes";
 export const INICIO_PATH = "/console/inicio";
 
+export const MAS_PATH = "/console/mas";
+export const EMPLEADOS_PATH = "/console/empleados";
+
 interface NavEntry {
   readonly path: string;
   readonly label: string;
   readonly ownerOnly: boolean;
+  /** Everywhere, only in the wide screen's sidebar (Más's entries), or only on a phone (Más). */
+  readonly where: "both" | "wide" | "phone";
 }
 
 /**
- * The tab bar, in order; Anotar sits in the middle. Owner-only tabs are hidden from staff (the
- * routes refuse them too). Screens that aren't tabs light the tab they're reached from: Empleados
- * lights Más, Pendientes (the bell) lights Inicio.
+ * The navigation, in order; Anotar sits in the middle of the phone's tabs. Owner-only entries are
+ * hidden from staff (the routes refuse them too). Screens that aren't entries light the one they're
+ * reached from (Pendientes, the bell, lights Inicio); on a phone, Más is lit for any of its entries.
  */
 export const NAV: readonly NavEntry[] = [
-  { path: INICIO_PATH, label: "Inicio", ownerOnly: false },
-  { path: "/console/preparacion", label: "Pedidos", ownerOnly: false },
+  { path: INICIO_PATH, label: "Inicio", ownerOnly: false, where: "both" },
+  { path: "/console/preparacion", label: "Pedidos", ownerOnly: false, where: "both" },
   // "Micrófono" in the wireframes; named for what it does until the screen records voice.
-  { path: "/console/anotar", label: "Anotar", ownerOnly: false },
+  { path: "/console/anotar", label: "Anotar", ownerOnly: false, where: "both" },
   // The catalog the order engine reads; staff propose prices there and the owner confirms them.
-  { path: "/console/productos", label: "Productos", ownerOnly: false },
-  { path: "/console/mas", label: "Más", ownerOnly: false },
+  { path: "/console/productos", label: "Productos", ownerOnly: false, where: "both" },
+  { path: MAS_PATH, label: "Más", ownerOnly: false, where: "phone" },
+  // Más's entries, in its order (mas.ts).
+  { path: "/console/negocio", label: "Mi tienda", ownerOnly: true, where: "wide" },
+  { path: EMPLEADOS_PATH, label: "Empleados", ownerOnly: true, where: "wide" },
+  { path: "/console/facturas", label: "Facturas", ownerOnly: true, where: "wide" },
+  { path: "/console/deed/en-vivo", label: "Deed en vivo", ownerOnly: false, where: "wide" },
+  { path: PRIVACY_PATH, label: "Aviso de privacidad", ownerOnly: false, where: "wide" },
 ];
+
+/** What this member may open: owner-only entries are left out for staff, and Empleados in a demo store (D-64). */
+export function navFor(member: ConsoleMember): readonly NavEntry[] {
+  const isOwner = member.role === "owner";
+  const demo = isDemoBusiness(member.businessId);
+  return NAV.filter((entry) => (isOwner || !entry.ownerOnly) && !(demo && entry.path === EMPLEADOS_PATH));
+}
+
+/** Which entry is lit: the screen's own, or Más on a phone when the screen is one of Más's entries. */
+function isLit(entry: NavEntry, current: string): boolean {
+  if (entry.path === current) return true;
+  return entry.path === MAS_PATH && NAV.some((other) => other.where === "wide" && other.path === current);
+}
 
 export interface ScreenPage {
   readonly title: string;
@@ -53,7 +80,7 @@ export interface ScreenPage {
   readonly back?: string;
   /** This screen's own address: the auto-refresh goes here. */
   readonly path: string;
-  /** The tab to light, a path from `NAV`, when this screen isn't a tab itself (Empleados → Más). */
+  /** The entry to light, a path from `NAV`, when this screen isn't an entry itself (an order → Pedidos). */
   readonly tab?: string;
   readonly body: unknown;
   readonly notice?: string | null;
@@ -87,7 +114,7 @@ const STORE_ICON = html`<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
 export async function shell(c: Context<ConsoleEnv>, screen: ScreenPage) {
   const member = c.get("member");
   const isOwner = member.role === "owner";
-  const tabs = NAV.filter((tab) => isOwner || !tab.ownerOnly);
+  const tabs = navFor(member);
   const current = screen.tab ?? screen.path;
   // Only the owner has the bell, so only the owner's pages read the count.
   const [open, storeName] = await Promise.all([isOwner ? readPendientes(c) : Promise.resolve(null), storeNameOf(c)]);
@@ -113,7 +140,8 @@ ${screen.notice === undefined || screen.notice === null ? "" : html`<p class="no
 ${screen.body}
 </main>
 <nav class="tabs">${tabs.map(
-    (tab) => html`<a href="${tab.path}"${tab.path === current ? html` aria-current="page"` : ""}>${tab.label}</a>`,
+    (tab) =>
+      html`<a ${tab.where === "both" ? "" : html`class="${tab.where}" `}href="${tab.path}"${isLit(tab, current) ? html` aria-current="page"` : ""}>${tab.label}</a>`,
   )}</nav>
 </body>
 </html>`;
@@ -196,6 +224,11 @@ const ICONS = {
   plus: icon("<path d='M12 5v14M5 12h14' stroke-width='2.2'/>"),
   productos: icon("<path d='M12 3 4 7.5v9L12 21l8-4.5v-9z'/><path d='M4 7.5 12 12l8-4.5M12 12v9'/>"),
   mas: icon("<circle cx='5.5' cy='12' r='1.4' fill='black'/><circle cx='12' cy='12' r='1.4' fill='black'/><circle cx='18.5' cy='12' r='1.4' fill='black'/>"),
+  negocio: icon("<path d='M4 9.5 5.6 5h12.8L20 9.5'/><path d='M4 9.5h16v.8a2.7 2.7 0 0 1-5.3.4 2.7 2.7 0 0 1-5.4 0 2.7 2.7 0 0 1-5.3-.4z'/><path d='M5.5 12.5V20h13v-7.5M10 20v-4.5h4V20'/>"),
+  empleados: icon("<circle cx='9' cy='8.5' r='3.2'/><path d='M3.5 19.5a5.5 5.5 0 0 1 11 0'/><circle cx='16.8' cy='9.5' r='2.5'/><path d='M15.5 14.4a4.6 4.6 0 0 1 5 5.1'/>"),
+  facturas: icon("<path d='M6 3.5h12v17l-2-1.4-2 1.4-2-1.4-2 1.4-2-1.4-2 1.4z'/><path d='M9 8.5h6M9 12h6M9 15.5h3'/>"),
+  deed: icon("<circle cx='6' cy='6.5' r='2.2'/><circle cx='18' cy='6.5' r='2.2'/><circle cx='12' cy='17.5' r='2.2'/><path d='M7.6 8.1l3.2 7.5M16.4 8.1l-3.2 7.5M8.2 6.5h7.6'/>"),
+  privacidad: icon("<path d='M12 3.5 19 6v5.5c0 4.4-3 7.7-7 9-4-1.3-7-4.6-7-9V6z'/><path d='M9 12l2.2 2.2L15.5 10'/>"),
   bell: icon("<path d='M6.5 16v-5a5.5 5.5 0 0 1 11 0v5l1.5 2h-14z'/><path d='M10 20.5a2 2 0 0 0 4 0'/>"),
 };
 
@@ -277,7 +310,8 @@ li{padding:6px 0}
 
 /**
  * The shell: the light top bar, the page head, and the tab bar with Anotar raised in the middle; a
- * left sidebar from 1024 px. Tab icons are CSS masks, so the tabs' markup stays plain text.
+ * left sidebar from 900 px, so the demo's console frame beside the customer's phone gets it on a
+ * laptop. Tab icons are CSS masks, so the tabs' markup stays plain text.
  */
 const BASE_STYLE = `${TOKENS}${ELEMENTS}
 header.bar{position:sticky;top:0;z-index:4;display:flex;align-items:center;gap:12px;min-height:66px;padding:10px 16px 10px 20px;background:var(--paper);border-bottom:1px solid var(--line)}
@@ -308,12 +342,18 @@ nav.tabs a[href$="/inicio"]{--i:${ICONS.inicio}}
 nav.tabs a[href$="/preparacion"]{--i:${ICONS.pedidos}}
 nav.tabs a[href$="/productos"]{--i:${ICONS.productos}}
 nav.tabs a[href$="/mas"]{--i:${ICONS.mas}}
+nav.tabs a[href$="/negocio"]{--i:${ICONS.negocio}}
+nav.tabs a[href$="/empleados"]{--i:${ICONS.empleados}}
+nav.tabs a[href$="/facturas"]{--i:${ICONS.facturas}}
+nav.tabs a[href$="/en-vivo"]{--i:${ICONS.deed}}
+nav.tabs a[href$="/privacidad"]{--i:${ICONS.privacidad}}
+nav.tabs a.wide{display:none}
 nav.tabs a[href$="/anotar"]{--i:${ICONS.plus};color:var(--ink);font-weight:800}
 nav.tabs a[href$="/anotar"]::before{width:64px;height:64px;margin-top:-34px;border:5px solid var(--card);border-radius:50%;background:var(--gold);-webkit-mask:none;mask:none;box-shadow:0 -2px 15px #203f3514}
 nav.tabs a[href$="/anotar"]::after{content:"";position:absolute;top:-16px;left:50%;width:30px;height:30px;margin-left:-15px;background:var(--forest);-webkit-mask:var(--i) center/contain no-repeat;mask:var(--i) center/contain no-repeat}
 nav.tabs a[href$="/anotar"][aria-current=page]::before{background:var(--forest)}
 nav.tabs a[href$="/anotar"][aria-current=page]::after{top:-16px;left:50%;right:auto;height:30px;border-radius:0;background:var(--gold)}
-@media (min-width:1024px){
+@media (min-width:900px){
 body{max-width:none;margin:0;padding-left:248px;box-shadow:none}
 header.bar{min-height:84px;padding:12px 44px}
 .store{font-size:17px}
@@ -334,5 +374,8 @@ nav.tabs a[href$="/anotar"]::before{width:22px;height:22px;margin:0;border:0;bor
 nav.tabs a[href$="/anotar"]::after{display:none}
 nav.tabs a[href$="/anotar"][aria-current=page]{background:var(--gold);color:var(--forest)}
 nav.tabs a[href$="/anotar"][aria-current=page]::before{background:currentColor}
+nav.tabs a.wide{display:flex}
+nav.tabs a.phone{display:none}
+nav.tabs a.phone+a.wide{margin-top:18px}
 }
 `;
