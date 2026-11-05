@@ -88,8 +88,6 @@ function page(c: Context<ConsoleEnv>, notice: string | null, info: BusinessInfo 
   return shell(c, {
     title: "Mi tienda",
     path: PATH,
-    back: "/console/mas",
-    tab: "/console/mas",
     notice,
     style: STYLE,
     body: html`<section class="card hours"><h2>Horario y envío</h2>

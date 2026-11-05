@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import type { PendientesBoard, Tenant } from "../src/application/ports";
 import { D1Pendientes } from "../src/infrastructure/d1/pendientes-repository";
+import { navFor } from "../src/interfaces/http/console/layout";
 import { demoOrders } from "../src/infrastructure/memory/demo-orders";
 import { MemoryEngine } from "../src/infrastructure/memory/memory-engine";
 import { consoleLogger, randomIds, systemClock } from "../src/infrastructure/runtime";
@@ -15,13 +16,18 @@ const consoleHarness = (env?: Env, pendientesBoard?: PendientesBoard) =>
     ...(pendientesBoard === undefined ? {} : { pendientesBoard }),
   });
 
-/** The tab bar as a person reads it: each tab's label, whether it's lit, and its count, if any. */
-const tabsOf = (page: string) =>
+/**
+ * The navigation as a person reads it on a phone (the tab bar) or a wide screen (the sidebar): each
+ * entry's label and whether it's lit. Entries without a class show on both.
+ */
+const navOf = (page: string) =>
   [
     ...(/<nav class="tabs">([\s\S]*?)<\/nav>/.exec(page)?.[1] ?? "").matchAll(
-      /<a href="([^"]+)"( aria-current="page")?>([^<]+)(?:<span class="badge">([^<]+)<\/span>)?<\/a>/g,
+      /<a (?:class="(wide|phone)" )?href="([^"]+)"( aria-current="page")?>([^<]+)<\/a>/g,
     ),
-  ].map(([, href, current, label, badge]) => ({ href, label, current: current !== undefined, badge: badge ?? null }));
+  ].map(([, where, href, current, label]) => ({ where: where ?? "both", href, label, current: current !== undefined }));
+const tabsOf = (page: string) => navOf(page).filter((entry) => entry.where !== "wide");
+const sidebarOf = (page: string) => navOf(page).filter((entry) => entry.where !== "phone");
 
 /** The owner's bell in the top bar, with its count if any; undefined when the page has no bell. */
 const bellOf = (page: string) => {
@@ -30,6 +36,7 @@ const bellOf = (page: string) => {
 };
 
 const FIVE_TABS = ["Inicio", "Pedidos", "Anotar", "Productos", "Más"];
+const DAILY = ["Inicio", "Pedidos", "Anotar", "Productos"];
 
 /** The chip on the right of the top bar, as text. */
 const whoOn = (page: string) => /<span class="who">([\s\S]*?)<\/span><\/header>/.exec(page)?.[1]?.replace(/<[^>]+>/g, "");
@@ -82,33 +89,46 @@ describe("the console menu", () => {
     const { owner, page } = await sessions();
     const html = await (await page("/console/preparacion", owner)).text();
     expect(tabsOf(html).map((t) => t.label)).toEqual(FIVE_TABS);
+    // A wide screen's sidebar has room for Más's entries, so it lists them and leaves Más out.
+    expect(sidebarOf(html).map((t) => t.label)).toEqual([...DAILY, "Mi tienda", "Empleados", "Facturas", "Deed en vivo", "Aviso de privacidad"]);
     // After the screen's content, so it sits at the bottom of a phone screen.
     expect(html.indexOf('<nav class="tabs">')).toBeGreaterThan(html.indexOf("</main>"));
   });
 
-  it("shows staff the same five tabs, and no Pendientes bell", async () => {
+  it("shows staff the same five tabs, a sidebar without the owner's entries, and no Pendientes bell", async () => {
     const { staff, page } = await sessions();
     const html = await (await page("/console/preparacion", staff)).text();
     expect(tabsOf(html).map((t) => t.label)).toEqual(FIVE_TABS);
+    expect(sidebarOf(html).map((t) => t.label)).toEqual([...DAILY, "Deed en vivo", "Aviso de privacidad"]);
     expect(bellOf(html)).toBeUndefined();
   });
 
-  it("lights the tab of the screen you're on, Más on Empleados, and Inicio on Pendientes", async () => {
+  it("lights the screen you're on: in the sidebar its own entry, on a phone Más for Más's entries", async () => {
     const { owner, page } = await sessions();
-    for (const [path, tab] of [
-      ["/console/inicio", "Inicio"],
-      ["/console/preparacion", "Pedidos"],
-      ["/console/preparacion/demo-order-1", "Pedidos"],
-      ["/console/anotar", "Anotar"],
-      ["/console/productos", "Productos"],
-      ["/console/pendientes", "Inicio"],
-      ["/console/mas", "Más"],
-      ["/console/empleados", "Más"],
+    for (const [path, tab, side] of [
+      ["/console/inicio", "Inicio", "Inicio"],
+      ["/console/preparacion", "Pedidos", "Pedidos"],
+      ["/console/preparacion/demo-order-1", "Pedidos", "Pedidos"],
+      ["/console/anotar", "Anotar", "Anotar"],
+      ["/console/productos", "Productos", "Productos"],
+      ["/console/pendientes", "Inicio", "Inicio"],
+      ["/console/mas", "Más", null],
+      ["/console/empleados", "Más", "Empleados"],
+      ["/console/negocio", "Más", "Mi tienda"],
+      ["/console/deed/en-vivo", "Más", "Deed en vivo"],
     ] as const) {
       const response = await page(path, owner);
       expect(response.status, path).toBe(200);
-      expect(tabsOf(await response.text()).filter((t) => t.current).map((t) => t.label), path).toEqual([tab]);
+      const html = await response.text();
+      expect(tabsOf(html).filter((t) => t.current).map((t) => t.label), path).toEqual([tab]);
+      expect(sidebarOf(html).filter((t) => t.current).map((t) => t.label), path).toEqual(side === null ? [] : [side]);
     }
+  });
+
+  it("leaves Empleados out of a demo store's menu, since the demo can't add staff", () => {
+    const member = { businessId: "demo-x", userId: "u", sessionId: "s", role: "owner", canApproveFiado: true, displayName: null } as const;
+    expect(navFor(member).map((entry) => entry.label)).not.toContain("Empleados");
+    expect(navFor({ ...member, businessId: "store-x" }).map((entry) => entry.label)).toContain("Empleados");
   });
 
   it("keeps Pendientes for the owner: staff get a refusal, not the page", async () => {
@@ -139,15 +159,16 @@ describe("the console menu", () => {
     expect(forStaff).not.toContain("/console/facturas");
   });
 
-  it("offers 'Probar como cliente' with the store's own number once a webhook has said it, to owner and staff", async () => {
+  it("offers 'Probar como cliente' on Inicio with the store's own number once a webhook has said it, to owner and staff", async () => {
     const { store, owner, staff, page } = await sessions();
-    expect(await (await page("/console/mas", owner)).text()).not.toContain("Probar como cliente");
+    expect(await (await page("/console/inicio", owner)).text()).not.toContain("Probar como cliente");
 
     await env.DB.prepare(`UPDATE channel_accounts SET display_phone_number = '15550317081' WHERE business_id = ?`).bind(store.businessId).run();
     const other = await storeWithStaff();
     await env.DB.prepare(`UPDATE channel_accounts SET display_phone_number = '50499998888' WHERE business_id = ?`).bind(other.businessId).run();
+    expect(await (await page("/console/mas", owner)).text()).not.toContain("Probar como cliente");
     for (const cookie of [owner, staff]) {
-      const html = await (await page("/console/mas", cookie)).text();
+      const html = await (await page("/console/inicio", cookie)).text();
       expect(html).toContain("+1 555 031 7081");
       expect(html).toContain('href="https://wa.me/15550317081?text=Hola%2C%20quiero%20hacer%20un%20pedido"');
       expect(html).toContain("Probar como cliente");

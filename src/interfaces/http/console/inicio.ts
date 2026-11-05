@@ -2,6 +2,7 @@
  * Inicio: what needs attention today, read only. The counts come from the same reads the other
  * screens use: the preparation list (Pedidos) and the owner's open Pendientes. A number that can't
  * be read isn't shown, never as 0 (absent means unknown). Nothing here writes.
+ * "Probar como cliente" sits here too, the first thing seen, once the store has a WhatsApp number.
  *
  * There is no "sold today" card: no read sums a day's confirmed sales from the records yet.
  */
@@ -12,6 +13,7 @@ import type { OrderView, PreparationCard } from "../../../domain/contract/outcom
 import { type ConsoleEnv, memberContext } from "./auth";
 import { INICIO_PATH, PENDIENTES_PATH, readPendientes, shell } from "./layout";
 import { chipFor, fulfillmentLine, orderPath } from "./preparacion";
+import { TRY_STYLE, tryCard } from "./try-number";
 
 const PEDIDOS_PATH = "/console/preparacion";
 /** Honduras is UTC-6 all year. */
@@ -44,9 +46,10 @@ export function inicioScreen(app: Hono<ConsoleEnv>) {
     const context = memberContext(c);
     const engine = c.get("runtime").engine;
     const isOwner = member.role === "owner";
-    const [cards, open] = await Promise.all([
+    const [cards, open, numbers] = await Promise.all([
       engine === null ? Promise.resolve(null) : engine.preparationList(context),
       isOwner ? readPendientes(c) : Promise.resolve(null),
+      c.get("runtime").deps.tenancy.displayNumbersOf({ businessId: member.businessId }),
     ]);
     c.header("Cache-Control", "no-store");
     return c.html(
@@ -56,9 +59,9 @@ export function inicioScreen(app: Hono<ConsoleEnv>) {
         kicker: storeDate(context.nowMs),
         subtitle: "Esto es lo que necesita tu tienda hoy.",
         path: INICIO_PATH,
-        style: STYLE,
+        style: STYLE + TRY_STYLE,
         body: html`<p class="lead-action"><a class="button gold" href="/console/anotar">Anotar algo</a></p>
-<section class="stats" aria-label="Hoy">${stats(cards, isOwner ? open : null)}</section>
+${tryCard(numbers)}<section class="stats" aria-label="Hoy">${stats(cards, isOwner ? open : null)}</section>
 ${cards === null ? html`<p class="empty">La lista de pedidos no está lista todavía.</p>` : todayList(cards, context.nowMs)}`,
       }),
     );

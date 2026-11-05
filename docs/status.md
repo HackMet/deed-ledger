@@ -3,9 +3,13 @@
 Shared state for every agent: what's true now, what's next, what's open, what bit us. Keep it short. Anything a
 command can tell you (git log, test results, CI) doesn't belong here. Decisions go in [decisions.md](decisions.md).
 
-Last updated: Thu Nov 5, 2026, late morning Honduras time, by Claude Code.
+Last updated: Thu Nov 5, 2026, afternoon Honduras time, by Claude Code.
 
 ## Now
+
+- **Console menu (`claude/console-nav`, Kerly's feedback):** from 900 px the sidebar lists Más's entries itself and
+  leaves Más out, so the demo's console frame on a laptop shows every option; a phone keeps the five tabs with Más.
+  Empleados is left out of a demo store's menu. "Probar como cliente" moved from Más to Inicio.
 
 - **Public demo (`claude/public-demo`, D-61, not deployed):** `/demo` opens a synthetic store per visitor with a
   customer phone beside the console. Deploying needs migration `0032_demo_stores.sql` applied to the remote D1 first.

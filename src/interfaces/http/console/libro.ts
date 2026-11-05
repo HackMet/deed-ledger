@@ -148,7 +148,7 @@ ${rows.map((row, index) => rowSvg(row, index))}
         subtitle: "Cómo se armó · lo que se dijo y lo que pasó",
         back: `/console/deed/${encodeURIComponent(orderId)}`,
         path: `/console/deed/${encodeURIComponent(orderId)}/libro`,
-        tab: "/console/mas",
+        tab: "/console/deed/en-vivo",
         style: STYLE,
         body: rows.length === 0
           ? html`<p class="empty">Todavía no hay nada que comparar en este pedido.</p>`

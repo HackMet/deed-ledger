@@ -55,9 +55,9 @@ describe("the shared layout", () => {
       const page = await response.text();
       expect(page).toContain('<body data-layout="console">');
       expect(page).toContain(`<h1>${title}</h1>`);
-      expect(page).toContain(`<a href="${path === "/console/empleados" ? "/console/mas" : path}" aria-current="page">`);
+      expect(page).toContain(`href="${path}" aria-current="page">`);
       expect(page).toContain('<a href="/console/preparacion"');
-      expect(page).toContain('<a href="/console/mas"');
+      expect(page).toContain('href="/console/mas"');
     }
   });
 
