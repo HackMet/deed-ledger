@@ -3,7 +3,8 @@
  * Read-only, for any member of the store; the ledger only, scoped to the store (another store's order
  * is a 404). The graph is server-rendered inline SVG, with no script: a fact's panel opens with `:target`.
  * The feed refreshes every few seconds; the order page does not, so an open panel stays open. `?t=<ms>` replays
- * the order as it stood at that time.
+ * the order as it stood at that time. En vivo puts both on one refreshing screen: the graph of the order with the
+ * newest activity (or the one picked with `?pedido=`) above the newest checks.
  */
 import type { Context, Hono } from "hono";
 import { html } from "hono/html";
@@ -17,7 +18,7 @@ import {
   deedGraph,
   visibleAt,
 } from "../../../domain/deed-graph";
-import { D1DeedReads, type DeedCheckView } from "../../../infrastructure/d1/deed-checks";
+import { D1DeedReads, type DeedCheckView, type RecentOrder } from "../../../infrastructure/d1/deed-checks";
 import { D1OrderLookup } from "../../../infrastructure/d1/order-lookup";
 import { D1OrderTrail, type TrailEntry } from "../../../infrastructure/d1/order-trail";
 import type { ConsoleEnv } from "./auth";
@@ -26,6 +27,9 @@ import { csrfField, shell, simplePage } from "./layout";
 
 const VERIFICATIONS = "/console/deed/verificaciones";
 const SEARCH = "/console/deed/buscar";
+export const LIVE_PATH = "/console/deed/en-vivo";
+const LIVE_ORDERS = 6;
+const LIVE_FEED = 30;
 const REFRESH_SECONDS = 3;
 
 const SHORT_KIND: Record<TrailEntry["kind"], string> = {
@@ -118,6 +122,44 @@ ${rows.length === 0 ? html`<p class="empty">Todavía no hay verificaciones.</p>`
     );
   });
 
+  app.get("/deed/en-vivo", async (c) => {
+    const tenant = { businessId: c.get("member").businessId };
+    const reads = new D1DeedReads(c.env.DB);
+    const picked = c.req.query("pedido");
+    const [counters, rows, recent] = await Promise.all([reads.counters(tenant), reads.feed(tenant, LIVE_FEED), reads.recentOrders(tenant, LIVE_ORDERS)]);
+    const orderId = picked ?? recent[0]?.orderId ?? null;
+    const trail = orderId === null ? null : await new D1OrderTrail(c.env.DB).trail(tenant, orderId);
+    // Another store's order, or one that doesn't exist: the same answer as its own page.
+    if (picked !== undefined && trail === null) return c.html(simplePage("Deed en vivo", html`<p class="empty">Ese pedido no está en la lista.</p>`), 404);
+    const facts = trail === null ? [] : trail.facts.map(toDeedFact);
+    const refusals = orderId === null || trail === null ? [] : await reads.refusalsOf(tenant, orderId);
+    const orderPage = orderId === null ? "" : `/console/deed/${encodeURIComponent(orderId)}`;
+    return c.html(
+      await shell(c, {
+        title: "Deed en vivo",
+        subtitle: `Se actualiza cada ${REFRESH_SECONDS} segundos`,
+        back: "/console/mas",
+        path: picked === undefined ? LIVE_PATH : `${LIVE_PATH}?pedido=${encodeURIComponent(picked)}`,
+        tab: "/console/mas",
+        refreshSeconds: REFRESH_SECONDS,
+        style: STYLE,
+        body: html`<p class="meta"><a href="${VERIFICATIONS}">Todas las verificaciones</a> · <a href="${SEARCH}">Buscar pedido por código</a></p>
+${recent.length === 0 ? "" : html`<nav class="picks" aria-label="Pedido que se muestra"><a href="${LIVE_PATH}"${picked === undefined ? html` aria-current="true"` : ""}>El más reciente</a>${recent.map((order) => pickLink(order, picked))}</nav>`}
+<div class="vivo"><section class="vivo-grafo">${trail === null
+  ? html`<p class="empty">Todavía no hay pedidos. Cuando entre uno, su grafo aparece acá.</p>`
+  : html`<h2 class="section">Pedido ${trail.code ?? "sin confirmar"}</h2>
+${graphSvg(deedGraph(facts, refusals), new Set(), orderPage)}
+${LEGEND}
+<p class="meta"><a href="${orderPage}">Ver el detalle</a> · <a href="${orderPage}/libro">Ver libro</a></p>`}</section>
+<section class="vivo-feed"><h2 class="section">Verificaciones</h2>
+<p class="counters" id="contadores">Intentos rechazados ${counters.attempts}</p>
+<p class="counters" id="afirmaciones">Afirmaciones verificadas ${counters.claims}, pasaron ${counters.claimsPassed}</p>
+${rows.length === 0 ? html`<p class="empty">Todavía no hay verificaciones.</p>` : html`<ol class="feed">${rows.map(feedRow)}</ol>`}</section></div>
+${KEEP_SCROLL}`,
+      }),
+    );
+  });
+
   app.get("/deed/:orderId", async (c) => {
     const orderId = c.req.param("orderId");
     const tenant = { businessId: c.get("member").businessId };
@@ -153,6 +195,16 @@ ${shownEntries.map((entry) => panelOf(entry, graph, facts))}`,
   });
 }
 
+/** One order to follow on En vivo. Unconfirmed orders have no code yet, so they say so. */
+function pickLink(order: RecentOrder, picked: string | undefined) {
+  return html`<a href="${LIVE_PATH}?pedido=${encodeURIComponent(order.orderId)}"${picked === order.orderId ? html` aria-current="true"` : ""}>${order.code ?? "Sin confirmar"}</a>`;
+}
+
+/** The refresh reloads the page: this puts the reader back where they were, or the feed could never be read. */
+const KEEP_SCROLL = html`<script>try{const k="deed-en-vivo";const y=sessionStorage.getItem(k);if(y!==null)scrollTo(0,Number(y));addEventListener("pagehide",()=>sessionStorage.setItem(k,String(scrollY)))}catch{}</script>`;
+
+const LEGEND = html`<ul class="legend">${(Object.keys(STATUS_WORDS) as DeedStatus[]).map((status) => html`<li class="${status}">${STATUS_WORDS[status]}</li>`)}</ul>`;
+
 /** The search form, and a 404 when a search found nothing. What was typed is never shown back. No refresh: a reload would empty the field while someone types. */
 async function searchPage(c: Context<ConsoleEnv>, notFound: boolean) {
   return c.html(
@@ -184,8 +236,8 @@ function replayForm(times: readonly number[], at: number | null) {
 </form>`;
 }
 
-/** The graph as inline SVG: boxes by kind, coloured by status, every box a link to its panel; refusals below. */
-function graphSvg(graph: DeedGraph, onPath: ReadonlySet<string>) {
+/** The graph as inline SVG: boxes by kind, coloured by status, every box a link to its panel; refusals below. `panels` is the page holding the panels, when it isn't this one. */
+function graphSvg(graph: DeedGraph, onPath: ReadonlySet<string>, panels = "") {
   if (graph.nodes.length === 0 && graph.refusals.length === 0) return html`<p class="empty">Este pedido no tiene hechos todavía.</p>`;
   const columns = Math.max(0, ...graph.nodes.map((node) => node.column + 1), ...graph.refusals.map((refusal) => refusal.column + 1));
   const rows = graph.layers + (graph.refusals.length > 0 ? 1 : 0);
@@ -208,8 +260,8 @@ ${drawn.map((edge) => {
   const path = edge.type === "depends" && onPath.has(edge.from) && onPath.has(edge.to) ? " path" : "";
   return html`<line class="${edge.type}${path}" x1="${from.x}" y1="${from.y}" x2="${to.x}" y2="${to.y}"/>`;
 })}
-${graph.nodes.map((node) => nodeSvg(node, at.get(node.id)!, onPath.has(node.id)))}
-${graph.refusals.map((refusal) => refusalSvg(refusal, at.get(refusal.id)!))}
+${graph.nodes.map((node) => nodeSvg(node, at.get(node.id)!, onPath.has(node.id), panels))}
+${graph.refusals.map((refusal) => refusalSvg(refusal, at.get(refusal.id)!, panels))}
 </svg>`;
 }
 
@@ -221,21 +273,21 @@ function arcBetween(from: { x: number; y: number }, to: { x: number; y: number }
   return `M${from.x} ${from.y} Q${cx} ${cy} ${to.x} ${to.y}`;
 }
 
-function nodeSvg(node: DeedNode, spot: { x: number; y: number }, onPath: boolean) {
+function nodeSvg(node: DeedNode, spot: { x: number; y: number }, onPath: boolean, panels: string) {
   const cls = `node ${node.status}${onPath ? " path" : ""}`;
   const { x, y } = spot;
   const shape =
     node.kind === "order_cancel"
       ? html`<polygon class="${cls}" points="${x + 14},${y} ${x + NODE_W - 14},${y} ${x + NODE_W},${y + NODE_H / 2} ${x + NODE_W - 14},${y + NODE_H} ${x + 14},${y + NODE_H} ${x},${y + NODE_H / 2}"/>`
       : html`<rect class="${cls}" x="${x}" y="${y}" width="${NODE_W}" height="${NODE_H}" rx="${node.kind === "order_confirm" ? NODE_H / 2 : 6}"/>`;
-  return html`<a href="#f-${node.id}">${shape}<text class="label" x="${x + NODE_W / 2}" y="${y + 19}" text-anchor="middle">${SHORT_KIND[node.kind as TrailEntry["kind"]] ?? node.kind}</text><text class="status" x="${x + NODE_W / 2}" y="${y + 36}" text-anchor="middle">${STATUS_WORDS[node.status]}</text></a>`;
+  return html`<a href="${panels}#f-${node.id}">${shape}<text class="label" x="${x + NODE_W / 2}" y="${y + 19}" text-anchor="middle">${SHORT_KIND[node.kind as TrailEntry["kind"]] ?? node.kind}</text><text class="status" x="${x + NODE_W / 2}" y="${y + 36}" text-anchor="middle">${STATUS_WORDS[node.status]}</text></a>`;
 }
 
 /** A refused check: a small dashed box, linked to the fact that decided it when there is one. */
-function refusalSvg(refusal: DeedRefusal, spot: { x: number; y: number }) {
+function refusalSvg(refusal: DeedRefusal, spot: { x: number; y: number }, panels: string) {
   const { x, y } = spot;
   const box = html`<rect class="refusal" x="${x}" y="${y}" width="${NODE_W}" height="${NODE_H * 0.8}" rx="6"/><text class="status" x="${x + NODE_W / 2}" y="${y + 17}" text-anchor="middle">Intento rechazado</text><text class="status" x="${x + NODE_W / 2}" y="${y + 33}" text-anchor="middle">${reasonLabel(refusal.reason, refusal.decidingFactId)}</text>`;
-  return refusal.decidingFactId === null ? html`<g>${box}</g>` : html`<a href="#f-${refusal.decidingFactId}">${box}</a>`;
+  return refusal.decidingFactId === null ? html`<g>${box}</g>` : html`<a href="${panels}#f-${refusal.decidingFactId}">${box}</a>`;
 }
 
 /** The panel of one fact, shown by `:target`: what it is, who and when, what it rests on, and why it is dead. */
@@ -318,6 +370,16 @@ main>p.meta{margin:14px 18px 0}
 .graph .label{font-size:13px;font-weight:600;fill:#222}
 .graph .status{font-size:11px;fill:#555}
 .hint{font-size:15px;color:var(--mute);margin:0 14px}
+.vivo .graph{max-height:56vh}
+.vivo-feed .counters{margin-top:8px;margin-bottom:8px}
+@media (min-width:1024px){.vivo{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start}.vivo .graph{max-height:70vh}}
+.picks{display:flex;flex-wrap:wrap;gap:8px;margin:12px 14px}
+.picks a{min-height:44px;display:inline-flex;align-items:center;padding:0 14px;border:1px solid var(--line);border-radius:22px;background:var(--card);color:inherit;text-decoration:none;font-size:15px}
+.picks a[aria-current]{background:var(--forest);border-color:var(--forest);color:#fff;font-weight:700}
+.legend{list-style:none;display:flex;flex-wrap:wrap;gap:6px 14px;margin:0 14px;padding:0;font-size:13px;color:var(--mute)}
+.legend li::before{content:"";display:inline-block;width:12px;height:12px;margin-right:5px;border:1.5px solid;border-radius:3px;vertical-align:-1px}
+.legend .live::before{background:#e8f5e9;border-color:#2e7d32}.legend .closed::before{background:#ffebee;border-color:#c62828}
+.legend .blocked::before{background:#eee;border-color:#757575;border-style:dashed}.legend .pending::before{background:#fff8e1;border-color:#f9a825}
 .panel{display:none;margin:12px 14px;padding:16px;border:1px solid var(--line);border-radius:18px;background:var(--card)}
 .panel:target{display:block}
 .panel h2{font-size:17px;margin:0 0 6px}

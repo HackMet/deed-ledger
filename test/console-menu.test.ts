@@ -118,11 +118,11 @@ describe("the console menu", () => {
     expect(await response.text()).toContain("Esta parte es solo para el dueño.");
   });
 
-  it("lists Más short, one entry per job: Mi tienda, Empleados and Facturas for the owner only, no Pronto entries", async () => {
+  it("lists Más short, one entry per job: Mi tienda, Empleados and Facturas for the owner only, Deed en vivo for everyone, no Pronto entries", async () => {
     const { owner, staff, page } = await sessions();
     const forOwner = await (await page("/console/mas", owner)).text();
     const labels = (html: string) => [...html.matchAll(/<span class="label">([^<]+)<\/span>/g)].map(([, label]) => label);
-    expect(labels(forOwner)).toEqual(["Mi tienda", "Empleados", "Facturas", "Aviso de privacidad"]);
+    expect(labels(forOwner)).toEqual(["Mi tienda", "Empleados", "Facturas", "Deed en vivo", "Aviso de privacidad"]);
     expect(forOwner).toContain('<a href="/console/negocio">');
     expect(forOwner).toContain('<a href="/console/empleados">');
     expect(forOwner).toContain('<a href="/console/facturas">');
@@ -133,7 +133,7 @@ describe("the console menu", () => {
     }
 
     const forStaff = await (await page("/console/mas", staff)).text();
-    expect(labels(forStaff)).toEqual(["Aviso de privacidad"]);
+    expect(labels(forStaff)).toEqual(["Deed en vivo", "Aviso de privacidad"]);
     expect(forStaff).not.toContain("/console/empleados");
     expect(forStaff).not.toContain("/console/negocio");
     expect(forStaff).not.toContain("/console/facturas");

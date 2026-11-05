@@ -11,6 +11,7 @@ import { D1DeedChecks } from "../src/infrastructure/d1/deed-checks";
 import { orderCode } from "../src/domain/order-code";
 import { orderRef } from "../src/domain/order-ref";
 import { D1FactLedger } from "../src/infrastructure/d1/fact-ledger";
+import { PlannedDeedEngine } from "../src/infrastructure/d1/planned-deed-engine";
 import { hashToken, newToken } from "../src/infrastructure/tokens";
 import { ids, moreSugar } from "./fixtures/contract";
 import { type Harness, harness } from "./helpers/harness";
@@ -241,7 +242,7 @@ describe("/console/deed/:orderId: the order's facts as a graph", () => {
     expect((await get(h, `/console/deed/${encodeURIComponent(orderId)}`, ownerCookie)).status).toBe(200);
   });
 
-  it("is linked from the Pedidos trail as 'Cómo se armó', and leads on to every verification; Más doesn't list it", async () => {
+  it("is linked from the Pedidos trail as 'Cómo se armó', and leads on to every verification; Más lists Deed en vivo", async () => {
     const s = await storeWithMembers();
     const { orderId } = await cancelledWithChange(s);
     const h = harness({ engine: checkedEngine });
@@ -251,7 +252,71 @@ describe("/console/deed/:orderId: the order's facts as a graph", () => {
     const deed = await (await get(h, `/console/deed/${encodeURIComponent(orderId)}`, cookie)).text();
     expect(deed).toContain(`href="/console/deed/verificaciones"`);
     const more = await (await get(h, "/console/mas", cookie)).text();
-    expect(more).not.toContain(`href="/console/deed/verificaciones"`);
+    expect(more).toContain(`href="/console/deed/en-vivo"`);
+  });
+});
+
+describe("/console/deed/en-vivo: the newest order's graph and the checks, as they happen", () => {
+  it("follows the order with the newest activity, refreshing itself, for owner and staff", async () => {
+    const s = await storeWithMembers();
+    const { orderId } = await cancelledWithChange(s);
+    const h = harness({ engine: checkedEngine });
+    for (const role of ["owner", "staff"] as const) {
+      const cookie = await login(h, s, role);
+      const page = await (await get(h, "/console/deed/en-vivo", cookie)).text();
+      expect(page).toContain(`<meta http-equiv="refresh" content="3;url=/console/deed/en-vivo">`);
+      expect(page).toContain(`id="grafo"`);
+      expect(page).toContain(`href="/console/deed/${encodeURIComponent(orderId)}#f-`);
+      expect(page).toContain(`Afirmaciones verificadas`);
+    }
+  });
+
+  it("switches to a newer order by itself, and stays on a picked one", async () => {
+    const s = await storeWithMembers();
+    const first = await cancelledWithChange(s);
+    const h = harness({ engine: checkedEngine });
+    const cookie = await login(h, s, "staff");
+    const other = await placeFirstOrder(s, ids.customer, T0 + 60_000);
+    expect(other.orderId).not.toBe(first.orderId);
+    const latest = await (await get(h, "/console/deed/en-vivo", cookie)).text();
+    expect(latest).toContain(`href="/console/deed/${encodeURIComponent(other.orderId)}">Ver el detalle`);
+    const pinned = await get(h, `/console/deed/en-vivo?pedido=${encodeURIComponent(first.orderId)}`, cookie);
+    const body = await pinned.text();
+    expect(body).toContain(`href="/console/deed/${encodeURIComponent(first.orderId)}">Ver el detalle`);
+    expect(body).toContain(`content="3;url=/console/deed/en-vivo?pedido=${encodeURIComponent(first.orderId)}"`);
+  });
+
+  it("shows the order's code as its own page does", async () => {
+    const s = await storeWithMembers();
+    const { code } = await confirmedOrder(s);
+    const h = harness({ engine: checkedEngine });
+    const cookie = await login(h, s, "staff");
+    const page = await (await get(h, "/console/deed/en-vivo", cookie)).text();
+    expect(page).toContain(`Pedido ${code}`);
+  });
+
+  it("never shows another store's order: not by following, and a 404 when picked", async () => {
+    const mine = await storeWithMembers();
+    const theirs = await storeWithMembers();
+    const { orderId } = await cancelledWithChange(theirs);
+    const h = harness({ engine: checkedEngine });
+    const cookie = await login(h, mine, "staff");
+    const page = await (await get(h, "/console/deed/en-vivo", cookie)).text();
+    expect(page).not.toContain(orderId);
+    expect(page).toContain("Todavía no hay pedidos");
+    expect((await get(h, `/console/deed/en-vivo?pedido=${encodeURIComponent(orderId)}`, cookie)).status).toBe(404);
+  });
+});
+
+describe("Pedidos: the way into an order's history", () => {
+  it("links 'Historial del pedido' on the planner's engine, as deployed", async () => {
+    const s = await storeWithMembers();
+    const { orderId } = await confirmedOrder(s);
+    const engine = new PlannedDeedEngine({ db: env.DB, ledger: checkedEngine, store, setup: {} as never });
+    const h = harness({ engine });
+    const cookie = await login(h, s, "staff");
+    const page = await (await get(h, `/console/preparacion/${encodeURIComponent(orderId)}`, cookie)).text();
+    expect(page).toContain(`href="/console/pedidos/${encodeURIComponent(orderId)}">Historial del pedido</a>`);
   });
 });
 
