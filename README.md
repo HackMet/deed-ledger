@@ -188,7 +188,7 @@ customer (D-52). The eval suite can also use Muse Spark to score the replies' Sp
 
 ## Status (November 3, 2026)
 
-- **Live** on Cloudflare Workers (D1, R2, Queues, a one-minute cron), on the previous engine until this branch merges. Every merge to `main` runs the tests and
+- **Live** on Cloudflare Workers (D1, R2, Queues, a one-minute cron), running the order engine and the planner. Every merge to `main` runs the tests and
   deploys (`.github/workflows/deploy.yml`); every pull request runs the typecheck and the tests.
 - **The demo** runs a synthetic store, "Tienda demo (sintética)", with 40 made-up products and test commands for the store's own members (`/new`, `/help`).
 - **The order engine and the fact ledger** run the app when `DEED_ENGINE` is `"1"`, the default in `wrangler.jsonc` (`src/application/engine/order-engine.ts`, `src/infrastructure/d1/fact-ledger.ts`): versioned orders, operation keys as the idempotency anchor, an audit trail, cancellations as compensating entries. This engine has no planner read yet, so it runs the classic reader. The numbers below were measured before this engine ran the app, on the pretend engine that kept each store's state in D1 (`src/infrastructure/memory/d1-pretend-engine.ts`).
