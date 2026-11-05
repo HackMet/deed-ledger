@@ -7,6 +7,8 @@ Last updated: Thu Nov 5, 2026, afternoon Honduras time, by Claude Code.
 
 ## Now
 
+- **Public README (`claude/readme-public`):** the README now speaks to anyone, with the public demo first and developer detail folded. The long technical text moved, unchanged apart from translating its Spanish and correcting the planner note, to `docs/deed-conformance.md` and `docs/hackathon-record.md`. The GIF comes from real frames of a visit to `/demo` (`scripts/record-demo-gif.mjs`).
+
 - **Console menu (`claude/console-nav`, Kerly's feedback):** from 900 px the sidebar lists Más's entries itself and
   leaves Más out, so the demo's console frame on a laptop shows every option; a phone keeps the five tabs with Más.
   Empleados is left out of a demo store's menu. "Probar como cliente" moved from Más to Inicio.
