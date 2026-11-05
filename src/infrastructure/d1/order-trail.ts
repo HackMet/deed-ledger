@@ -50,6 +50,8 @@ export interface TrailEntry {
   readonly courier: Courier | null;
   /** C11: the agent configuration that made a customer's claim; null on staff and owner facts. */
   readonly agentId: string | null;
+  /** The order's words for this fact (lines of a version, a change's new lines, a status, a review's answer); null when none. */
+  readonly detail: string | null;
 }
 
 export interface OrderTrail {
@@ -187,6 +189,24 @@ const quantityText = (milli: number | null): string | null => {
   return fraction === "" ? String(whole) : `${whole}.${fraction}`;
 };
 
+const STATUS_WORDS: Readonly<Record<string, string>> = {
+  preparing: "Preparando",
+  ready: "Listo para entregar",
+  dispatched: "En camino",
+  delivered: "Entregado",
+};
+
+const lineWords = (quantity: string | null, name: string): string => (quantity === null ? name : `${quantity} ${name}`);
+
+/** The new quantity and name of every added or changed line of a change request. */
+const diffDetail = (body: { diff?: LineDiff }): string | null => {
+  const diff = body.diff;
+  if (diff === undefined || diff === null) return null;
+  const lines = [...(diff.added ?? []), ...(diff.changed ?? []).map((c) => c.after)];
+  const words = lines.map((l) => lineWords(l.quantity, l.productName ?? l.text)).filter((w) => w.trim() !== "");
+  return words.length === 0 ? null : words.join(", ");
+};
+
 const reviewOf = (row: FactRow): TrailEntry["review"] => {
   const body = JSON.parse(row.body_json) as { decision: "approve" | "decline"; reason: string };
   return { decision: body.decision, reason: body.reason };
@@ -267,7 +287,7 @@ export class D1OrderTrail {
     if (order === null) return null;
     const { results: rows } = await this.db.prepare(FACTS_SQL).bind(tenant.businessId, orderId).all<FactRow>();
     const ids = rows.map((row) => row.id);
-    const [evidence, closures, edges, names, version] = await Promise.all([
+    const [evidence, closures, edges, names, version, versionLines] = await Promise.all([
       this.db
         .prepare(`SELECT fact_id, kind, ref_id FROM fact_evidence WHERE business_id = ?1 ORDER BY kind, ref_id`)
         .bind(tenant.businessId)
@@ -285,7 +305,34 @@ export class D1OrderTrail {
         .prepare(`SELECT fulfillment_mode FROM order_versions WHERE business_id = ?1 AND order_id = ?2 AND version = ?3`)
         .bind(tenant.businessId, orderId, currentVersionOf(rows, order.current_version))
         .first<{ fulfillment_mode: FulfillmentMode }>(),
+      this.db
+        .prepare(
+          `SELECT l.version, l.customer_text, l.qty_milli, p.canonical_name FROM order_lines l
+           LEFT JOIN products p ON p.business_id = l.business_id AND p.id = l.product_id
+           WHERE l.business_id = ?1 AND l.order_id = ?2 ORDER BY l.version, l.line_no`,
+        )
+        .bind(tenant.businessId, orderId)
+        .all<{ version: number; customer_text: string; qty_milli: number | null; canonical_name: string | null }>(),
     ]);
+    const detailOf = (row: FactRow): string | null => {
+      const body = JSON.parse(row.body_json) as { version?: number; status?: string; diff?: LineDiff };
+      if (row.kind === "order_version") {
+        const words = versionLines.results
+          .filter((l) => l.version === body.version)
+          .map((l) => {
+            const quantity = quantityText(l.qty_milli);
+            return lineWords(quantity, l.canonical_name ?? wordsWithoutQuantity(l.customer_text, quantity));
+          });
+        return words.length === 0 ? null : words.join(", ");
+      }
+      if (row.kind === "change_request") return diffDetail(body);
+      if (row.kind === "order_status") return (body.status === undefined ? null : (STATUS_WORDS[body.status] ?? null));
+      if (row.kind === "change_review") {
+        const decision = (JSON.parse(row.body_json) as { decision: "approve" | "decline" }).decision;
+        return decision === "approve" ? "aprobado" : "rechazado";
+      }
+      return null;
+    };
     const entries: TrailEntry[] = rows.map((row) => {
       const proof = evidence.results.filter((e) => e.fact_id === row.id).map((e) => ({ kind: e.kind, refId: e.ref_id }));
       const closure = closures.results.find((c) => c.fact_id === row.id);
@@ -302,6 +349,7 @@ export class D1OrderTrail {
         review: row.kind === "change_review" ? reviewOf(row) : null,
         courier: courierOf(row, names),
         agentId: row.agent_id,
+        detail: detailOf(row),
       };
     });
     const currentVersion = currentVersionOf(rows, order.current_version);

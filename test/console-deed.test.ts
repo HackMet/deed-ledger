@@ -12,6 +12,7 @@ import { orderCode } from "../src/domain/order-code";
 import { orderRef } from "../src/domain/order-ref";
 import { D1FactLedger } from "../src/infrastructure/d1/fact-ledger";
 import { PlannedDeedEngine } from "../src/infrastructure/d1/planned-deed-engine";
+import { toEnglish } from "../src/interfaces/http/console/language";
 import { hashToken, newToken } from "../src/infrastructure/tokens";
 import { ids, moreSugar } from "./fixtures/contract";
 import { type Harness, harness } from "./helpers/harness";
@@ -267,7 +268,7 @@ describe("/console/deed/en-vivo: the newest order's graph and the checks, as the
       expect(page).toContain(`<meta http-equiv="refresh" content="3;url=/console/deed/en-vivo">`);
       expect(page).toContain(`id="grafo"`);
       expect(page).toContain(`href="/console/deed/${encodeURIComponent(orderId)}#f-`);
-      expect(page).toContain(`Afirmaciones verificadas`);
+      expect(page).toMatch(/\d+ afirmaciones · \d+ confirmadas · \d+ sin respaldo · \d+ intentos rechazados/);
     }
   });
 
@@ -284,6 +285,34 @@ describe("/console/deed/en-vivo: the newest order's graph and the checks, as the
     const body = await pinned.text();
     expect(body).toContain(`href="/console/deed/${encodeURIComponent(first.orderId)}">Ver el detalle`);
     expect(body).toContain(`content="3;url=/console/deed/en-vivo?pedido=${encodeURIComponent(first.orderId)}"`);
+  });
+
+  it("draws a graph at its own size: circles, arrows to what rests on them, the newest marked", async () => {
+    const s = await storeWithMembers();
+    await cancelledWithChange(s);
+    const h = harness({ engine: checkedEngine });
+    const cookie = await login(h, s, "staff");
+    const page = await (await get(h, "/console/deed/en-vivo", cookie)).text();
+    expect(page).toMatch(/<svg id="grafo" class="livegraph" width="\d+" height="\d+"/);
+    expect(page).toContain(`<marker id="lv-arrow"`);
+    expect(page).toContain(`<circle class="body"`);
+    expect(page).toContain("depende de");
+  });
+
+  it("reads in English, its graph and its feed included, when the console is in English", async () => {
+    const s = await storeWithMembers();
+    await cancelledWithChange(s);
+    const h = harness({ engine: checkedEngine });
+    const cookie = await login(h, s, "staff");
+    const page = await (await get(h, "/console/deed/en-vivo", `${cookie}; consola_idioma=en`)).text();
+    const words = page.replace(/<style[\s\S]*?<\/style>|<script[\s\S]*?<\/script>|<[^>]*>/g, "\n");
+    for (const english of ["Deed live", "claims", "attempts refused", "Most recent", "Change asked"]) expect(words).toContain(english);
+    for (const spanish of ["Deed en vivo", "Afirmaciones", "Intentos rechazados", "Intentó", "Verificó", "Vivo", "Cerrado", "Versión", "Se actualiza", "más reciente", "Pedido", "Buscar"]) expect(words).not.toContain(spanish);
+    for (const [row, english] of [
+      ["Verificó el estado del pedido", "Checked the order's state"],
+      ["Intentó marcar listo", "Tried to mark ready"],
+      ["no está respaldado por los registros", "not backed by the records"],
+    ] as const) expect(toEnglish(`<li>${row}</li>`)).toContain(english);
   });
 
   it("shows the order's code as its own page does", async () => {
