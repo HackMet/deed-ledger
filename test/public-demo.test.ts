@@ -121,9 +121,18 @@ describe("the demo's phone", () => {
     h.clock.advance(4_000);
     await h.deliver(h.takeRingsFor(businessId));
 
-    const chat = (await (await call(h, "/demo/telefono/mensajes?despues=0", { cookie })).json()) as { lines: { side: string; body: string | null }[] };
-    expect(chat.lines[0]).toMatchObject({ side: "in", body: "Buenas, me manda 2 coca de 600 y una libra de frijoles para llevar" });
-    expect(chat.lines.some((line) => line.side === "out" && (line.body ?? "").includes("Mercadito Demo"))).toBe(true);
+    const chat = (await (await call(h, "/demo/telefono/mensajes?despues=0", { cookie })).json()) as {
+      lines: { side: string; body: string | null; en: string | null }[];
+    };
+    expect(chat.lines[0]).toMatchObject({
+      side: "in",
+      body: "Buenas, me manda 2 coca de 600 y una libra de frijoles para llevar",
+      en: "Hi, send me 2 Coca-Cola 600 ml and a pound of beans, to go",
+    });
+    const reply = chat.lines.find((line) => line.side === "out" && (line.body ?? "").includes("Mercadito Demo"));
+    // The message stays as the assistant sent it, in Spanish; the subtitle is beside it.
+    expect(reply?.body).toContain("Soy el asistente de *Mercadito Demo*");
+    expect(reply?.en).toContain("I'm the ordering assistant for *Mercadito Demo*");
     // The reply counts as delivered without ever reaching the channel.
     expect(h.channel.sent.filter((m) => isDemoPhoneNumberId(m.fromPhoneNumberId) || isDemoPhone(m.toPhone))).toEqual([]);
     const outbox = await rows<{ status: string }>(`SELECT status FROM outbound_messages WHERE business_id = ?`, businessId);

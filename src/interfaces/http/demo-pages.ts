@@ -103,19 +103,20 @@ iframe{flex:1;width:100%;border:0;background:var(--paper)}
 `;
 
 /** `/demo/tienda`: the customer's phone on the left, the store's console on the right (tabs on a phone). */
-export function demoSplitPage() {
+export function demoSplitPage(language: "es" | "en") {
+  const say = (es: string, en: string) => html`<span data-es="${es}" data-en="${en}">${language === "en" ? en : es}</span>`;
   return page(
     "Your demo store",
-    html`<div class="top"><span><strong>Mercadito Demo</strong> · live demo, made-up data</span>
-<span class="right"><span>Order as the customer on the left, run the store on the right. <a href="/demo">About</a></span>
+    html`<div class="top"><span><strong>Mercadito Demo</strong> · ${say("demostración en vivo, datos inventados", "live demo, made-up data")}</span>
+<span class="right"><span>${say("Pedí como cliente a la izquierda, atendé la tienda a la derecha.", "Order as the customer on the left, run the store on the right.")} <a href="/demo">${say("Acerca de", "About")}</a></span>
 <form method="post" action="/demo/empezar" onsubmit="this.querySelector('button').disabled = true"><button class="reset" title="Opens a fresh store with an empty chat and no orders">Empezar de nuevo</button></form></span></div>
 <div class="tabs" role="tablist">
-<button role="tab" aria-selected="true" data-pane="phone">Customer phone</button>
-<button role="tab" aria-selected="false" data-pane="console">Store console</button>
+<button role="tab" aria-selected="true" data-pane="phone">${say("Teléfono del cliente", "Customer phone")}</button>
+<button role="tab" aria-selected="false" data-pane="console">${say("Consola de la tienda", "Store console")}</button>
 </div>
 <div class="panes">
-<section class="pane" id="phone"><h2>Customer phone</h2><iframe src="/demo/telefono" title="Customer phone"></iframe></section>
-<section class="pane" id="console"><h2>Store console (you're the owner)</h2><iframe src="/console/inicio" title="Store console" name="consola"></iframe></section>
+<section class="pane" id="phone"><h2>${say("Teléfono del cliente", "Customer phone")}</h2><iframe src="/demo/telefono" title="Customer phone" name="telefono"></iframe></section>
+<section class="pane" id="console"><h2>${say("Consola de la tienda (sos el dueño)", "Store console (you're the owner)")}</h2><iframe src="/console/inicio" title="Store console" name="consola"></iframe></section>
 </div>
 <script>
 (function () {
@@ -131,6 +132,18 @@ export function demoSplitPage() {
   // Screens that only show what's there: reloading them loses nothing. Forms (Add, Products) never reload.
   var SHOWS = new RegExp("^/console(/(inicio|pedidos(/[^/]+)?|preparacion(/[^/]+)?|pendientes|deed/[^/]+))?/?$");
   var consola = document.querySelector('iframe[name="consola"]');
+  var telefono = document.querySelector('iframe[name="telefono"]');
+  // One language for the whole page (D-63): the console's ES | EN switch picks it, and the phone and
+  // this page follow whenever the console loads a page.
+  var lang = document.documentElement.lang === "en" ? "en" : "es";
+  function follow() {
+    try { lang = consola.contentDocument.documentElement.lang === "en" ? "en" : "es"; } catch (err) { /* not loaded yet */ }
+    document.documentElement.lang = lang;
+    document.querySelectorAll("[data-en]").forEach(function (e) { e.textContent = e.getAttribute("data-" + lang); });
+    try { telefono.contentWindow.postMessage({ demo: "lang", lang: lang }, location.origin); } catch (err) { /* reloading */ }
+  }
+  consola.addEventListener("load", follow);
+  telefono.addEventListener("load", follow);
   window.addEventListener("message", function (e) {
     if (e.origin !== location.origin || !e.data || e.data.demo !== "answered") return;
     try {
@@ -177,13 +190,33 @@ const PHONE_SCRIPT = String.raw`
 (function () {
   var CSRF = JSON.parse(document.getElementById("csrf").textContent);
   var chat = document.getElementById("chat"), err = document.getElementById("err");
-  var seen = {}, last = 0, waitingSince = 0, typing = null, loaded = false;
+  var seen = {}, last = 0, waitingSince = 0, typing = null, loaded = false, lines = [];
+  // The chat in one language (D-63): Spanish as the assistant sent it, or all of it in English. The
+  // console's ES | EN switch picks it; the store page passes the choice on.
+  var lang = chat.dataset.lang === "en" ? "en" : "es";
+  var UI = {
+    es: { assistant: "Asistente de pedidos", typing: "escribiendo…", voice: "🎤 Nota de voz", photo: "Foto de una lista escrita a mano",
+      hint: "Sos el cliente. Tocá un ejemplo abajo o escribí tu propio pedido, por ejemplo: «quiero 3 libras de arroz y un aceite».",
+      texto: "💬 Pedido por texto", lista: "📷 Foto de una lista", voz: "🎤 Nota de voz", placeholder: "Escribí tu pedido…", send: "Enviar",
+      limit: "Esta tienda de demostración ya usó sus mensajes. Tocá «Empezar de nuevo» arriba para abrir otra.",
+      budget: "La demostración ya usó el presupuesto de IA de hoy. Volvé mañana.",
+      expired: "Esta tienda de demostración terminó. Abrí una nueva desde la página de la demostración.",
+      failed: "Ese mensaje no se envió. Probá otra vez.", offline: "No se puede llegar a la tienda ahorita. Reintentando…" },
+    en: { assistant: "Ordering assistant", typing: "typing…", voice: "🎤 Voice note", photo: "Photo of a handwritten order list",
+      hint: "You're the customer. Tap an example below. To type your own order, write it in Spanish (the store's product list is in Spanish), e.g. “quiero 3 libras de arroz y un aceite”.",
+      texto: "💬 Text order", lista: "📷 Photo of a list", voz: "🎤 Voice note", placeholder: "Type your order (in Spanish)…", send: "Send",
+      limit: "This demo store has used its messages. Tap “Empezar de nuevo” at the top for a fresh one.",
+      budget: "The demo has used today's AI budget. Please come back tomorrow.",
+      expired: "This demo store has ended. Open a new one from the demo page.",
+      failed: "That message didn't go through. Try again.", offline: "Can't reach the store right now. Retrying…" }
+  };
+  function t(key) { return UI[lang][key]; }
   function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
   function scroll() { chat.scrollTop = chat.scrollHeight; }
   var errorFrom = null;
   function showError(text, from) { err.textContent = text; err.hidden = !text; errorFrom = text ? from || "send" : null; }
   function setTyping(on) {
-    if (on && !typing) { typing = el("p", "typing", "escribiendo…"); chat.appendChild(typing); scroll(); }
+    if (on && !typing) { typing = el("p", "typing", t("typing")); chat.appendChild(typing); scroll(); }
     if (!on && typing) { typing.remove(); typing = null; }
   }
   // WhatsApp's own marks: *bold* and _italic_. Built from text nodes, never HTML.
@@ -196,13 +229,15 @@ const PHONE_SCRIPT = String.raw`
   }
   function render(line) {
     var m = el("div", "msg " + line.side);
-    if (line.side === "in" && line.kind === "image") { var img = el("img"); img.src = "/demo/telefono/archivo/lista"; img.alt = "Photo of a handwritten order list"; m.appendChild(img); }
-    else if (line.side === "in" && line.kind === "audio") { var a = el("audio"); a.controls = true; a.src = "/demo/telefono/archivo/voz"; m.appendChild(a); m.appendChild(el("small", null, "🎤 Nota de voz")); }
-    else { format(m, line.body || ""); }
+    if (line.side === "in" && line.kind === "image") { var img = el("img"); img.src = "/demo/telefono/archivo/lista"; img.alt = t("photo"); m.appendChild(img); }
+    else if (line.side === "in" && line.kind === "audio") { var a = el("audio"); a.controls = true; a.src = "/demo/telefono/archivo/voz"; m.appendChild(a); m.appendChild(el("small", null, t("voice"))); }
+    // A sentence with no English stays as sent.
+    else { format(m, (lang === "en" && line.en) || line.body || ""); }
     if (line.buttons && line.buttons.length) {
       var opts = el("div", "opts");
       line.buttons.forEach(function (b) {
-        var btn = el("button", null, b.title); btn.type = "button";
+        // The label follows the language; the tap still sends the store's own title.
+        var btn = el("button", null, (lang === "en" && b.en) || b.title); btn.type = "button";
         btn.addEventListener("click", function () {
           var all = opts.querySelectorAll("button");
           all.forEach(function (x) { x.disabled = true; });
@@ -222,7 +257,7 @@ const PHONE_SCRIPT = String.raw`
         data.lines.forEach(function (line) {
           if (seen[line.side + line.id]) return;
           seen[line.side + line.id] = true;
-          render(line); lastSide = line.side;
+          lines.push(line); render(line); lastSide = line.side;
           if (line.side === "out") answered = true;
           if (line.atMs > last) last = line.atMs - 1;
         });
@@ -234,15 +269,11 @@ const PHONE_SCRIPT = String.raw`
         setTyping(waitingSince > 0 && Date.now() - waitingSince < 90000);
         if (errorFrom === "poll") showError("");
       })
-      .catch(function (e) { showError(e.message === "expired" ? REFUSED.expired : "Can't reach the store right now. Retrying…", "poll"); })
+      .catch(function (e) { showError(e.message === "expired" ? t("expired") : t("offline"), "poll"); })
       .finally(function () { setTimeout(poll, 1500); });
   }
   // Why a send was refused, in words a visitor can act on.
-  var REFUSED = {
-    limit: "This demo store has used its messages. Tap “Empezar de nuevo” at the top for a fresh one.",
-    budget: "The demo has used today's AI budget. Please come back tomorrow.",
-    expired: "This demo store has ended. Open a new one from the demo page."
-  };
+  var REFUSED = { limit: 1, budget: 1, expired: 1 };
   var sending = false;
   // Resolves true when the store got the message; on a refusal the visitor keeps what they typed.
   function send(payload) {
@@ -255,10 +286,10 @@ const PHONE_SCRIPT = String.raw`
         return r.json().catch(function () { return {}; }).then(function (body) {
           // A tab left open on an older store: reload it to pick up the current one.
           if (body.error === "csrf") { location.reload(); return false; }
-          throw new Error(REFUSED[body.error] || "That message didn't go through. Try again.");
+          throw new Error(REFUSED[body.error] ? t(body.error) : t("failed"));
         });
       })
-      .catch(function (e) { waitingSince = 0; setTyping(false); showError(e && e.message && e.message.indexOf(" ") > 0 ? e.message : "That message didn't go through. Try again."); return false; })
+      .catch(function (e) { waitingSince = 0; setTyping(false); showError(e && e.message && e.message.indexOf(" ") > 0 ? e.message : t("failed")); return false; })
       .finally(function () { sending = false; });
   }
   document.querySelectorAll("[data-preset]").forEach(function (b) { b.addEventListener("click", function () { send({ preset: b.dataset.preset }); }); });
@@ -268,17 +299,36 @@ const PHONE_SCRIPT = String.raw`
     if (!text) return;
     send({ text: text }).then(function (ok) { if (ok) input.value = ""; });
   });
+  // Everything on the phone in the chosen language, the chat redrawn from what it already holds.
+  function setLang(next) {
+    lang = next === "en" ? "en" : "es";
+    document.documentElement.lang = lang;
+    document.getElementById("assistant").textContent = t("assistant");
+    document.getElementById("hint").textContent = t("hint");
+    document.querySelectorAll("[data-preset]").forEach(function (b) { b.textContent = t(b.dataset.preset); });
+    document.getElementById("text").placeholder = t("placeholder");
+    document.querySelector("#send button").textContent = t("send");
+    chat.querySelectorAll(".msg").forEach(function (m) { m.remove(); });
+    lines.forEach(render);
+    if (typing) { typing.textContent = t("typing"); chat.appendChild(typing); }
+    if (errorFrom) showError("");
+    scroll();
+  }
+  window.addEventListener("message", function (e) {
+    if (e.origin === location.origin && e.data && e.data.demo === "lang") setLang(e.data.lang);
+  });
+  setLang(lang);
   poll();
 })();
 `;
 
 /** `/demo/telefono`: the customer's side, in Spanish. Polls the store's replies every second and a half. */
-export function demoPhonePage(csrf: string) {
+export function demoPhonePage(csrf: string, language: "es" | "en") {
   return page(
     "Customer phone",
-    html`<div class="head"><span class="dot" aria-hidden="true">MD</span><span>Mercadito Demo<small>Asistente de pedidos</small></span></div>
-<div id="chat" aria-live="polite">
-<p class="hint">You're the customer. Tap an example below or type your own order in Spanish, e.g. "quiero 3 libras de arroz y un aceite".</p>
+    html`<div class="head"><span class="dot" aria-hidden="true">MD</span><span>Mercadito Demo<small id="assistant"></small></span></div>
+<div id="chat" aria-live="polite" data-lang="${language}">
+<p class="hint" id="hint"></p>
 </div>
 <div class="presets" aria-label="Examples">
 <button type="button" data-preset="texto">💬 Text order</button>

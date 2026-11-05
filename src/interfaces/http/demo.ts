@@ -25,6 +25,8 @@ import type { DemoStore } from "../../infrastructure/d1/demo-store-repository";
 import { csrfToken, hashToken, newToken, sameToken } from "../../infrastructure/tokens";
 import { LISTA_JPEG_BASE64, VOZ_OGG_BASE64 } from "../../infrastructure/demo-preset-files";
 import { afterIntake } from "./app";
+import { languageOf } from "./console/language";
+import { buttonInEnglish, customerInEnglish, replyInEnglish } from "./demo-english";
 import { demoLandingPage, demoLimitedPage, demoPhonePage, demoSplitPage } from "./demo-pages";
 import type { HttpEnv } from "./env";
 
@@ -95,13 +97,13 @@ export function demoRoutes() {
   app.get("/tienda", async (c) => {
     const session = await demoSession(c);
     if (session === null) return c.redirect(DEMO_PATH, 302);
-    return c.html(demoSplitPage());
+    return c.html(demoSplitPage(languageOf(c)));
   });
 
   app.get("/telefono", async (c) => {
     const session = await demoSession(c);
     if (session === null) return c.redirect(DEMO_PATH, 302);
-    return c.html(demoPhonePage(session.csrf));
+    return c.html(demoPhonePage(session.csrf, languageOf(c)));
   });
 
   // The phone's chat since a moment: what the customer sent and the store's replies.
@@ -110,7 +112,14 @@ export function demoRoutes() {
     if (session === null) return c.json({ error: "expired" }, 401);
     const after = Number(c.req.query("despues") ?? "0");
     const lines = await c.get("runtime").demoStores.chat(session.store, Number.isFinite(after) ? after : 0);
-    return c.json({ lines });
+    // English subtitles for visitors who don't read Spanish (D-63); the messages themselves stay as sent.
+    return c.json({
+      lines: lines.map((line) => ({
+        ...line,
+        en: line.side === "out" ? replyInEnglish(line.body) : customerInEnglish(line.kind, line.body),
+        buttons: line.buttons.map((button) => ({ ...button, en: buttonInEnglish(button.title) })),
+      })),
+    });
   });
 
   // The preset photo and voice note, so the phone can show what the customer sent.
