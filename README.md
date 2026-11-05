@@ -1,15 +1,34 @@
-<h1 align="center">Deed</h1>
-
-<p align="center"><strong>AI that can't lie about what it did.</strong></p>
-
 <p align="center">
-  AI chatbots say "done!" even when nothing happened.<br />
-  Deed makes the AI show proof first.
+  <img src="docs/assets/hero.png" alt="Deed: AI that can't lie about what it did. No proof, no claim." width="100%" />
 </p>
 
 <p align="center">
-  <a href="https://store-assistant.atiendeme.workers.dev/demo"><strong>👉 Try it now, no sign-up</strong></a>
+  <a href="https://github.com/HackMet/deed-ledger/actions/workflows/ci.yml"><img src="https://github.com/HackMet/deed-ledger/actions/workflows/ci.yml/badge.svg" alt="CI status" /></a>
+  <img src="https://img.shields.io/badge/-TypeScript-3178C6?logo=typescript&logoColor=white" alt="TypeScript" />
+  <img src="https://img.shields.io/badge/-Cloudflare%20Workers-F38020?logo=cloudflare&logoColor=white" alt="Cloudflare Workers" />
+  <img src="https://img.shields.io/badge/AI-Meta%20Muse-0866FF?logo=meta&logoColor=white" alt="Meta Muse models" />
 </p>
+
+<div align="center">
+
+<table>
+<tr>
+<td width="33%" align="center">
+  <a href="https://store-assistant.atiendeme.workers.dev/demo"><strong>👉 Try the live demo</strong></a><br />
+  <sub>No sign-up. Your own made-up store.</sub>
+</td>
+<td width="33%" align="center">
+  <a href="#what-is-this"><strong>🧾 What is this?</strong></a><br />
+  <sub>Explained in 30 seconds.</sub>
+</td>
+<td width="33%" align="center">
+  <a href="#for-developers"><strong>🛠️ For developers</strong></a><br />
+  <sub>How it's built, and how to run it.</sub>
+</td>
+</tr>
+</table>
+
+</div>
 
 <p align="center">
   <img src="docs/assets/deed-demo.gif" alt="A customer orders on a phone, the store prepares the order on a console, and a live graph shows what actually happened" width="100%" />
