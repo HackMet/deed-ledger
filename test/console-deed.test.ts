@@ -268,7 +268,7 @@ describe("/console/deed/en-vivo: the newest order's graph and the checks, as the
       expect(page).toContain(`<meta http-equiv="refresh" content="3;url=/console/deed/en-vivo">`);
       expect(page).toContain(`id="grafo"`);
       expect(page).toContain(`href="/console/deed/${encodeURIComponent(orderId)}#f-`);
-      expect(page).toContain(`Afirmaciones verificadas`);
+      expect(page).toMatch(/\d+ afirmaciones · \d+ confirmadas · \d+ sin respaldo · \d+ intentos rechazados/);
     }
   });
 
@@ -293,10 +293,10 @@ describe("/console/deed/en-vivo: the newest order's graph and the checks, as the
     const h = harness({ engine: checkedEngine });
     const cookie = await login(h, s, "staff");
     const page = await (await get(h, "/console/deed/en-vivo", cookie)).text();
-    expect(page).toMatch(/<svg id="grafo" class="graph" width="\d+" height="\d+"/);
-    expect(page).toContain(`<marker id="arrow"`);
-    expect(page).toContain(`<circle class="node`);
-    expect(page.match(/class="halo"/g)).toHaveLength(1);
+    expect(page).toMatch(/<svg id="grafo" class="livegraph" width="\d+" height="\d+"/);
+    expect(page).toContain(`<marker id="lv-arrow"`);
+    expect(page).toContain(`<circle class="body"`);
+    expect(page).toContain("depende de");
   });
 
   it("reads in English, its graph and its feed included, when the console is in English", async () => {
@@ -306,7 +306,7 @@ describe("/console/deed/en-vivo: the newest order's graph and the checks, as the
     const cookie = await login(h, s, "staff");
     const page = await (await get(h, "/console/deed/en-vivo", `${cookie}; consola_idioma=en`)).text();
     const words = page.replace(/<style[\s\S]*?<\/style>|<script[\s\S]*?<\/script>|<[^>]*>/g, "\n");
-    for (const english of ["Deed live", "Claims checked", "Attempts refused", "Most recent", "Change asked"]) expect(words).toContain(english);
+    for (const english of ["Deed live", "claims", "attempts refused", "Most recent", "Change asked"]) expect(words).toContain(english);
     for (const spanish of ["Deed en vivo", "Afirmaciones", "Intentos rechazados", "Intentó", "Verificó", "Vivo", "Cerrado", "Versión", "Se actualiza", "más reciente", "Pedido", "Buscar"]) expect(words).not.toContain(spanish);
     for (const [row, english] of [
       ["Verificó el estado del pedido", "Checked the order's state"],

@@ -18,11 +18,13 @@ import {
   deedGraph,
   visibleAt,
 } from "../../../domain/deed-graph";
+import { type FactForView, nodeViews } from "../../../domain/deed-node-view";
 import { D1DeedReads, type DeedCheckView, type RecentOrder } from "../../../infrastructure/d1/deed-checks";
 import { D1OrderLookup } from "../../../infrastructure/d1/order-lookup";
 import { D1OrderTrail, type TrailEntry } from "../../../infrastructure/d1/order-trail";
 import type { ConsoleEnv } from "./auth";
 import { EVIDENCE_LABELS, KIND_LABELS, formatTime } from "./pedidos";
+import { LIVE_STYLE, liveGraph } from "./deed-live-view";
 import { csrfField, shell, simplePage } from "./layout";
 
 const VERIFICATIONS = "/console/deed/verificaciones";
@@ -135,7 +137,18 @@ ${rows.length === 0 ? html`<p class="empty">Todavía no hay verificaciones.</p>`
     // Another store's order, or one that doesn't exist: the same answer as its own page.
     if (picked !== undefined && trail === null) return c.html(simplePage("Deed en vivo", html`<p class="empty">Ese pedido no está en la lista.</p>`), 404);
     const facts = trail === null ? [] : trail.facts.map(toDeedFact);
+    const forView: FactForView[] = trail === null ? [] : trail.facts.map((entry) => ({
+      factId: entry.factId,
+      kind: entry.kind,
+      recordedAtMs: entry.recordedAtMs,
+      agentId: entry.agentId,
+      evidence: entry.evidence,
+      detail: entry.detail,
+      closedByReason: entry.closedBy?.reason ?? null,
+    }));
     const refusals = orderId === null || trail === null ? [] : await reads.refusalsOf(tenant, orderId);
+    const graph = deedGraph(facts, refusals);
+    const views = nodeViews(forView, new Map(graph.nodes.map((node) => [node.id, node.status] as const)));
     const orderPage = orderId === null ? "" : `/console/deed/${encodeURIComponent(orderId)}`;
     return c.html(
       await shell(c, {
@@ -147,19 +160,16 @@ ${rows.length === 0 ? html`<p class="empty">Todavía no hay verificaciones.</p>`
         refreshSeconds: REFRESH_SECONDS,
         style: STYLE,
         body: html`<section class="hero"><p class="live-badge"><span class="dot"></span>LIVE</p>
-<div class="tiles"><div class="tile"><strong>${counters.claims}</strong><span>Afirmaciones verificadas</span></div>
-<div class="tile good"><strong>${counters.claimsPassed}</strong><span>Pasaron</span></div>
-<div class="tile bad"><strong>${counters.attempts}</strong><span>Intentos rechazados</span></div></div></section>
+<p class="summary">${counters.claims} afirmaciones · ${counters.claimsPassed} confirmadas · ${counters.claims - counters.claimsPassed} sin respaldo · ${counters.attempts} intentos rechazados</p></section>
 <p class="meta"><a href="${VERIFICATIONS}">Todas las verificaciones</a> · <a href="${SEARCH}">Buscar pedido por código</a></p>
 ${recent.length === 0 ? "" : html`<nav class="picks" aria-label="Pedido que se muestra"><a href="${LIVE_PATH}"${picked === undefined ? html` aria-current="true"` : ""}>El más reciente</a>${recent.map((order) => pickLink(order, picked))}</nav>`}
 <div class="vivo"><section class="vivo-grafo">${trail === null
   ? html`<p class="empty">Todavía no hay pedidos. Cuando entre uno, su grafo aparece acá.</p>`
   : html`<h2 class="section">Pedido ${trail.code ?? "sin confirmar"}</h2>
-${graphSvg(deedGraph(facts, refusals), new Set(), orderPage)}
-${LEGEND}
+${liveGraph(views, graph, orderPage)}
 <p class="meta"><a href="${orderPage}">Ver el detalle</a> · <a href="${orderPage}/libro">Ver libro</a></p>`}</section>
 <section class="vivo-feed"><h2 class="section">Verificaciones</h2>
-${rows.length === 0 ? html`<p class="empty">Todavía no hay verificaciones.</p>` : html`<ol class="feed">${rows.map(feedRow)}</ol>`}</section></div>
+${rows.length === 0 ? html`<p class="empty">Todavía no hay verificaciones.</p>` : html`<ol class="feed">${rows.map(liveFeedRow)}</ol>`}</section></div>
 ${KEEP_SCROLL}`,
       }),
     );
@@ -194,7 +204,7 @@ ${KEEP_SCROLL}`,
 <p class="meta"><a href="/console/deed/${encodeURIComponent(orderId)}/libro">Ver libro</a> · <a href="/console/deed/verificaciones">Todas las verificaciones</a></p>
 ${graphSvg(graph, onPath)}
 <p class="hint">Tocá un hecho para ver su detalle.</p>
-${shownEntries.map((entry) => panelOf(entry, graph, facts))}`,
+${shownEntries.map((entry) => panelOf(entry, graph, facts, `/console/deed/${encodeURIComponent(orderId)}/libro`))}`,
       }),
     );
   });
@@ -208,7 +218,6 @@ function pickLink(order: RecentOrder, picked: string | undefined) {
 /** The refresh reloads the page: this puts the reader back where they were, or the feed could never be read. */
 const KEEP_SCROLL = html`<script>try{const k="deed-en-vivo";const y=sessionStorage.getItem(k);if(y!==null)scrollTo(0,Number(y));addEventListener("pagehide",()=>sessionStorage.setItem(k,String(scrollY)))}catch{}</script>`;
 
-const LEGEND = html`<ul class="legend">${(Object.keys(STATUS_WORDS) as DeedStatus[]).map((status) => html`<li class="${status}">${STATUS_WORDS[status]}</li>`)}</ul>`;
 
 /** The search form, and a 404 when a search found nothing. What was typed is never shown back. No refresh: a reload would empty the field while someone types. */
 async function searchPage(c: Context<ConsoleEnv>, notFound: boolean) {
@@ -313,7 +322,7 @@ function refusalSvg(refusal: DeedRefusal, spot: { x: number; y: number }, panels
 }
 
 /** The panel of one fact, shown by `:target`: what it is, who and when, what it rests on, and why it is dead. */
-function panelOf(entry: TrailEntry, graph: DeedGraph, facts: readonly DeedFact[]) {
+function panelOf(entry: TrailEntry, graph: DeedGraph, facts: readonly DeedFact[], libro = "") {
   const status = graph.nodes.find((node) => node.id === entry.factId)?.status ?? "live";
   const fact = facts.find((candidate) => candidate.id === entry.factId);
   const closure = fact?.closure ?? null;
@@ -327,7 +336,7 @@ ${entry.evidence.length === 0 ? "" : html`<p>${entry.evidence.filter((e) => e.ki
 ${closure === null ? "" : html`<p class="closed">Cerrado por <a href="#f-${closure.closedByFactId}">${labelOf(closure.closedByFactId)}</a> (${CLOSURE_LABELS[closure.reason]})</p>`}
 ${block === null ? "" : html`<p class="blocked">Bloqueado por <a href="#f-${block.closedId}">${labelOf(block.closedId)}</a></p>
 <p><a href="?foco=${entry.factId}#f-${entry.factId}">Ver el camino hasta el bloqueo</a></p>`}
-<p><a href="#grafo">Volver al grafo</a></p>
+<p><a href="#grafo">Volver al grafo</a>${libro === "" ? "" : html` · <a href="${libro}">Ver en el libro</a>`}</p>
 </section>`;
 }
 
@@ -337,6 +346,14 @@ function feedRow(row: DeedCheckView) {
   const what = row.source === "verify_claims" ? `Verificó ${CLAIM_LABELS[row.claimKind ?? "other"]}` : `Intentó ${actionLabel(row.operationKey)}`;
   const why = row.source === "verify_claims" ? REASON_LABELS.not_backed : reasonLabel(row.reasonCode ?? "", row.decidingFactId);
   return html`<li class="${passed ? "pass" : "fail"}"><span class="mark">${passed ? "✓" : "✗"}</span><span class="what">${what}</span>${passed ? "" : html`<span class="why">${why}</span>`}<time>${formatTime(row.atMs)}</time>${row.orderId === null ? "" : html`<a href="/console/deed/${encodeURIComponent(row.orderId)}">pedido</a>`}</li>`;
+}
+
+/** The feed on En vivo: as `feedRow`, but a failed claim check is amber (not a refused attempt) and points to the order's graph. */
+function liveFeedRow(row: DeedCheckView) {
+  const failedClaim = row.source === "verify_claims" && row.result === "fail";
+  if (!failedClaim) return feedRow(row);
+  const link = row.orderId === null ? "" : html`<a href="${LIVE_PATH}?pedido=${encodeURIComponent(row.orderId)}#grafo">Ver en el grafo</a>`;
+  return html`<li class="fail claim"><span class="mark">✗</span><span class="what">Verificó ${CLAIM_LABELS[row.claimKind ?? "other"]}</span><span class="why">${REASON_LABELS.not_backed}</span><time>${formatTime(row.atMs)}</time>${link}</li>`;
 }
 
 /** The reason in Spanish; a refused cancelled order names the cancel (`ancestro cancelado`). */
@@ -408,10 +425,12 @@ main>p.meta{margin:14px 18px 0}
 .tile strong{display:block;font-size:30px;line-height:1.1;font-variant-numeric:tabular-nums}
 .tile span{display:block;margin-top:2px;font-size:13px;line-height:1.25;color:#b9cabf}
 .tile.good strong{color:#3ddc84}.tile.bad strong{color:#ff6b6b}
+.hero .summary{margin:0;font-size:17px;font-weight:700;font-variant-numeric:tabular-nums}
+.feed .fail.claim{box-shadow:inset 3px 0 0 #F5A524;background:#fffaf0}
 .feed .pass{box-shadow:inset 3px 0 0 #2e7d32}.feed .fail{box-shadow:inset 3px 0 0 #c62828;background:#fff5f5}
+${LIVE_STYLE}
 .hint{font-size:15px;color:var(--mute);margin:0 14px}
 .vivo-feed .counters{margin-top:8px;margin-bottom:8px}
-@media (min-width:1024px){.vivo{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start}}
 .picks{display:flex;flex-wrap:wrap;gap:8px;margin:12px 14px}
 .picks a{min-height:44px;display:inline-flex;align-items:center;padding:0 14px;border:1px solid var(--line);border-radius:22px;background:var(--card);color:inherit;text-decoration:none;font-size:15px}
 .picks a[aria-current]{background:var(--forest);border-color:var(--forest);color:#fff;font-weight:700}

@@ -40,6 +40,7 @@ Last updated: Wed Nov 4, 2026, morning Honduras time, by Claude Code.
   the graph of the order with the newest activity (or one picked with `?pedido=`), above the store's newest checks,
   refreshing every 3 seconds with the feed's meta refresh and no script. "Historial del pedido" now also shows on
   `PlannedDeedEngine`: the `instanceof OrderEngine` check hid it on the deployed config.
+- **Deed en vivo redrawn (`claude/deed-graph-look`, Nov 4):** left to right, each fact a state node (EN DUDA, HECHO, CERRADO, BLOQUEADO) with the agent above and the confirmation below, from real evidence only. No evidence kind records a WhatsApp delivery, so that label never shows.
 - **On top of PR #71 (Nov 4):** the planner on the Deed engine (below), one product list (`CatalogService` the
   only writer, the same ID in `products` and `store_products`, migration `0031`), the console's new look (Inicio,
   five tabs, Pendientes as the one inbox), long price pastes saved 25 products per batch, and the demo runner
