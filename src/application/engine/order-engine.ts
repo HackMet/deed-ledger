@@ -157,6 +157,8 @@ export interface OrderStore {
   orderFacts(tenant: Tenant, orderId: string): Promise<readonly OrderFact[]>;
   /** Orders confirmado, preparando or listo, oldest first confirmation first (ties by id). */
   preparationOrders(tenant: Tenant): Promise<readonly StoredOrder[]>;
+  /** The names these customers of this store gave, by customer ID; a customer with none (or deleted) is absent. */
+  customerNames(tenant: Tenant, customerIds: readonly string[]): Promise<ReadonlyMap<string, string>>;
   /**
    * Labels of the lines of `version` that differ from the same line of the version before it
    * (product, words, quantity or unit) or have no counterpart there. Empty for version 1.
@@ -962,11 +964,11 @@ export class OrderEngine implements Engine {
   async preparationList(tenant: Tenant): Promise<readonly PreparationCard[]> {
     const { store } = this.deps;
     const orders = await store.preparationOrders(tenant);
+    const names = await store.customerNames(tenant, [...new Set(orders.map((order) => order.customerId))]);
     return Promise.all(
-      orders.map(async ({ view, firstConfirmedAtMs }) => ({
+      orders.map(async ({ view, customerId, firstConfirmedAtMs }) => ({
         order: view,
-        // PENDING: the customer's name, once the customers table is on main.
-        customerName: null,
+        customerName: names.get(customerId) ?? null,
         confirmedAtMs: firstConfirmedAtMs ?? 0,
         changedLineIds: await store.changedLineIds(tenant, view.orderId, view.version),
       })),

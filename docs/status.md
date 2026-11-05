@@ -13,8 +13,9 @@ Last updated: Thu Nov 5, 2026, late morning Honduras time, by Claude Code.
   the preset photo and voice note read in fresh stores. D-62 adds the limits and fixes. **To test it by hand, use
   `MODEL_API_KEY=… node scripts/demo-test-server.mjs`** (frozen copy on :8795, fresh database, minute sweep), never
   a `wrangler dev` on a worktree an agent is editing: a save restarts the server and drops the reply in flight.
-  Open: "Unnamed customer" in the console after the customer gave a name; the phone shows a reply before the
-  dispatch's claim check, so a reply the check blocks would still show its original text there.
+  The console's order cards now show the name the customer gave (`OrderEngine.preparationList` left it null).
+  Open: the phone shows a reply before the dispatch's claim check, so a reply the check blocks would still show
+  its original text there.
 
 - **Ask before confirm (`claude/flow-ask`, D-58 proposed, not deployed):** on `OrderEngine`, a missing quantity, an
   illegible line or no pickup or delivery is asked before an order confirms, and staff close an order stuck at `listo`

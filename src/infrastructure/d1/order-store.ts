@@ -289,6 +289,19 @@ export class D1OrderStore implements OrderStore {
     return Promise.all(results.map((row) => this.load(tenant, row)));
   }
 
+  async customerNames(tenant: Tenant, customerIds: readonly string[]): Promise<ReadonlyMap<string, string>> {
+    if (customerIds.length === 0) return new Map();
+    const { results } = await this.db
+      .prepare(
+        `SELECT id, name FROM customers
+         WHERE business_id = ?1 AND id IN (SELECT value FROM json_each(?2))
+           AND name IS NOT NULL AND trim(name) <> '' AND deleted_at_ms IS NULL`,
+      )
+      .bind(tenant.businessId, JSON.stringify(customerIds))
+      .all<{ id: string; name: string }>();
+    return new Map(results.map((row) => [row.id, row.name]));
+  }
+
   async changedLineIds(tenant: Tenant, orderId: string, version: number): Promise<readonly string[]> {
     if (version <= 1) return [];
     const { results } = await this.db

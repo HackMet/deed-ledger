@@ -432,6 +432,27 @@ describe("the planner on the Deed engine", () => {
     expect(card.order.total).toBe(12000);
   });
 
+  it("shows staff the name the customer gave on the preparation list, and none for a customer who gave none", async () => {
+    const t = await plannedStore();
+    const named = `cust-named-${crypto.randomUUID()}`;
+    const nameless = `cust-nameless-${crypto.randomUUID()}`;
+    await env.DB.batch([
+      env.DB.prepare(`INSERT INTO customers (id, business_id, phone, name, name_saved_at_ms, created_at_ms) VALUES (?, ?, NULL, 'Marta', ?, ?)`).bind(named, t.businessId, T0, T0),
+      env.DB.prepare(`INSERT INTO customers (id, business_id, phone, created_at_ms) VALUES (?, ?, NULL, ?)`).bind(nameless, t.businessId, T0),
+    ]);
+    const orderIds = new Map<string, string>();
+    for (const customerId of [named, nameless]) {
+      const read = await t.burst([order(item("arroz", "2")), pickup], readback(), [{ observation: 0, line: 0, productId: t.id("arroz"), how: "exact_name" }], t.context(customerId));
+      const view = orderIn(read.outcome);
+      await save(await t.engine.onCustomerAction(t.context(customerId), confirmTap(customerId, view)));
+      orderIds.set(customerId, view.orderId);
+    }
+    const cards = await t.engine.preparationList(t.context());
+    expect(cards.find((c) => c.order.orderId === orderIds.get(named))?.customerName).toBe("Marta");
+    expect(cards.find((c) => c.order.orderId === orderIds.get(nameless))).toBeDefined();
+    expect(cards.find((c) => c.order.orderId === orderIds.get(nameless))?.customerName).toBeNull();
+  });
+
   it("with no stock left, the line reads back sold out and stays out of the total, as on the classic path", async () => {
     const t = await plannedStore();
     await setBalance(t.businessId, t.id("arroz"), 0);
