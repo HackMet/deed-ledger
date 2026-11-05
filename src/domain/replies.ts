@@ -16,6 +16,7 @@ import type {
   Claim,
   CustomerNotice,
   EngineOutcome,
+  LineDiff,
   OrderLineView,
   OrderState,
   OrderView,
@@ -152,6 +153,9 @@ export const COPY = {
   statusBuilding: "Todavía estamos armando tu pedido.",
   statusAwaitingConfirm: "Tu pedido está armado, solo falta que me lo confirmés.",
   statusOnList: "Tu pedido ya está en la fila. Te aviso apenas esté listo.",
+  /** A change asked after confirming waits for the store (K12): the customer hears what was passed on. */
+  changeRequested: "Tu pedido ya estaba confirmado, así que le pasé este cambio a la tienda:",
+  changeRequestedAfter: "Te aviso apenas lo revisen.",
   statusReady: "Tu pedido ya está listo.",
   statusOnTheWay: "Tu pedido va en camino 🛵",
   statusDelivered: "Tu pedido ya fue entregado.",
@@ -975,14 +979,18 @@ function statusReply(template: "order_status", order: OrderView | null): Rendere
     case "por_confirmar":
       return reply(template, `${COPY.statusAwaitingConfirm} ${COPY.typedFallback}`, [stateIn(order, ["por_confirmar"])]);
     case "confirmado":
-    case "preparando":
+    case "preparando": {
+      const claims = [stateIn(order, ["confirmado", "preparando"])];
+      const change = changeLines(order.openChangeRequest?.diff);
+      if (change.length > 0) return reply(template, [COPY.changeRequested, ...change, COPY.changeRequestedAfter].join("\n"), claims);
       return reply(
         template,
         order.queuePosition === null || order.queuePosition < 1
           ? COPY.statusOnList
           : `${queuePlace(order.queuePosition)} Te aviso apenas esté listo.`,
-        [stateIn(order, ["confirmado", "preparando"])],
+        claims,
       );
+    }
     case "listo": {
       const ready = order.code === undefined ? COPY.statusReady : `Tu pedido #${order.code} ya está listo.`;
       const body = order.fulfillment?.mode === "pickup" ? `${ready} Te esperamos 🙌` : ready;
@@ -997,6 +1005,21 @@ function statusReply(template: "order_status", order: OrderView | null): Rendere
     default:
       return unreachable(order.state);
   }
+}
+
+/**
+ * A waiting change, as the customer asked it: "• Agregar 3 libras de Arroz", "• Quitar …", "• 2 Coca-Cola
+ * 600 ml (antes 1)". What was asked, echoed back, not what the store holds: it claims nothing.
+ */
+function changeLines(diff: LineDiff | undefined): string[] {
+  if (diff === undefined) return [];
+  const all = [
+    ...diff.added.map((line) => `• Agregar ${shortLine(line)}`),
+    ...diff.removed.map((line) => `• Quitar ${shortLine(line)}`),
+    ...diff.changed.map(({ before, after }) => `• ${shortLine(after)} (antes ${before.quantity === null ? "sin cantidad" : quantityShown(before)})`),
+  ];
+  if (all.length <= ECHO_MAX_ITEMS) return all;
+  return [...all.slice(0, ECHO_MAX_ITEMS), `• y ${all.length - ECHO_MAX_ITEMS} más`];
 }
 
 function rejectedReply(order: OrderView | null): RenderedReply {

@@ -101,10 +101,10 @@ describe("console language (ES | EN)", () => {
 });
 
 describe("the bare address", () => {
-  it("sends / to the console instead of Not found", async () => {
+  it("sends / to the public demo instead of Not found", async () => {
     const h = harness();
     const response = await send(h, "/");
     expect(response.status).toBe(302);
-    expect(response.headers.get("location")).toBe("/console");
+    expect(response.headers.get("location")).toBe("/demo");
   });
 });

@@ -3,9 +3,18 @@
 Shared state for every agent: what's true now, what's next, what's open, what bit us. Keep it short. Anything a
 command can tell you (git log, test results, CI) doesn't belong here. Decisions go in [decisions.md](decisions.md).
 
-Last updated: Wed Nov 4, 2026, morning Honduras time, by Claude Code.
+Last updated: Thu Nov 5, 2026, late morning Honduras time, by Claude Code.
 
 ## Now
+
+- **Public demo (`claude/public-demo`, D-61, not deployed):** `/demo` opens a synthetic store per visitor with a
+  customer phone beside the console. Deploying needs migration `0032_demo_stores.sql` applied to the remote D1 first.
+  Tested locally with the real models (Nov 5): text → readback → Confirmar → name → the console's "To prepare";
+  the preset photo and voice note read in fresh stores. D-62 adds the limits and fixes. **To test it by hand, use
+  `MODEL_API_KEY=… node scripts/demo-test-server.mjs`** (frozen copy on :8795, fresh database, minute sweep), never
+  a `wrangler dev` on a worktree an agent is editing: a save restarts the server and drops the reply in flight.
+  Open: "Unnamed customer" in the console after the customer gave a name; the phone shows a reply before the
+  dispatch's claim check, so a reply the check blocks would still show its original text there.
 
 - **Ask before confirm (`claude/flow-ask`, D-58 proposed, not deployed):** on `OrderEngine`, a missing quantity, an
   illegible line or no pickup or delivery is asked before an order confirms, and staff close an order stuck at `listo`

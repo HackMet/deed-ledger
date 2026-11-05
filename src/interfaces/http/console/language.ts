@@ -168,6 +168,8 @@ const EN: Record<string, string> = {
   Agregar: "Add", Revisar: "Review", Responder: "Reply", Entendido: "Got it", Aprobar: "Approve", Rechazar: "Decline",
   "Dueño": "Owner", "Dueña": "Owner", Empleado: "Staff", Empleada: "Staff", "Mi tienda": "My store",
   "Entrar a la consola": "Sign in to the console", Entrar: "Sign in", Consola: "Console",
+  "Para entrar, escaneá el código que te dan en la tienda.": "Store staff sign in with the QR code the store gives them.",
+  "¿Querés probarlo? Abrí una tienda de demostración": "Just looking? Try the live demo with a store of your own",
   // Inicio
   "Esto es lo que necesita tu tienda hoy.": "Here's what your store needs today.",
   "Anotar algo": "Add something", "Por atender": "To prepare", "Pedidos por preparar": "Orders to prepare",
