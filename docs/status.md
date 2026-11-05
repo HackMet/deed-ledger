@@ -7,6 +7,9 @@ Last updated: Thu Nov 5, 2026, afternoon Honduras time, by Claude Code.
 
 ## Now
 
+- **Demo limits (`claude/demo-limits`, D-65):** 20 demo stores per visitor an hour (was 5), after Kerly hit the
+  limit; the start page's "Open a fresh demo store" is now a plain button under "Back to my demo store".
+
 - **Public README (`claude/readme-public`):** the README now speaks to anyone, with the public demo first and developer detail folded. The long technical text moved, unchanged apart from translating its Spanish and correcting the planner note, to `docs/deed-conformance.md` and `docs/hackathon-record.md`. The GIF comes from real frames of a visit to `/demo` (`scripts/record-demo-gif.mjs`).
 
 - **Console menu (`claude/console-nav`, Kerly's feedback):** from 900 px the sidebar lists Más's entries itself and

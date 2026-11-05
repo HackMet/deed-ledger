@@ -12,8 +12,11 @@ export const DEMO_SPEND_POOL_ID = "demo-pool";
 export const DEMO_DAILY_CAP_MICRO_USD = 5_000_000;
 /** A demo store's login lasts a day; the store is never offered again after that. */
 export const DEMO_STORE_TTL_MS = 24 * 60 * 60 * 1000;
-/** New demo stores per visitor (by IP) per hour, and for everyone together. */
-export const DEMO_STORES_PER_VISITOR_PER_HOUR = 5;
+/**
+ * New demo stores per visitor (by IP) per hour, and for everyone together. Twenty, not five (D-65):
+ * mobile carriers put many phones behind one address, so five would turn away strangers sharing it.
+ */
+export const DEMO_STORES_PER_VISITOR_PER_HOUR = 20;
 export const DEMO_STORES_PER_HOUR = 120;
 /**
  * Demo stores ever opened, after which the demo stops opening new ones. Demo stores expire but stay in

@@ -38,6 +38,7 @@ h1{font-size:34px;line-height:1.15;margin:8px 0 12px}
 ol{padding-left:22px}li{margin:6px 0}
 .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px 22px;margin:20px 0}
 .small{font-size:14px;color:var(--mute)}
+.btn.quiet{background:transparent;border:1px solid var(--forest);color:var(--forest)}
 `;
 
 /** `/demo`: what the demo is, and one button that opens a store of the visitor's own. */
@@ -58,7 +59,7 @@ reads it back with prices, and the customer confirms with a tap. The store works
 </ol>
 <form method="post" action="/demo/empezar" onsubmit="this.querySelector('button').disabled = true">
 ${hasStore ? html`<p><a class="btn" href="/demo/tienda">Back to my demo store</a></p><p class="small">Or start over with a fresh one:</p>` : ""}
-<button class="btn">${hasStore ? "Open a fresh demo store" : "Open my demo store"}</button>
+<button class="${hasStore ? "btn quiet" : "btn"}">${hasStore ? "Open a fresh demo store" : "Open my demo store"}</button>
 </form>
 </div>
 <p class="small">Nothing here is real: the store, products, prices and customer are made up, and no message goes to WhatsApp.
