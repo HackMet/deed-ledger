@@ -38,6 +38,7 @@ const COPY = {
   enterButton: "Entrar",
   inviteUnusable: "Este código ya no sirve. Pedí uno nuevo en la tienda.",
   loginNeeded: "Para entrar, escaneá el código que te dan en la tienda.",
+  tryDemo: "¿Querés probarlo? Abrí una tienda de demostración",
   ownerOnly: "Esta parte es solo para el dueño.",
   formExpired: "Esa acción venció. Volvé a la lista e intentá otra vez.",
   notReady: "La consola no está lista todavía.",
@@ -131,7 +132,9 @@ export const requireMember: MiddlewareHandler<ConsoleEnv> = async (c, next) => {
   }
   if (config.linkSigningSecret === "") return notReady(c);
   const member = await sessionMember(c);
-  if (member === null) return c.html(simplePage(COPY.enterTitle, html`<p>${COPY.loginNeeded}</p>`), 401);
+  if (member === null) {
+    return c.html(simplePage(COPY.enterTitle, html`<p>${COPY.loginNeeded}</p><p><a href="/demo">${COPY.tryDemo}</a></p>`), 401);
+  }
   c.set("member", member);
   c.set("csrf", await csrfToken(config.linkSigningSecret, member.sessionId));
   return next();

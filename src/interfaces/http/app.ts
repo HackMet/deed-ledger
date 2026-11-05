@@ -6,6 +6,7 @@ import { acceptEvents, type IntakeOutcome } from "../../application/intake";
 import type { Deps } from "../../application/ports";
 import type { Runtime } from "../../composition";
 import { consoleRoutes } from "./console";
+import { DEMO_PATH, demoRoutes } from "./demo";
 import type { HttpEnv } from "./env";
 import { privacyRoutes } from "./privacy";
 import { parseWebhookPayload } from "../../integrations/whatsapp/payload";
@@ -20,6 +21,8 @@ export function createHttpApp(makeRuntime: (env: Env) => Runtime) {
   app.use("*", async (c, next) => {
     c.set("runtime", makeRuntime(c.env));
     await next();
+    // Only this site may frame its pages (the demo frames the console and its phone).
+    c.header("Content-Security-Policy", "frame-ancestors 'self'");
   });
 
   app.get("/health", (c) => c.text("ok"));
@@ -89,8 +92,9 @@ export function createHttpApp(makeRuntime: (env: Env) => Runtime) {
     return id === null ? c.text("Unsupported media", 415) : c.json({ id });
   });
 
-  // Someone opening the bare address (a judge, a teammate) lands on the console's login, not "Not found".
-  app.get("/", (c) => c.redirect("/console", 302));
+  // Someone opening the bare address (a judge, a post's reader) lands on the public demo.
+  app.get("/", (c) => c.redirect(DEMO_PATH, 302));
+  app.route(DEMO_PATH, demoRoutes());
   app.route("/console", consoleRoutes());
   app.route(PRIVACY_PATH, privacyRoutes());
 
@@ -108,7 +112,7 @@ export function createHttpApp(makeRuntime: (env: Env) => Runtime) {
  * After the 200: ring each conversation's doorbell and send unknown-sender notices. A lost ring is
  * recovered by the cron sweep; a lost notice is not retried (its phone number isn't kept).
  */
-async function afterIntake(deps: Deps, outcome: IntakeOutcome): Promise<void> {
+export async function afterIntake(deps: Deps, outcome: IntakeOutcome): Promise<void> {
   for (const conversation of outcome.conversations) {
     try {
       const startedAt = deps.clock.now();

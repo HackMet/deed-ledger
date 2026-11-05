@@ -27,3 +27,5 @@ backup-*.sql
 
 # Voice notes recorded by a real person stay local (sim tests read them from disk)
 scripts/sim-media/*.ogg
+# The demo phone's preset is text-to-speech (es-HN-KarlaNeural), not a person: scripts/make-demo-presets.mjs
+!scripts/sim-media/voz-pedido.ogg

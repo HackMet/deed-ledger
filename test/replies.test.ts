@@ -280,6 +280,31 @@ describe("templates", () => {
     expect(queuePlace(12)).toBe("Vas en el lugar 12 de la fila.");
   });
 
+  it("tells the customer a change after confirming went to the store, echoing what they asked", () => {
+    const [aceite, arroz, azucar] = confirmedOrder.lines;
+    const diff = { added: [arroz!], removed: [aceite!], changed: [{ before: azucar!, after: { ...azucar!, quantity: "3" } }] };
+    const waiting = { ...confirmedOrder, openChangeRequest: { id: "request-1", diff } };
+    const rendered = render({ type: "order_status", order: waiting });
+    const lines = rendered.body.split("\n");
+    expect(lines[0]).toBe(COPY.changeRequested);
+    expect(lines.slice(1, 4)).toEqual([
+      expect.stringMatching(/^• Agregar 3 .*Arroz/u),
+      expect.stringMatching(/^• Quitar 1 .*Aceite Clover/u),
+      expect.stringMatching(/^• 3 .*Azúcar.* \(antes 2.*\)$/u),
+    ]);
+    expect(lines.at(-1)).toBe(COPY.changeRequestedAfter);
+    // The queue place is not repeated, and the claim is still where the order stands.
+    expect(rendered.body).not.toContain("fila");
+    expect(rendered.claims).toEqual(render({ type: "order_status", order: confirmedOrder }).claims);
+    // A change with no line to list (pickup or delivery only) still says it waits for the store.
+    const fulfillmentOnly = { ...confirmedOrder, openChangeRequest: { id: "request-2", diff: { added: [], removed: [], changed: [] } } };
+    expect(render({ type: "order_status", order: fulfillmentOnly }).body).toBe(`${COPY.changeRequestedPlain}\n${COPY.changeRequestedAfter}`);
+    // No change waiting: the queue place, as before.
+    expect(render({ type: "order_status", order: { ...confirmedOrder, openChangeRequest: null } }).body).toBe(
+      "Vas tercero en la fila. Te aviso apenas esté listo.",
+    );
+  });
+
   it("asks one question at a time, naming the line it's about", () => {
     const ask = (question: Extract<EngineOutcome, { type: "ask" }>["question"], line: number | null = null, noted?: string[]) =>
       render({ type: "ask", question, line, order: readbackOrder, ...(noted === undefined ? {} : { noted }) }).body;

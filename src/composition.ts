@@ -55,6 +55,10 @@ import { D1ButtonsShown, D1OutboxRepository } from "./infrastructure/d1/outbox-r
 import { D1Pendientes } from "./infrastructure/d1/pendientes-repository";
 import { D1RetrievalRepository } from "./infrastructure/d1/retrieval-repository";
 import { D1SpendLedger } from "./infrastructure/d1/spend-repository";
+import { D1DemoStoreRepository } from "./infrastructure/d1/demo-store-repository";
+import { DemoGuardedChannel, DemoGuardedMediaSource, DemoPooledSpendLedger, type DemoPresetFiles } from "./infrastructure/demo-guards";
+import { LISTA_JPEG_BASE64, VOZ_OGG_BASE64 } from "./infrastructure/demo-preset-files";
+import { DEMO_SPEND_POOL_ID } from "./domain/demo";
 import { D1StoreSetupRepository } from "./infrastructure/d1/store-setup-repository";
 import { D1TenancyRepository } from "./infrastructure/d1/tenancy-repository";
 import { HmacKeyedHasher } from "./infrastructure/keyed-hasher";
@@ -96,6 +100,12 @@ export interface Runtime {
   readonly storeSetup: D1StoreSetupRepository;
   /** Each store's products for retrieval and its learned aliases (D-49), approved in Pendientes. */
   readonly retrieval: D1RetrievalRepository;
+  /** The public demo's stores (migration 0032). */
+  readonly demoStores: D1DemoStoreRepository;
+  /** Model spend, every demo store pooled under the demo's daily cap: the demo charges voice notes to it. */
+  readonly demoSpend: DemoPooledSpendLedger;
+  /** What the demo's pool has spent today, in micro-USD. */
+  readonly demoPoolSpent: (nowMs: number) => Promise<number>;
 }
 
 /** One pretend engine per Worker isolate, so the dev console's taps last between requests. */
@@ -227,6 +237,9 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
     }),
     storeSetup,
     retrieval,
+    demoStores: new D1DemoStoreRepository(db),
+    demoSpend: spendLedger(db),
+    demoPoolSpent: (nowMs) => new D1SpendLedger(db).spentMicroUsd({ businessId: DEMO_SPEND_POOL_ID }, nowMs),
     burstReader:
       overrides.burstReader ??
       buildBurstReader(env, { clock, log }, { db, ...(overrides.modelProvider === undefined ? {} : { provider: overrides.modelProvider }) }),
@@ -243,22 +256,27 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
       consoleAuth: new D1ConsoleAuthRepository(db),
       customers,
       doorbell: overrides.doorbell ?? new QueueDoorbell(env.JOBS),
-      channel:
+      // A demo store's replies never leave: the demo's phone reads them from the outbox.
+      channel: new DemoGuardedChannel(
         overrides.channel ??
-        new WhatsAppCloudChannel({
-          token: config.whatsappToken,
-          apiVersion: config.graphApiVersion,
-          timeoutMs: SEND_TIMEOUT_MS,
-          fetch: (input, init) => fetch(input, init),
-        }),
-      mediaSource:
+          new WhatsAppCloudChannel({
+            token: config.whatsappToken,
+            apiVersion: config.graphApiVersion,
+            timeoutMs: SEND_TIMEOUT_MS,
+            fetch: (input, init) => fetch(input, init),
+          }),
+      ),
+      // A demo store's photos and voice notes are the demo's own synthetic files, never Meta's.
+      mediaSource: new DemoGuardedMediaSource(
         overrides.mediaSource ??
-        simMedia ??
-        new WhatsAppMediaSource({
-          token: config.whatsappToken,
-          apiVersion: config.graphApiVersion,
-          fetch: (input, init) => fetch(input, init),
-        }),
+          simMedia ??
+          new WhatsAppMediaSource({
+            token: config.whatsappToken,
+            apiVersion: config.graphApiVersion,
+            fetch: (input, init) => fetch(input, init),
+          }),
+        demoPresetFiles(),
+      ),
       mediaStore,
       // Without an engine the placeholder answers, behind the same gate: ALTO, deletion and handoff
       // work, and the first reply carries the introduction (#30).
@@ -324,7 +342,7 @@ export function buildBurstReader(
         apiKey: env.MODEL_API_KEY ?? "",
         fetch: overrides.fetch ?? ((input, init) => fetch(input, init)),
       }),
-    spend: new D1SpendLedger(overrides.db ?? env.DB),
+    spend: spendLedger(overrides.db ?? env.DB),
     clock: deps.clock,
     log: deps.log,
     ...dailyCap(overrides.dailyCapMicroUsd ?? readConfig(env).modelDailyCapMicroUsd),
@@ -387,7 +405,7 @@ export function buildOrderReading(
         : {
             model: new PlannerModel({
               provider,
-              spend: new D1SpendLedger(overrides.db ?? env.DB),
+              spend: spendLedger(overrides.db ?? env.DB),
               clock: deps.clock,
               log: deps.log,
               settings: config.plannerModel,
@@ -402,13 +420,29 @@ export function buildOrderReading(
         ? null
         : {
             provider,
-            spend: new D1SpendLedger(overrides.db ?? env.DB),
+            spend: spendLedger(overrides.db ?? env.DB),
             clock: deps.clock,
             log: deps.log,
             settings: config.fastTextModel,
             ...dailyCap(config.modelDailyCapMicroUsd),
           },
   });
+}
+
+/** Model spend in D1, with every demo store's spend pooled under the demo's one daily cap. */
+function spendLedger(db: D1Database): DemoPooledSpendLedger {
+  return new DemoPooledSpendLedger(new D1SpendLedger(db));
+}
+
+let presetFiles: DemoPresetFiles | null = null;
+/** The demo phone's preset photo and voice note, decoded once per isolate. */
+function demoPresetFiles(): DemoPresetFiles {
+  presetFiles ??= { lista: fromBase64(LISTA_JPEG_BASE64), voz: fromBase64(VOZ_OGG_BASE64) };
+  return presetFiles;
+}
+
+function fromBase64(encoded: string): ArrayBuffer {
+  return Uint8Array.from(atob(encoded), (char) => char.charCodeAt(0)).buffer;
 }
 
 function museTranscriber(config: Config): Transcriber {

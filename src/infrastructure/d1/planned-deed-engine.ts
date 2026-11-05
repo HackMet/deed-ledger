@@ -375,6 +375,7 @@ export class SetupCatalogOrderStore implements OrderStore {
   courier: OrderStore["courier"] = (tenant, memberId) => this.inner.courier(tenant, memberId);
   changeRequest: OrderStore["changeRequest"] = (tenant, id) => this.inner.changeRequest(tenant, id);
   orderFacts: OrderStore["orderFacts"] = (tenant, orderId) => this.inner.orderFacts(tenant, orderId);
+  customerNames: OrderStore["customerNames"] = (tenant, ids) => this.inner.customerNames(tenant, ids);
   changedLineIds: OrderStore["changedLineIds"] = (tenant, orderId, version) => this.inner.changedLineIds(tenant, orderId, version);
   queuePosition: OrderStore["queuePosition"] = (tenant, orderId, at) => this.inner.queuePosition(tenant, orderId, at);
   commitFor: OrderStore["commitFor"] = (tenant, write) => this.inner.commitFor(tenant, write);

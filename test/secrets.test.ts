@@ -47,6 +47,7 @@ describe("test environment", () => {
       "0028_agent_id.sql",
       "0030_planner_memory.sql",
       "0031_one_product_list.sql",
+      "0032_demo_stores.sql",
     ]);
   });
 
