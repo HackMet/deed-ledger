@@ -92,6 +92,16 @@ describe("a demo store's history", { timeout: 60_000 }, () => {
     }
   });
 
+  it.each(["planner", "classic"] as const)("backs every claim its replies made: a normal order raises no false alarm (%s)", async (conversation) => {
+    const { businessId } = await openSeededDemo(conversation);
+    const claims = await rows<{ result: string; n: number }>(
+      `SELECT result, count(*) AS n FROM deed_checks WHERE business_id = ? AND source = 'verify_claims' GROUP BY result ORDER BY result`,
+      businessId,
+    );
+    expect(claims.map((c) => c.result)).toEqual(["pass"]);
+    expect(claims[0]!.n).toBeGreaterThan(0);
+  });
+
   it("leaves Rosa's change waiting for the owner", async () => {
     const { businessId } = await openSeededDemo();
     const kinds = await rows<{ kind: string }>(`SELECT kind FROM facts WHERE business_id = ? AND kind IN ('change_request', 'change_review')`, businessId);

@@ -18,6 +18,7 @@
  * D1 (#40, `setup`), read per store on every call; tests and the dev console pass a static catalog
  * instead.
  */
+import { type ClaimCheck, flattenClaims } from "../../domain/replies";
 import type { CustomerContext, Engine, EngineResult, LineMatch, MemberContext } from "../../application/engine";
 import type { OrderReadingSource } from "../../application/order-reading";
 import type { CatalogProduct } from "../../application/perception/matching";
@@ -77,6 +78,10 @@ export class D1PretendEngine implements Engine, OrderReadingSource, PlannerSourc
 
   async onConsoleAction(context: MemberContext, envelope: ActionEnvelope<ConsoleAction>): Promise<EngineResult> {
     return this.change(context, context.nowMs, (engine) => engine.onConsoleAction(context, envelope));
+  }
+
+  verifyClaimChecks(tenant: Tenant, checks: readonly ClaimCheck[]): Promise<readonly boolean[]> {
+    return this.verifyClaims(tenant, flattenClaims(checks));
   }
 
   async verifyClaims(tenant: Tenant, claims: readonly Claim[]): Promise<readonly boolean[]> {

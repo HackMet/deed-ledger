@@ -421,6 +421,7 @@ function recordingEngine() {
     onBurst: (context, reading, matches) => engine.onBurst(context, reading, matches),
     onCustomerAction: (...a) => engine.onCustomerAction(...a),
     verifyClaims: (...a) => engine.verifyClaims(...a),
+    verifyClaimChecks: (...a) => engine.verifyClaimChecks(...a),
     preparationList: (...a) => engine.preparationList(...a),
     onConsoleAction: async (...a) => {
       const result = await engine.onConsoleAction(...a);

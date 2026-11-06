@@ -131,7 +131,7 @@ describe("the second claim check, right before sending", () => {
     const { h, phone, store } = await setup({ engine, outcome: () => ({ type: "order_confirmed", order: confirmedOrder }) });
     await queueReply(h, store.phoneNumberId, phone);
     const failing: ClaimVerifier = {
-      async verifyClaims() {
+      async verifyClaimChecks() {
         throw new Error("engine unavailable");
       },
     };
@@ -361,9 +361,9 @@ describe("when the second check runs", () => {
       },
     });
     const verifier: ClaimVerifier = {
-      async verifyClaims(tenant, claims) {
+      async verifyClaimChecks(tenant, checks) {
         steps.push("verifyClaims");
-        return engine.verifyClaims(tenant, claims);
+        return engine.verifyClaimChecks(tenant, checks);
       },
     };
     const channel = new Proxy(h.channel, {
@@ -392,9 +392,9 @@ describe("when the second check runs", () => {
     const { h, phone, store } = await setup({ engine, outcome: () => ({ type: "order_confirmed", order: confirmedOrder }) });
     await queueReply(h, store.phoneNumberId, phone);
     const slow: ClaimVerifier = {
-      async verifyClaims(tenant, claims) {
+      async verifyClaimChecks(tenant, checks) {
         h.clock.advance(6_000);
-        return engine.verifyClaims(tenant, claims);
+        return engine.verifyClaimChecks(tenant, checks);
       },
     };
     expect(await dispatchOutbox({ ...h.deps, claimVerifier: slow }, { limit: 1 })).toEqual(["retry_later"]);

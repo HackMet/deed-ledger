@@ -246,7 +246,7 @@ async function secondCheck(
   const flat = flattenClaims(claims);
   if (flat.length === 0) return "blocked";
   try {
-    const verified = await deps.claimVerifier.verifyClaims(tenant, flat);
+    const verified = await deps.claimVerifier.verifyClaimChecks(tenant, claims);
     return secondCheckHolds(claims, verified) ? "holds" : "blocked";
   } catch (error) {
     deps.log.warn("claim_check_failed", { businessId: tenant.businessId, outboxId: message.id, reason: describeError(error) });

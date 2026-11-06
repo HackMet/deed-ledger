@@ -3,7 +3,7 @@
 Shared state for every agent: what's true now, what's next, what's open, what bit us. Keep it short. Anything a
 command can tell you (git log, test results, CI) doesn't belong here. Decisions go in [decisions.md](decisions.md).
 
-Last updated: Fri Nov 6, 2026, morning Honduras time, by Claude Code.
+Last updated: Fri Nov 6, 2026, by Claude Code.
 
 ## Now
 
@@ -17,8 +17,13 @@ Last updated: Fri Nov 6, 2026, morning Honduras time, by Claude Code.
   dispatched, so the Deed counters stay at 0 there; production dispatches, as for the demo phone.
   The invoices are two synthetic JPEGs with recorded readings (`scripts/make-demo-invoices.py` writes
   `src/infrastructure/demo-invoices.ts`). The Orders list now names the customer once they gave a name.
-  Open: a claim's `anyOf` alternatives that don't match are recorded as unbacked checks (real orders too); the
-  planner engine records no Deed refusal for a stale Confirmar.
+  Open: the planner engine records no Deed refusal for a stale Confirmar.
+
+- **Deed's false alarms (`claude/deed-claim-checks`, D-67, not merged):** the Deed's record now has one row per claim
+  check, with the final verdict. A seeded store went from 57 of 117 unbacked to 0, on local D1 in both conversation
+  modes; not yet seen on Cloudflare. `deed_checks` is append-only, so stores opened before the fix keep their old rows.
+  The check that blocks a reply didn't change. `scripts/record-demo-gif.mjs` no longer uses a seeded customer's name;
+  `docs/assets/deed-demo.gif` still shows a store with no history, until someone records it again after the deploy.
 
 - **Menu on every console screen (`claude/console-menu-all`):** Facturas and the order history now draw through the shared `shell`, so they have the menu. `PAGE_STYLE` went with them.
 

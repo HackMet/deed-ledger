@@ -263,7 +263,7 @@ describe("C11: what stays unresolved, on purpose", () => {
   it("a safe reply sent in place of a blocked message: the Libro shows no ID for it", async () => {
     // The records stop backing every claim, so dispatch's second check blocks the row.
     const blocking: Engine = Object.create(engine, {
-      verifyClaims: { value: async (_tenant: unknown, claims: readonly unknown[]) => claims.map(() => false) },
+      verifyClaimChecks: { value: async (_tenant: unknown, checks: readonly { anyOf: readonly unknown[] }[]) => checks.flatMap((check) => check.anyOf.map(() => false)) },
     });
     const c = await scene(blocking);
     const orderId = await confirmed(c);

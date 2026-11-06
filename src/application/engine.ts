@@ -6,6 +6,7 @@
 import type { ActionEnvelope, ConsoleAction, CustomerAction } from "../domain/contract/actions";
 import type { BurstReading } from "../domain/contract/observation";
 import type { Claim, CustomerNotice, EngineOutcome, PreparationCard } from "../domain/contract/outcomes";
+import type { ClaimCheck } from "../domain/replies";
 import type { TurnPlan } from "../domain/planner/types";
 import type { Commit, Tenant } from "./ports";
 
@@ -80,6 +81,11 @@ export interface Engine {
    * before the save, against the outcome itself, since the records it names aren't saved yet.
    */
   verifyClaims(tenant: Tenant, claims: readonly Claim[]): Promise<readonly boolean[]>;
+  /**
+   * The same check for a reply's claims as they were written: one answer per alternative of
+   * `flattenClaims(checks)`, in order. The Deed's record counts each check once, not each alternative.
+   */
+  verifyClaimChecks(tenant: Tenant, checks: readonly ClaimCheck[]): Promise<readonly boolean[]>;
   /** Orders confirmado, preparando or listo, oldest confirmation first. */
   preparationList(tenant: Tenant): Promise<readonly PreparationCard[]>;
 }
