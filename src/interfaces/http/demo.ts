@@ -78,6 +78,7 @@ export function demoRoutes() {
         random: (n) => crypto.getRandomValues(new Uint8Array(n)),
         hashToken,
         newToken,
+        history: runtime.demoHistory,
       },
       visitorHash,
     );

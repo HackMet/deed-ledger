@@ -4,12 +4,44 @@ import type { ConversationRef, Deps } from "../application/ports";
 import { processConversation } from "../application/processor";
 import { STRANDED_AFTER_MS } from "../domain/processing";
 import { parseDoorbellMessage } from "../infrastructure/queue-doorbell";
+import { type DemoHistoryRunner, parseDemoHistoryMessage } from "../application/demo-history";
 
 const RETRY_DELAY_S = 10;
 
-/** Queue consumer. Each message is handled on its own, so one failure doesn't retry the batch. */
-export async function handleQueueBatch(batch: MessageBatch<unknown>, deps: Deps): Promise<void> {
+/**
+ * Queue consumer. Each message is handled on its own, so one failure doesn't retry the batch. A
+ * demo store's history piece takes up to about 600 D1 queries, and one Worker invocation may make
+ * 1,000: a batch runs at most one piece, and sends any other back as a fresh message for a moment
+ * later (a retry would count against the queue's attempts and drop it in the end).
+ */
+export async function handleQueueBatch(batch: MessageBatch<unknown>, deps: Deps, history: DemoHistoryRunner | null = null): Promise<void> {
+  let seeded = false;
   for (const message of batch.messages) {
+    const piece = parseDemoHistoryMessage(message.body);
+    if (piece !== null) {
+      if (history === null) {
+        message.ack();
+        continue;
+      }
+      if (seeded) {
+        try {
+          await history.later(piece);
+          message.ack();
+        } catch {
+          message.retry();
+        }
+        continue;
+      }
+      seeded = true;
+      try {
+        await history.run(piece);
+      } catch (error) {
+        deps.log.error("demo_history_failed", { businessId: piece.businessId, reason: describeError(error) });
+      }
+      // Never retried: a piece that failed is left out, not seeded twice.
+      message.ack();
+      continue;
+    }
     const conversation = parseDoorbellMessage(message.body);
     if (conversation === null) {
       deps.log.warn("doorbell_malformed");

@@ -3,9 +3,22 @@
 Shared state for every agent: what's true now, what's next, what's open, what bit us. Keep it short. Anything a
 command can tell you (git log, test results, CI) doesn't belong here. Decisions go in [decisions.md](decisions.md).
 
-Last updated: Thu Nov 5, 2026, afternoon Honduras time, by Claude Code.
+Last updated: Fri Nov 6, 2026, morning Honduras time, by Claude Code.
 
 ## Now
+
+- **Demo store history (`claude/demo-seed`, D-66, not merged):** a new demo store opens with a few days of made-up
+  orders (every state, a change waiting for the owner), named customers and two invoices (one received into stock,
+  one to review). Each order runs through intake, the processor, the order handler and the engine with a scripted
+  reading (no model call), and staff steps through `runConsoleAction`. Seeding a whole store takes ~2,600 D1 queries
+  and one invocation may make 1,000, so it runs on the jobs queue in pieces (one order each, up to ~600 queries),
+  each piece queuing the next; the store opens at once and fills in over some seconds. The visitor's 40-message limit
+  now counts only the visitor's phone. Locally (`demo-test-server.mjs`, no WhatsApp token) replies are never
+  dispatched, so the Deed counters stay at 0 there; production dispatches, as for the demo phone.
+  The invoices are two synthetic JPEGs with recorded readings (`scripts/make-demo-invoices.py` writes
+  `src/infrastructure/demo-invoices.ts`). The Orders list now names the customer once they gave a name.
+  Open: a claim's `anyOf` alternatives that don't match are recorded as unbacked checks (real orders too); the
+  planner engine records no Deed refusal for a stale Confirmar.
 
 - **Menu on every console screen (`claude/console-menu-all`):** Facturas and the order history now draw through the shared `shell`, so they have the menu. `PAGE_STYLE` went with them.
 

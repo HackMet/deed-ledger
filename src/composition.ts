@@ -58,7 +58,7 @@ import { D1SpendLedger } from "./infrastructure/d1/spend-repository";
 import { D1DemoStoreRepository } from "./infrastructure/d1/demo-store-repository";
 import { DemoGuardedChannel, DemoGuardedMediaSource, DemoPooledSpendLedger, type DemoPresetFiles } from "./infrastructure/demo-guards";
 import { LISTA_JPEG_BASE64, VOZ_OGG_BASE64 } from "./infrastructure/demo-preset-files";
-import { DEMO_SPEND_POOL_ID } from "./domain/demo";
+import { DEMO_SPEND_POOL_ID, newDemoPhone } from "./domain/demo";
 import { D1StoreSetupRepository } from "./infrastructure/d1/store-setup-repository";
 import { D1TenancyRepository } from "./infrastructure/d1/tenancy-repository";
 import { HmacKeyedHasher } from "./infrastructure/keyed-hasher";
@@ -78,6 +78,9 @@ import { RecordedReceiptReader } from "./integrations/perception/recorded-receip
 import { WhatsAppCloudChannel } from "./integrations/whatsapp/client";
 import { WhatsAppMediaSource } from "./integrations/whatsapp/media";
 import { receiptRecordings } from "../test/fixtures/receipts";
+import { DEMO_INVOICE_PENDING_JPEG_BASE64, DEMO_INVOICE_RECEIVED_JPEG_BASE64, DEMO_INVOICE_RECORDINGS } from "./infrastructure/demo-invoices";
+import type { MemberContext } from "./application/engine";
+import { type DemoHistoryQueue, type DemoHistoryRunner, type DemoHistoryMessage, DEMO_HISTORY_ITEMS, demoHistoryMessage, ScriptedOrderReader, SeedClock, seedDemoHistoryItem } from "./application/demo-history";
 
 export interface Runtime {
   /** The Deed's record of checks (K20): the engine that writes it is wired where it runs (demo/worker.ts). */
@@ -106,6 +109,11 @@ export interface Runtime {
   readonly demoSpend: DemoPooledSpendLedger;
   /** What the demo's pool has spent today, in micro-USD. */
   readonly demoPoolSpent: (nowMs: number) => Promise<number>;
+  /**
+   * A new demo store's past few days (demo-history.ts): `schedule` queues its pieces, `run` seeds one
+   * from the queue. Null without the real order engine.
+   */
+  readonly demoHistory: DemoHistoryRunner | null;
 }
 
 /** One pretend engine per Worker isolate, so the dev console's taps last between requests. */
@@ -130,6 +138,10 @@ export type RuntimeOverrides = Partial<
   readonly burstReader?: BurstReader;
   readonly mediaEraser?: MediaEraser;
   readonly receiptReader?: ReceiptReader;
+  /** The order handler's reader instead of perception: the demo's history seed scripts its readings. */
+  readonly orderReader?: OrderBurstReader;
+  /** Where the demo's history pieces are queued; by default the jobs queue. */
+  readonly demoHistoryQueue?: DemoHistoryQueue;
 } & Partial<Pick<Deps, "audioDecoder" | "transcriber">>;
 
 /** C11: the id of this deployment's agent configuration, hashed once when the Worker starts and stamped on customer facts. */
@@ -186,7 +198,7 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
   const reader =
     engine === null
       ? null
-      : buildOrderReading(env, engine, { clock, log }, { db, jobs, mediaStore, audioDecoder, transcriber, retrieval, ...readingOverrides(overrides) });
+      : overrides.orderReader ?? buildOrderReading(env, engine, { clock, log }, { db, jobs, mediaStore, audioDecoder, transcriber, retrieval, ...readingOverrides(overrides) });
   const orderHandler = engine === null ? null : createOrderHandler({
           engine,
           jobs,
@@ -216,7 +228,8 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
   const businessInfo = new D1BusinessContext(db);
   // Recorded readings of synthetic invoices until the Muse Spark adapter lands (PR #63, decision Q2):
   // every other photo is refused as unreadable, never guessed.
-  const receiptReader = overrides.receiptReader ?? new RecordedReceiptReader(receiptRecordings);
+  // The demo history's two invoices are recorded the same way (demo-invoices.ts).
+  const receiptReader = overrides.receiptReader ?? new RecordedReceiptReader([...receiptRecordings, ...DEMO_INVOICE_RECORDINGS]);
   return {
     config,
     simMedia,
@@ -240,6 +253,7 @@ export function buildRuntime(env: Env, overrides: RuntimeOverrides = {}): Runtim
     demoStores: new D1DemoStoreRepository(db),
     demoSpend: spendLedger(db),
     demoPoolSpent: (nowMs) => new D1SpendLedger(db).spentMicroUsd({ businessId: DEMO_SPEND_POOL_ID }, nowMs),
+    demoHistory: config.deedEngine ? demoHistoryRunner(env, overrides, db) : null,
     burstReader:
       overrides.burstReader ??
       buildBurstReader(env, { clock, log }, { db, ...(overrides.modelProvider === undefined ? {} : { provider: overrides.modelProvider }) }),
@@ -454,4 +468,61 @@ function readingOverrides(overrides: RuntimeOverrides): { provider?: ModelProvid
     ...(overrides.modelProvider === undefined ? {} : { provider: overrides.modelProvider }),
     ...(overrides.burstMedia === undefined ? {} : { media: overrides.burstMedia }),
   };
+}
+
+/** No queue: the history seed runs each conversation itself, at once. */
+const silentDoorbell = { ring: async () => {} };
+
+/** How long a piece waits when its batch already ran one. */
+const DEMO_HISTORY_LATER_S = 2;
+
+function demoHistoryRunner(env: Env, overrides: RuntimeOverrides, db: D1Database): DemoHistoryRunner {
+  const queue: DemoHistoryQueue = overrides.demoHistoryQueue ?? {
+    sendBatch: async (messages) => {
+      await (env.JOBS as unknown as Queue<DemoHistoryMessage>).sendBatch(messages.map((m) => ({ ...m, contentType: "json" as const })));
+    },
+  };
+  const stores = new D1DemoStoreRepository(db);
+  return {
+    schedule: (businessId) => queue.sendBatch([{ body: demoHistoryMessage(businessId, 0) }]),
+    later: (message) => queue.sendBatch([{ body: message, delaySeconds: DEMO_HISTORY_LATER_S }]),
+    async run(message) {
+      // Then the next piece, even after one that failed: the store gets the rest. None for a store
+      // that isn't a live demo store.
+      if (!(await runPiece(message))) return;
+      if (message.item + 1 < DEMO_HISTORY_ITEMS) await queue.sendBatch([{ body: demoHistoryMessage(message.businessId, message.item + 1) }]);
+    },
+  };
+
+  /** False when the message names no live demo store. A piece that fails is logged inside and still true. */
+  async function runPiece(message: DemoHistoryMessage): Promise<boolean> {
+    const target = await stores.seedTarget(message.businessId, (overrides.clock ?? systemClock).now());
+    if (target === null) return false;
+    const clock = new SeedClock(target.openedAtMs);
+    const reader = new ScriptedOrderReader();
+    const { jobHandler: _handler, doorbell: _doorbell, ...rest } = overrides;
+    const seed = buildRuntime(env, { ...rest, clock, doorbell: silentDoorbell, orderReader: reader });
+    if (seed.engine === null) return false;
+    const owner: MemberContext = { businessId: target.businessId, memberId: target.ownerUserId, role: "owner", canApproveFiado: true, nowMs: target.openedAtMs };
+    const done = await seedDemoHistoryItem(
+      {
+        deps: seed.deps,
+        clock,
+        reader,
+        engine: seed.engine,
+        receipts: seed.receipts,
+        buttonsShown: new D1ButtonsShown(db),
+        catalog: (tenant) => seed.catalog.list(tenant),
+        newPhone: () => newDemoPhone((n) => crypto.getRandomValues(new Uint8Array(n))),
+        invoices: {
+          approved: new Uint8Array(fromBase64(DEMO_INVOICE_RECEIVED_JPEG_BASE64)),
+          pending: new Uint8Array(fromBase64(DEMO_INVOICE_PENDING_JPEG_BASE64)),
+        },
+      },
+      { businessId: target.businessId, phoneNumberId: target.phoneNumberId, owner },
+      message.item,
+    );
+    seed.deps.log.info("demo_history_item", { businessId: target.businessId, count: message.item, outcome: done ? "seeded" : "skipped" });
+    return true;
+  }
 }

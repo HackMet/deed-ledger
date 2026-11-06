@@ -92,12 +92,20 @@ export class D1DemoStoreRepository implements DemoStoreWriter {
     ]);
   }
 
-  /** How many messages this demo store's phone has sent: the per-store limit counts them. */
+  /**
+   * How many messages this demo store's phone has sent: the per-store limit counts them. Only the
+   * visitor's phone: the store's seeded customers (demo-history.ts) never use up the visitor's turns.
+   */
   async messageCount(store: DemoStore): Promise<number> {
     if (!isDemoBusiness(store.businessId)) return 0;
     const row = await this.db
-      .prepare(`SELECT count(*) AS sent FROM inbound_messages WHERE business_id = ?1`)
-      .bind(store.businessId)
+      .prepare(
+        `SELECT count(*) AS sent FROM inbound_messages i
+         JOIN conversations c ON c.id = i.conversation_id AND c.business_id = i.business_id
+         JOIN customers cu ON cu.id = c.customer_id AND cu.business_id = c.business_id
+         WHERE i.business_id = ?1 AND cu.phone = ?2`,
+      )
+      .bind(store.businessId, store.customerPhone)
       .first<{ sent: number }>();
     return row?.sent ?? 0;
   }
@@ -116,6 +124,27 @@ export class D1DemoStoreRepository implements DemoStoreWriter {
       .first<{ business_id: string; phone_number_id: string; customer_phone: string; expires_at_ms: number }>();
     if (row === null) return null;
     return { businessId: row.business_id, phoneNumberId: row.phone_number_id, customerPhone: row.customer_phone, expiresAtMs: row.expires_at_ms };
+  }
+
+  /**
+   * What seeding a demo store's history needs, read back from the store itself: its number, its owner
+   * and when it opened. Only a live demo store; never a real one.
+   */
+  async seedTarget(businessId: string, nowMs: number): Promise<DemoSeedTarget | null> {
+    if (!isDemoBusiness(businessId)) return null;
+    const row = await this.db
+      .prepare(
+        `SELECT d.business_id, ca.phone_number_id, m.user_id, d.created_at_ms
+         FROM demo_stores d
+         JOIN channel_accounts ca ON ca.business_id = d.business_id AND ca.provider = 'whatsapp'
+         JOIN memberships m ON m.business_id = d.business_id AND m.role = 'owner'
+         WHERE d.business_id = ?1 AND d.business_id LIKE '${DEMO_BUSINESS_PREFIX}%' AND d.expires_at_ms > ?2
+         ORDER BY m.created_at_ms LIMIT 1`,
+      )
+      .bind(businessId, nowMs)
+      .first<{ business_id: string; phone_number_id: string; user_id: string; created_at_ms: number }>();
+    if (row === null) return null;
+    return { businessId: row.business_id, phoneNumberId: row.phone_number_id, ownerUserId: row.user_id, openedAtMs: row.created_at_ms };
   }
 
   /**
@@ -151,6 +180,13 @@ export class D1DemoStoreRepository implements DemoStoreWriter {
       buttons: row.buttons_json === null ? [] : readButtonSet(row.buttons_json).buttons,
     }));
   }
+}
+
+export interface DemoSeedTarget {
+  readonly businessId: string;
+  readonly phoneNumberId: string;
+  readonly ownerUserId: string;
+  readonly openedAtMs: number;
 }
 
 export interface DemoChatLine {
