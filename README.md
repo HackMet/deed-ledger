@@ -50,14 +50,16 @@ Think of it like a receipt. A promise is just words. A receipt proves it happene
 
 ## See it in 60 seconds
 
-1. **[Open the demo](https://store-assistant.atiendeme.workers.dev/demo)** and click the button. You get your own made-up store.
+1. **[Open the demo](https://store-assistant.atiendeme.workers.dev/demo)** and click the button. You get your own made-up store, and a few days
+   of made-up orders fill in shortly.
 2. **Be the customer.** On the phone on the left, tap **Text order**, then **Confirm**. Give any name.
-3. **Be the store.** On the right, open **Orders**, tap your order, then **Start preparing** and **Ready**.
+3. **Be the store.** On the right, open **Orders**, tap the order with the name you gave, then **Start preparing** and **Ready**.
 4. **Watch the customer's phone.** They hear "ready" only after that tap.
 5. **Open Deed live.** You'll see every step as a chain, and who backs each one.
 
 Nothing is real: the store, products and prices are made up, and no message goes to WhatsApp. The AI is real. Customer
-messages work best in Spanish, and your store disappears after 24 hours.
+messages work best in Spanish. You lose access to your store after 24 hours, but what you typed stays in our database, so
+don't enter real personal details.
 
 ## What it can do
 
@@ -94,8 +96,8 @@ We'd rather tell you than have you find out:
 
 - **No store uses it every day yet.** The demo is made up.
 - **It's slow.** In earlier phone tests a text reply took 9 to 21 seconds, and a photo about 34. We want under 10.
-- **The proof screen has false alarms.** It can flag "not backed by the records" on a normal order. We suspect a bug and
-  haven't confirmed or fixed it.
+- **Older demo stores still show false alarms.** A bug made the proof screen flag "not backed by the records" on normal
+  orders. It's fixed for new stores, but the record is never rewritten, so stores opened before the fix keep those flags.
 - **The first step looks finished too early.** A new order shows as confirmed by the customer before they've confirmed it.
 - **It can't yet tell whether WhatsApp delivered a message.**
 - **Parts of the demo mix English and Spanish.**

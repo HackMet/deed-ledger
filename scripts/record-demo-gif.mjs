@@ -18,7 +18,8 @@ const at = process.argv.indexOf("--base");
 const BASE = at === -1 ? "https://store-assistant.atiendeme.workers.dev" : process.argv[at + 1];
 const OUT = "docs/assets/deed-demo.gif";
 const DEBUG_PORT = 9336;
-const CUSTOMER_NAME = "Ana";
+// Not a seeded customer's name (DEMO_HISTORY), so the recording opens the order it just placed.
+const CUSTOMER_NAME = "Sofia";
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const work = mkdtempSync(join(tmpdir(), "deed-gif-"));
@@ -141,7 +142,7 @@ try {
   await still("Confirmed: the order reaches the store's console", 3.5);
 
   await consoleClick(/^Orders$|^Pedidos$/);
-  await consoleClick(/Ana/);
+  await consoleClick(new RegExp(CUSTOMER_NAME));
   await consoleClick(/^(Start preparing|Empezar a preparar)$/);
   await still("Staff prepare it on their phone", 2.5);
   await consoleClick(/^(Ready|Listo)$/);
