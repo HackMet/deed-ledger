@@ -114,6 +114,8 @@ describe("K14: a supplier invoice photo becomes a reviewed draft", () => {
     expect(stored).not.toBeNull();
     const page = await (await s.page(`/console/facturas/${id}`)).text();
     expect(page).toContain(`/console/facturas/${id}/imagen`);
+    expect(page).toContain(`<nav class="tabs">`);
+    expect(page).toContain(`<a class="back" href="/console/facturas"`);
     expect(page).toContain("Galletas Ejemplo");
     expect(page).toContain("Aprobar ✓");
     expect(page).toContain("Rechazar ✗");

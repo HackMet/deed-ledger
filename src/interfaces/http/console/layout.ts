@@ -293,14 +293,6 @@ h2.section{margin:26px 20px 8px;font-size:12px;font-weight:800;letter-spacing:.1
 .sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
 .total,.price,.number,.qty,.badge,.stat strong{font-variant-numeric:tabular-nums}`;
 
-/** For a screen with its own plain header (`<header><h1>…</h1><a>…</a></header>`) and no tab bar. */
-export const PAGE_STYLE = `${TOKENS}${ELEMENTS}
-body{padding-bottom:32px}
-body>header{position:sticky;top:0;z-index:3;display:flex;justify-content:space-between;align-items:center;gap:12px;min-height:76px;padding:12px 18px;background:var(--paper);border-bottom:1px solid var(--line);color:var(--ink)}
-body>header h1{margin:0;font-size:30px;line-height:1.15;letter-spacing:-1px;overflow-wrap:anywhere}
-body>header a{flex:none;display:inline-flex;align-items:center;min-height:48px;padding:0 16px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--ink);font-weight:700;font-size:15px;text-decoration:none}
-`;
-
 const SIMPLE_STYLE = `${TOKENS}${ELEMENTS}
 body{padding:44px 22px 32px}
 body>h1{margin:0 0 14px;font-size:36px;line-height:1.15;letter-spacing:-1.2px}

@@ -11,7 +11,7 @@ import type { ConsoleReceiptDraft } from "../../../application/receipts";
 import { formatLempiras } from "../../../domain/contract/numbers";
 import type { CatalogEntry, DraftLine, LineEdit } from "../../../domain/receipt-draft";
 import { type ConsoleEnv, INVOICE_UPLOAD_PATH, memberContext, requireOwner } from "./auth";
-import { PAGE_STYLE, styleTag } from "./layout";
+import { shell } from "./layout";
 
 const NOTICES = {
   tamano: "La foto pesa más de 10 MB. Mandá una más liviana.",
@@ -62,10 +62,10 @@ export function facturasScreen(app: Hono<ConsoleEnv>) {
 
   app.get("/facturas", async (c) => {
     const member = memberContext(c);
-    return c.html(listPage(noticeOf(c), await c.get("runtime").receipts.list(member), member.nowMs));
+    return c.html(await listPage(c, noticeOf(c), await c.get("runtime").receipts.list(member), member.nowMs));
   });
 
-  app.get("/facturas/nueva", (c) => c.html(uploadPage(noticeOf(c), c.get("csrf"))));
+  app.get("/facturas/nueva", async (c) => c.html(await uploadPage(c, noticeOf(c))));
 
   app.post("/facturas/nueva", async (c) => {
     const form = await c.req.parseBody();
@@ -96,9 +96,9 @@ export function facturasScreen(app: Hono<ConsoleEnv>) {
     const id = draftId(c);
     const member = memberContext(c);
     const draft = id === null ? null : await c.get("runtime").receipts.get(member, id);
-    if (draft === null) return c.html(listPage("Esa factura no está en la lista.", [], member.nowMs), 404);
+    if (draft === null) return c.html(await listPage(c, "Esa factura no está en la lista.", [], member.nowMs), 404);
     const catalog = await c.get("runtime").receipts.catalog(member);
-    return c.html(reviewPage(noticeOf(c), draft, catalog, member.nowMs, c.get("csrf"), c.req.query("linea")));
+    return c.html(await reviewPage(c, noticeOf(c), draft, catalog, member.nowMs, c.req.query("linea")));
   });
 
   app.post("/facturas/:id/editar", async (c) => {
@@ -172,24 +172,23 @@ export function facturasScreen(app: Hono<ConsoleEnv>) {
   });
 }
 
+const LIST_PATH = "/console/facturas";
+
 // ---------------------------------------------------------------------------------------------
 // Rendering. `html` escapes every interpolated string.
 
-function shell(title: string, notice: string | null, body: unknown) {
-  return html`<!doctype html>
-<html lang="es">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${title}</title>
-${styleTag(STYLE)}
-</head>
-<body>
-<header><h1>${title}</h1><a href="/console/facturas">Facturas</a></header>
-${notice === null ? "" : html`<p class="notice" role="status">${notice}</p>`}
-${body}
-</body>
-</html>`;
+/** An invoice screen in the console's shared layout; the list is the Facturas entry, the others go back to it. */
+function page(c: Context<ConsoleEnv>, title: string, notice: string | null, body: unknown) {
+  const isList = title === "Facturas";
+  return shell(c, {
+    title,
+    path: c.req.path,
+    tab: LIST_PATH,
+    ...(isList ? {} : { back: LIST_PATH }),
+    notice,
+    style: STYLE,
+    body,
+  });
 }
 
 function statusOf(draft: ConsoleReceiptDraft, nowMs: number): string {
@@ -199,8 +198,9 @@ function statusOf(draft: ConsoleReceiptDraft, nowMs: number): string {
   return "Por revisar";
 }
 
-function listPage(notice: string | null, drafts: readonly ConsoleReceiptDraft[], nowMs: number) {
-  return shell(
+function listPage(c: Context<ConsoleEnv>, notice: string | null, drafts: readonly ConsoleReceiptDraft[], nowMs: number) {
+  return page(
+    c,
     "Facturas",
     notice,
     html`<p><a class="button primary" href="${INVOICE_UPLOAD_PATH}">Subir factura</a></p>
@@ -213,8 +213,10 @@ ${drafts.length === 0
   );
 }
 
-function uploadPage(notice: string | null, csrf: string) {
-  return shell(
+function uploadPage(c: Context<ConsoleEnv>, notice: string | null) {
+  const csrf = c.get("csrf");
+  return page(
+    c,
     "Subir factura",
     notice,
     html`<form class="card" method="post" action="${INVOICE_UPLOAD_PATH}" enctype="multipart/form-data">
@@ -232,11 +234,13 @@ const quantityText = (milli: number | null) => {
 };
 const costText = (centavos: number | null) => (centavos === null ? "" : `${Math.trunc(centavos / 100)}.${String(centavos % 100).padStart(2, "0")}`);
 
-function reviewPage(notice: string | null, draft: ConsoleReceiptDraft, catalog: readonly CatalogEntry[], nowMs: number, csrf: string, badLine: string | undefined) {
+function reviewPage(c: Context<ConsoleEnv>, notice: string | null, draft: ConsoleReceiptDraft, catalog: readonly CatalogEntry[], nowMs: number, badLine: string | undefined) {
+  const csrf = c.get("csrf");
   const status = statusOf(draft, nowMs);
   const open = status === "Por revisar";
   const names = new Map(catalog.map((product) => [product.id, product.name]));
-  return shell(
+  return page(
+    c,
     "Revisar factura",
     notice,
     html`<div class="review">
@@ -296,10 +300,10 @@ function decisionForms(draft: ConsoleReceiptDraft, csrf: string) {
 </div>`;
 }
 
-/** The shared console look (`PAGE_STYLE`) plus the invoice list and the photo-beside-form review. */
-const STYLE = `${PAGE_STYLE}
+/** This screen's part, on top of the shared layout: the invoice list and the photo-beside-form review. */
+const STYLE = `
 .meta{font-size:15px;color:var(--mute)}
-body>p{margin:14px}
+main>p{margin:14px}
 .cards li{margin:12px 14px;border:1px solid var(--line);border-radius:18px;background:var(--card)}
 .cards a{display:flex;justify-content:space-between;align-items:center;gap:8px;min-height:64px;padding:14px 16px;color:inherit;text-decoration:none}
 .cards a strong{font-size:18px;font-weight:800}.cards a span{color:var(--mute);font-size:15px;text-align:right}
