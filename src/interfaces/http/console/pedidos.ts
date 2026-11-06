@@ -29,7 +29,7 @@ import { wordsWithoutQuantity } from "../../../domain/orders";
 import type { ActionEnvelope, ConsoleAction } from "../../../domain/contract/actions";
 import type { EngineOutcome, LineDiff, OrderLineView, OrderState } from "../../../domain/contract/outcomes";
 import { type ConsoleEnv, memberContext } from "./auth";
-import { PAGE_STYLE, styleTag } from "./layout";
+import { shell } from "./layout";
 
 const STATE_LABELS: Record<OrderState, string> = {
   por_confirmar: "Por confirmar",
@@ -90,7 +90,8 @@ export function pedidosScreen(app: Hono<ConsoleEnv>) {
   app.get("/pedidos", async (c) => {
     const rows = await new D1OrderTrail(c.env.DB).listOrders({ businessId: c.get("member").businessId });
     return c.html(
-      page(
+      await page(
+        c,
         "Pedidos",
         rows.length === 0 ? html`<p class="empty">Todavía no hay pedidos.</p>` : html`<ul class="orders">${rows.map(orderRow)}</ul>`,
       ),
@@ -105,7 +106,7 @@ export function pedidosScreen(app: Hono<ConsoleEnv>) {
     const notice = c.req.query("aviso");
     const shown = notice !== undefined && Object.hasOwn(NOTICES, notice) ? NOTICES[notice]! : null;
     const members = trail.state === "listo" && trail.fulfillment === "delivery" ? await reads.activeMembers(tenant) : [];
-    return c.html(page(`Pedido ${trail.code ?? "—"}`, trailBody(trail, c.req.param("orderId"), c.get("csrf"), shown, members), true));
+    return c.html(await page(c, `Pedido ${trail.code ?? "—"}`, trailBody(trail, c.req.param("orderId"), c.get("csrf"), shown, members), true));
   });
 
   app.post("/pedidos/:orderId/paso", async (c) => {
@@ -120,7 +121,7 @@ export function pedidosScreen(app: Hono<ConsoleEnv>) {
     }
 
     const { engine } = c.get("runtime");
-    if (engine === null) return c.html(page("Pedidos", html`<p class="empty">La lista de pedidos no está lista todavía.</p>`, true), 503);
+    if (engine === null) return c.html(await page(c, "Pedidos", html`<p class="empty">La lista de pedidos no está lista todavía.</p>`, true), 503);
     const member = memberContext(c);
     const action =
       paso === "dispatch"
@@ -147,7 +148,7 @@ export function pedidosScreen(app: Hono<ConsoleEnv>) {
     if (reason === null) return back("motivo");
 
     const { engine } = c.get("runtime");
-    if (engine === null) return c.html(page("Pedidos", html`<p class="empty">La lista de pedidos no está lista todavía.</p>`, true), 503);
+    if (engine === null) return c.html(await page(c, "Pedidos", html`<p class="empty">La lista de pedidos no está lista todavía.</p>`, true), 503);
     const member = memberContext(c);
     const envelope: ActionEnvelope<ConsoleAction> = {
       operationKey: reviewKey(requestId),
@@ -216,8 +217,8 @@ function stepNoticeFor(outcome: EngineOutcome, paso: "dispatch" | "mark_delivere
   }
 }
 
-function notFound(c: Context<ConsoleEnv>) {
-  return c.html(page("Pedidos", html`<p class="empty">Ese pedido no está en la lista.</p>`, true), 404);
+async function notFound(c: Context<ConsoleEnv>) {
+  return c.html(await page(c, "Pedidos", html`<p class="empty">Ese pedido no está en la lista.</p>`, true), 404);
 }
 
 function orderRow(row: OrderListRow) {
@@ -322,26 +323,22 @@ export function formatTime(ms: number): string {
   return `${two(d.getUTCDate())}/${two(d.getUTCMonth() + 1)} ${two(d.getUTCHours())}:${two(d.getUTCMinutes())}`;
 }
 
-function page(title: string, body: unknown, back = false) {
-  return html`<!doctype html>
-<html lang="es">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${title}</title>
-${styleTag(STYLE)}
-</head>
-<body>
-<header><h1>${title}</h1>${back ? html`<a href="/console/pedidos">Todos</a>` : html`<a href="/console/preparacion">Preparación</a>`}</header>
-${body}
-</body>
-</html>`;
+/** A screen of the orders' history in the console's shared layout, under Pedidos; `back` means an order, which goes back to the list. */
+function page(c: Context<ConsoleEnv>, title: string, body: unknown, back = false) {
+  return shell(c, {
+    title,
+    path: c.req.path,
+    tab: "/console/preparacion",
+    back: back ? "/console/pedidos" : "/console/preparacion",
+    style: STYLE,
+    body,
+  });
 }
 
-/** The shared console look (`PAGE_STYLE`) plus this screen's cards: a colored edge per order's state. */
-const STYLE = `${PAGE_STYLE}
+/** This screen's part, on top of the shared layout: its cards, a colored edge per order's state. */
+const STYLE = `
 ul,ol{list-style:none;margin:0;padding:0}p{margin:4px 0}.meta{font-size:15px;color:var(--mute)}
-body>p{margin:12px 18px}
+main>p{margin:12px 18px}
 .orders li{margin:12px 14px;border:1px solid var(--line);border-left:6px solid #c9c2ab;border-radius:18px;background:var(--card);box-shadow:0 1px 0 #193d350d}
 .orders li a{display:block;padding:14px 16px;color:inherit;text-decoration:none}
 .orders li a strong{font-size:19px;font-weight:800}

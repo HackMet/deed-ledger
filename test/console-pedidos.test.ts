@@ -235,6 +235,16 @@ describe("K5: the Orders screen reads the ledger", () => {
     expect(await (await get(h, "/console/pedidos", cookie)).text()).not.toContain(foreign);
   });
 
+  it("keeps the console's menu on an order's page, with a way back to the list", async () => {
+    const h = harness();
+    const s = await storeWithSession();
+    const orderId = await confirmed(s);
+    const cookie = await login(h, s);
+    const page = await (await get(h, `/console/pedidos/${encodeURIComponent(orderId)}`, cookie)).text();
+    expect(page).toContain(`<nav class="tabs">`);
+    expect(page).toContain(`<a class="back" href="/console/pedidos"`);
+  });
+
   it("sends nobody without a session to the orders", async () => {
     const h = harness();
     const s = await storeWithSession();

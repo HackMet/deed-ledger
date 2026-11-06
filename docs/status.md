@@ -7,6 +7,8 @@ Last updated: Thu Nov 5, 2026, afternoon Honduras time, by Claude Code.
 
 ## Now
 
+- **Menu on every console screen (`claude/console-menu-all`):** Facturas and the order history now draw through the shared `shell`, so they have the menu. `PAGE_STYLE` went with them.
+
 - **Demo limits (`claude/demo-limits`, D-65):** 20 demo stores per visitor an hour (was 5), after Kerly hit the
   limit; the start page's "Open a fresh demo store" is now a plain button under "Back to my demo store".
 
