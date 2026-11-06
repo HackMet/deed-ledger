@@ -35,6 +35,7 @@
  * gate says is missing, so the two kinds of questions never mix. Without a plan, a draft that never
  * had one behaves exactly as before.
  */
+import { type ClaimCheck, flattenClaims } from "../../domain/replies";
 import type { AnsweredQuestion, CustomerContext, Engine, EngineResult, LineMatch, MemberContext } from "../../application/engine";
 import type { OrderReadingSource } from "../../application/order-reading";
 import { type CatalogProduct, normalize } from "../../application/perception/matching";
@@ -431,6 +432,10 @@ export class MemoryEngine implements Engine, OrderReadingSource, PlannerSource {
     const outcome: EngineOutcome = { type: "action_saved", order: applied.stored.order };
     state.operations.set(envelope.operationKey, outcome);
     return { outcome, notices: applied.notices, commits: [] };
+  }
+
+  verifyClaimChecks(tenant: Tenant, checks: readonly ClaimCheck[]): Promise<readonly boolean[]> {
+    return this.verifyClaims(tenant, flattenClaims(checks));
   }
 
   async verifyClaims(tenant: Tenant, claims: readonly Claim[]): Promise<readonly boolean[]> {

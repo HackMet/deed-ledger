@@ -23,6 +23,7 @@
  * replies' `order.total` is the subtotal and the reply adds the fee. The views handed out here carry the
  * subtotal, and an order_total claim is checked against the ledger with the fee added back.
  */
+import { type ClaimCheck, flattenClaims } from "../../domain/replies";
 import type { CustomerContext, Engine, EngineResult, LineMatch, MemberContext } from "../../application/engine";
 import { actionKey, fromThousandths, type OrderEngine, type OrderStore, type StoredOrder as LedgerOrder } from "../../application/engine/order-engine";
 import { toThousandths } from "../../domain/contract/numbers";
@@ -112,19 +113,30 @@ export class PlannedDeedEngine implements Engine, OrderReadingSource, PlannerSou
    * marks and hours: the store's own setup, where the planner path reads them.
    */
   async verifyClaims(tenant: Tenant, claims: readonly Claim[]): Promise<readonly boolean[]> {
+    return this.verifyClaimChecks(tenant, claims.map((claim) => ({ anyOf: [claim] })));
+  }
+
+  /** The Deed's record gets the final verdict: asking the ledger about an order still being built isn't a failed claim. */
+  async verifyClaimChecks(tenant: Tenant, checks: readonly ClaimCheck[]): Promise<readonly boolean[]> {
+    const answers = await this.answerClaims(tenant, flattenClaims(checks));
+    await this.deps.ledger.recordClaimChecks(tenant, checks, answers);
+    return answers;
+  }
+
+  private async answerClaims(tenant: Tenant, claims: readonly Claim[]): Promise<readonly boolean[]> {
     const options = await this.storeOptions(tenant);
     const setupCheck = new MemoryEngine(() => [], options);
     return Promise.all(
       claims.map(async (claim) => {
         if (typeof claim !== "object" || claim === null) return false;
-        if (claim.type === "unit_price") return (await this.deps.ledger.verifyClaims(tenant, [claim]))[0] === true;
+        if (claim.type === "unit_price") return (await this.deps.ledger.answerClaims(tenant, [claim]))[0] === true;
         if (claim.type !== "order_state" && claim.type !== "order_total") return (await setupCheck.verifyClaims(tenant, [claim]))[0] === true;
         if (typeof claim.orderId !== "string") return false;
         const saved = await this.deps.store.order(tenant, claim.orderId);
         if (saved !== null) {
           const fee = feeOf(saved.view);
           const asLedger: Claim = claim.type === "order_total" && claim.total !== null && fee !== null ? { ...claim, total: claim.total + fee } : claim;
-          if ((await this.deps.ledger.verifyClaims(tenant, [asLedger]))[0] === true) return true;
+          if ((await this.deps.ledger.answerClaims(tenant, [asLedger]))[0] === true) return true;
         }
         return this.draftBacks(tenant, claim, saved !== null);
       }),

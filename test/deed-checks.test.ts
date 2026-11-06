@@ -5,6 +5,7 @@ import type { Claim } from "../src/domain/contract/outcomes";
 import { OrderEngine, staffKey } from "../src/application/engine/order-engine";
 import type { DeedChecks } from "../src/application/engine/deed-checks";
 import { priceKey } from "../src/domain/price";
+import { secondCheckHolds } from "../src/domain/replies";
 import { D1DeedChecks, D1DeedReads } from "../src/infrastructure/d1/deed-checks";
 import { D1FactLedger } from "../src/infrastructure/d1/fact-ledger";
 import { firstOrder, ids } from "./fixtures/contract";
@@ -51,6 +52,39 @@ describe("the Deed's checks: one row per decision the engine refuses or verifies
       expect.objectContaining({ source: "verify_claims", result: "pass", reason_code: null, claim_kind: "order_state", order_id: order.orderId }),
       expect.objectContaining({ source: "verify_claims", result: "fail", reason_code: "not_backed", claim_kind: "order_state", order_id: order.orderId }),
     ]);
+  });
+
+  it("writes one row per claim check: a check with several allowed states passes when one holds", async () => {
+    const s = await newStore();
+    const order = await placeFirstOrder(s);
+    const state = (state: "por_confirmar" | "confirmado" | "cancelado"): Claim => ({ type: "order_state", orderId: order.orderId, version: 1, state });
+    const checks = [{ anyOf: [state("cancelado"), state("por_confirmar"), state("confirmado")] }];
+    const answers = await checked().verifyClaimChecks(s, checks);
+    expect(answers).toEqual([false, true, false]);
+    expect(secondCheckHolds(checks, answers)).toBe(true);
+    expect(await rowsOf(s.businessId)).toEqual([
+      expect.objectContaining({ source: "verify_claims", result: "pass", reason_code: null, claim_kind: "order_state", order_id: order.orderId }),
+    ]);
+  });
+
+  it("writes one fail row when no allowed state holds, and the reply stays blocked", async () => {
+    const s = await newStore();
+    const order = await placeFirstOrder(s);
+    const state = (state: "confirmado" | "cancelado"): Claim => ({ type: "order_state", orderId: order.orderId, version: 1, state });
+    const checks = [{ anyOf: [state("cancelado"), state("confirmado")] }];
+    const answers = await checked().verifyClaimChecks(s, checks);
+    expect(secondCheckHolds(checks, answers)).toBe(false);
+    expect(await rowsOf(s.businessId)).toEqual([
+      expect.objectContaining({ source: "verify_claims", result: "fail", reason_code: "not_backed", claim_kind: "order_state", order_id: order.orderId }),
+    ]);
+  });
+
+  it("records nothing for a check with no alternatives, which never holds", async () => {
+    const s = await newStore();
+    const checks = [{ anyOf: [] }];
+    const answers = await checked().verifyClaimChecks(s, checks);
+    expect(secondCheckHolds(checks, answers)).toBe(false);
+    expect(await rowsOf(s.businessId)).toEqual([]);
   });
 
   it("records a duplicate of a saved key as duplicate_key, and a stale version as stale_version", async () => {

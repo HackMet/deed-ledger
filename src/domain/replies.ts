@@ -1390,7 +1390,7 @@ export function firstCheck(claims: readonly ClaimCheck[], source: ReplySource): 
 }
 
 /**
- * The second check's verdict from verifyClaims' answers: `verified` holds one boolean per claim of
+ * The second check's verdict from verifyClaimChecks' answers: `verified` holds one boolean per claim of
  * `flattenClaims(claims)`, in order. A short or missing answer is a failure.
  */
 export function flattenClaims(claims: readonly ClaimCheck[]): Claim[] {

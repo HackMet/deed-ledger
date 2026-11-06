@@ -5,6 +5,7 @@ import type { BatchGuard, JobHandler, Tenant } from "../../src/application/ports
 import type { ActionEnvelope, ConsoleAction } from "../../src/domain/contract/actions";
 import type { Observation } from "../../src/domain/contract/observation";
 import type { CustomerNotice, EngineOutcome } from "../../src/domain/contract/outcomes";
+import { type ClaimCheck, flattenClaims } from "../../src/domain/replies";
 import { createOrderHandler } from "../../src/application/order-handler";
 import type { Harness } from "./harness";
 
@@ -88,6 +89,10 @@ export class LedgerEngine implements Engine {
     return claims.map(() => false);
   }
 
+  async verifyClaimChecks(tenant: Tenant, checks: readonly ClaimCheck[]): Promise<readonly boolean[]> {
+    return this.verifyClaims(tenant, flattenClaims(checks));
+  }
+
   async preparationList() {
     return [];
   }
@@ -150,6 +155,10 @@ export class CommitEngine implements Engine {
 
   async verifyClaims(_tenant: Tenant, claims: readonly unknown[]): Promise<readonly boolean[]> {
     return claims.map(() => true);
+  }
+
+  async verifyClaimChecks(tenant: Tenant, checks: readonly ClaimCheck[]): Promise<readonly boolean[]> {
+    return this.verifyClaims(tenant, flattenClaims(checks));
   }
 
   async preparationList() {

@@ -14,6 +14,9 @@ import type { EngineOutcome, OrderView } from "../src/domain/contract/outcomes";
 import { orderBasis } from "../src/domain/planner/frame";
 import type { TurnPlan } from "../src/domain/planner/types";
 import type { StoreSetup } from "../src/domain/store-setup";
+import type { Claim } from "../src/domain/contract/outcomes";
+import type { DeedChecks } from "../src/application/engine/deed-checks";
+import { D1DeedChecks } from "../src/infrastructure/d1/deed-checks";
 import { D1FactLedger } from "../src/infrastructure/d1/fact-ledger";
 import { D1OrderStore } from "../src/infrastructure/d1/order-store";
 import { PlannedDeedEngine, SetupCatalogOrderStore } from "../src/infrastructure/d1/planned-deed-engine";
@@ -36,7 +39,7 @@ const priceQuestion = (asked: string): Observation => ({ kind: "question", topic
  * as composition wires it (with the store's stock). Arroz, Clover and Mazola have prices the owner
  * confirmed on Productos; Sal has only a legacy Tienda price (`store_products.price_centavos`, no fact).
  */
-async function plannedStore(fee: number | null = null) {
+async function plannedStore(fee: number | null = null, checks?: DeedChecks) {
   const seeded = await seedStore({ members: [{ phone: newPhone(), role: "owner" }] });
   const { businessId } = seeded;
   const owner = seeded.members[0]!.userId;
@@ -54,7 +57,7 @@ async function plannedStore(fee: number | null = null) {
   };
   const setup = { read: async () => setupOf };
   const store = new SetupCatalogOrderStore(new D1OrderStore(env.DB), setup);
-  const ledger = new OrderEngine({ store, ids: { newId: () => crypto.randomUUID() }, ledger: new D1FactLedger(env.DB), stock: new D1StockBalances(env.DB) });
+  const ledger = new OrderEngine({ store, ids: { newId: () => crypto.randomUUID() }, ledger: new D1FactLedger(env.DB), stock: new D1StockBalances(env.DB), ...(checks === undefined ? {} : { checks }) });
   const engine = new PlannedDeedEngine({ db: env.DB, ledger, store, setup });
   const member: MemberContext = { businessId, memberId: owner, role: "owner", canApproveFiado: false, nowMs: T0 - 60_000 };
   for (const [name, price] of [["arroz", 1800], ["clover", 6000], ["mazola", 6500], ["leche", 3200]] as const) {
@@ -132,6 +135,21 @@ describe("the planner on the Deed engine", () => {
     expect(known.lastAsk).toEqual({ kind: "quantities", lineIds: [lineId], times: 1 });
     // The ask's order claim is backed by the memory that holds the draft.
     expect(await t.engine.verifyClaims(at, [{ type: "order_state", orderId: known.order!.orderId, version: known.order!.version, state: "armando" }])).toEqual([true]);
+  });
+
+  it("records the final verdict once: an order still being built passes, and a state nothing backs fails", async () => {
+    const t = await plannedStore(null, new D1DeedChecks(env.DB));
+    await t.burst([order(item("arroz"))], ask("quantities", ["N1"]), [{ observation: 0, line: 0, productId: t.id("arroz"), how: "exact_name" }]);
+    const known = (await t.engine.plannerContext(t.context())).order!;
+    const state = (state: "armando" | "cancelado"): Claim => ({ type: "order_state", orderId: known.orderId, version: known.version, state });
+
+    await t.engine.verifyClaimChecks(t.context(), [{ anyOf: [state("cancelado"), state("armando")] }]);
+    const results = async () =>
+      (await env.DB.prepare(`SELECT result FROM deed_checks WHERE business_id = ? AND source = 'verify_claims' ORDER BY rowid`).bind(t.businessId).all<{ result: string }>()).results.map((r) => r.result);
+    expect(await results()).toEqual(["pass"]);
+
+    await t.engine.verifyClaimChecks(t.context(), [{ anyOf: [state("cancelado")] }]);
+    expect(await results()).toEqual(["pass", "fail"]);
   });
 
   it("applies the plan's product pick, writes the readback through the ledger, and confirms it there", async () => {

@@ -11,6 +11,7 @@
  * exactly one fact, under the same operation key, in the same batch. The order commit goes first so
  * its guards report first; the fact commit's G4 refuses a transition resting on a dead fact.
  */
+import { type ClaimCheck, flattenClaims } from "../../domain/replies";
 import { type ActionEnvelope, type ConsoleAction, type CustomerAction, OWNER_ACTIONS, type OrderRef } from "../../domain/contract/actions";
 import { CHANGE_WINDOW, changeRequestKey, lineDiff, reviewKey, reviewReason } from "../../domain/change-request";
 import { toThousandths } from "../../domain/contract/numbers";
@@ -860,9 +861,18 @@ export class OrderEngine implements Engine {
   }
 
   async verifyClaims(tenant: Tenant, claims: readonly Claim[]): Promise<readonly boolean[]> {
-    const answers = await Promise.all(claims.map((claim) => this.verifyClaim(tenant, claim)));
-    await this.recordClaims(tenant, claims, answers);
+    return this.verifyClaimChecks(tenant, claims.map((claim) => ({ anyOf: [claim] })));
+  }
+
+  async verifyClaimChecks(tenant: Tenant, checks: readonly ClaimCheck[]): Promise<readonly boolean[]> {
+    const answers = await this.answerClaims(tenant, flattenClaims(checks));
+    await this.recordClaimChecks(tenant, checks, answers);
     return answers;
+  }
+
+  /** What the records say about each claim, with nothing written to the Deed's record. */
+  answerClaims(tenant: Tenant, claims: readonly Claim[]): Promise<readonly boolean[]> {
+    return Promise.all(claims.map((claim) => this.verifyClaim(tenant, claim)));
   }
 
   /**
@@ -933,10 +943,27 @@ export class OrderEngine implements Engine {
     return facts.find((fact) => fact.kind === "order_cancel" && fact.live)?.id ?? null;
   }
 
-  /** One row per claim, pass or fail, recorded after the answers are known (K20); best effort like the refusals. */
-  private async recordClaims(tenant: Tenant, claims: readonly Claim[], answers: readonly boolean[]): Promise<void> {
+  /**
+   * One row per claim check, recorded after the answers are known (K20); best effort like the refusals.
+   * A check with several allowed states passes when one holds, so the states that didn't aren't failures;
+   * its row names the alternative that held, or the first when none did. `answers` holds one answer per
+   * alternative of `flattenClaims(checks)`. A check with no alternatives names no claim and has no row.
+   */
+  async recordClaimChecks(tenant: Tenant, claimChecks: readonly ClaimCheck[], answers: readonly boolean[]): Promise<void> {
     const { checks, ids, clock, log } = this.deps;
-    if (checks === undefined || claims.length === 0) return;
+    if (checks === undefined) return;
+    const claims: Claim[] = [];
+    const verdicts: boolean[] = [];
+    let at = 0;
+    for (const check of claimChecks) {
+      const held = answers.slice(at, at + check.anyOf.length).indexOf(true);
+      at += check.anyOf.length;
+      const claim = check.anyOf[Math.max(held, 0)];
+      if (claim === undefined) continue;
+      claims.push(claim);
+      verdicts.push(held !== -1);
+    }
+    if (claims.length === 0) return;
     try {
       const atMs = clock?.now() ?? Date.now();
       // A claim's order is written only when it resolves in this store; its text never reaches the row as an id.
@@ -950,8 +977,8 @@ export class OrderEngine implements Engine {
           subjectFactId: null,
           orderId: orderIds[index] ?? null,
           claimKind: claimKindOf(claim),
-          result: answers[index] === true ? "pass" : "fail",
-          reasonCode: answers[index] === true ? null : "not_backed",
+          result: verdicts[index] === true ? "pass" : "fail",
+          reasonCode: verdicts[index] === true ? null : "not_backed",
           decidingFactId: null,
           operationKey: null,
         })),

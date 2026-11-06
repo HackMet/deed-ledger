@@ -3,7 +3,6 @@
  * implement these; tests swap in fakes for providers and use the real D1 repositories.
  */
 import type { BusinessInfo } from "../domain/business-info";
-import type { Claim } from "../domain/contract/outcomes";
 import type { ProviderStatus } from "../domain/outbox";
 import type { Pin, SavedPlace } from "../domain/place";
 import type { MessageKind } from "../domain/processing";
@@ -860,9 +859,9 @@ export interface CustomerPlaceRepository {
 // ---------------------------------------------------------------------------------------------
 // The claim check and Pendientes
 
-/** The second claim check: `Engine.verifyClaims` satisfies it. One answer per claim, in order. */
+/** The second claim check: `Engine.verifyClaimChecks` satisfies it. One answer per alternative of `flattenClaims(checks)`, in order. */
 export interface ClaimVerifier {
-  verifyClaims(tenant: Tenant, claims: readonly Claim[]): Promise<readonly boolean[]>;
+  verifyClaimChecks(tenant: Tenant, checks: readonly ClaimCheck[]): Promise<readonly boolean[]>;
 }
 
 /** Something a person must look at, raised from outside the engine. IDs only, never content. */
