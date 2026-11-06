@@ -151,6 +151,20 @@ describe("K5: the Orders screen reads the ledger", () => {
     expect(page).toContain("Listo para entregar");
   });
 
+  it("names the customer on the list once they gave a name, escaped, and says Cliente until then", async () => {
+    const h = harness();
+    const s = await storeWithSession();
+    const named = `customer-${crypto.randomUUID()}`;
+    await env.DB.prepare(`INSERT INTO customers (id, business_id, phone, name, name_saved_at_ms, created_at_ms) VALUES (?, ?, ?, ?, 1, 0)`)
+      .bind(named, s.businessId, newPhone(), "Ana <b>")
+      .run();
+    await confirmed(s, named);
+    await confirmed(s);
+    const page = await (await get(h, "/console/pedidos", await login(h, s))).text();
+    expect(page).toContain("Ana &lt;b&gt; · Nuevo");
+    expect(page).toContain("Cliente · Nuevo");
+  });
+
   it("colours an order yellow while a change waits for review (K12)", async () => {
     const h = harness();
     const s = await storeWithSession();

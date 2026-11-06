@@ -239,9 +239,13 @@ export class D1OrderTrail {
   async listOrders(tenant: Tenant): Promise<OrderListRow[]> {
     const [orders, facts, lines, names] = await Promise.all([
       this.db
-        .prepare(`SELECT id, state, current_version FROM orders WHERE business_id = ?1 ORDER BY created_at_ms DESC, id`)
+        .prepare(
+          `SELECT o.id, o.state, o.current_version, cu.name AS customer_name FROM orders o
+           LEFT JOIN customers cu ON cu.business_id = o.business_id AND cu.id = o.customer_id
+           WHERE o.business_id = ?1 ORDER BY o.created_at_ms DESC, o.id`,
+        )
         .bind(tenant.businessId)
-        .all<{ id: string; state: OrderState; current_version: number }>(),
+        .all<{ id: string; state: OrderState; current_version: number; customer_name: string | null }>(),
       this.db.prepare(FACTS_SQL).bind(tenant.businessId, null).all<FactRow>(),
       this.db
         .prepare(
@@ -263,7 +267,8 @@ export class D1OrderTrail {
       rows.push({
         orderId: order.id,
         code: await orderCode(confirmIdOf(mine)),
-        customerLabel: "Cliente",
+        // The name the customer gave, as the order cards show it; "Cliente" until they give one.
+        customerLabel: order.customer_name ?? "Cliente",
         lines: lines.results
           .filter((line) => line.order_id === order.id && line.version === currentVersion)
           .map((line) => {

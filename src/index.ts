@@ -8,7 +8,10 @@ export function createWorker(makeRuntime: (env: Env) => Runtime = (env) => build
   const app = createHttpApp(makeRuntime);
   return {
     fetch: (request, env, ctx) => app.fetch(request, env, ctx),
-    queue: (batch, env, _ctx) => handleQueueBatch(batch, makeRuntime(env).deps),
+    queue: (batch, env, _ctx) => {
+      const runtime = makeRuntime(env);
+      return handleQueueBatch(batch, runtime.deps, runtime.demoHistory);
+    },
     scheduled: (_controller, env, _ctx) => handleScheduled(makeRuntime(env).deps),
   } satisfies ExportedHandler<Env>;
 }

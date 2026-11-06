@@ -1,6 +1,7 @@
 /**
  * Opens a demo store for one visitor of the public demo: a made-up mercadito with its own products,
- * prices, hours and delivery fee, and the visitor signed in as its owner. Products, prices and the
+ * prices, hours and delivery fee, a few days of made-up orders and invoices, and the visitor signed
+ * in as its owner. Products, prices and the
  * store's details go through the same services the owner's console uses, so the demo's ledger is
  * the product's. Nothing in it is real: names, numbers and prices are synthetic.
  */
@@ -9,6 +10,7 @@ import type { BusinessService } from "./business";
 import type { CatalogService } from "./catalog";
 import type { Clock, IdSource, Logger, Tenant } from "./ports";
 import { describeError } from "./errors";
+import { DEMO_HISTORY_SPAN_MS } from "./demo-history";
 import type { Centavos } from "../domain/contract/numbers";
 import type { StoreHours } from "../domain/contract/outcomes";
 import {
@@ -125,6 +127,8 @@ export interface DemoStoreDeps {
   readonly random: (n: number) => Uint8Array;
   readonly hashToken: (token: string) => Promise<string>;
   readonly newToken: () => string;
+  /** Queues the store's past few days of customers, orders and invoices (demo-history.ts); null: none. */
+  readonly history?: { schedule(businessId: string): Promise<void> } | null;
 }
 
 export type OpenDemoResult =
@@ -171,7 +175,16 @@ export async function openDemoStore(deps: DemoStoreDeps, visitorHash: string): P
   deps.log.info("demo_store_opened", { businessId });
 
   const owner: MemberContext = { businessId, memberId: ownerUserId, role: "owner", canApproveFiado: true, nowMs };
-  await seed(deps, owner);
+  // With history, the store's products and details date from before its oldest order.
+  const history = deps.history ?? null;
+  await seed(deps, history === null ? owner : { ...owner, nowMs: nowMs - DEMO_HISTORY_SPAN_MS });
+  if (history !== null) {
+    try {
+      await history.schedule(businessId);
+    } catch (error) {
+      deps.log.warn("demo_seed_step_failed", { businessId, reason: `history: ${describeError(error)}` });
+    }
+  }
   return { type: "opened", businessId, sessionToken, expiresAtMs };
 }
 

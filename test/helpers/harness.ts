@@ -7,6 +7,7 @@ import {
 } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import type { Engine } from "../../src/application/engine";
+import type { DemoHistoryQueue } from "../../src/application/demo-history";
 import type { BurstMediaResolver } from "../../src/application/order-reading";
 import type { BurstReader } from "../../src/application/perception/reader";
 import type {
@@ -64,6 +65,8 @@ export interface HarnessOptions {
   /** A fake transcriber; the default has a blank key and never reaches the network. */
   readonly transcriber?: Transcriber;
   readonly audioDecoder?: AudioDecoder;
+  /** Catches the demo history's queued pieces, for a test to deliver itself. */
+  readonly demoHistoryQueue?: DemoHistoryQueue;
 }
 
 /** The real Worker (routes, D1 repositories, R2) with fake providers and a controllable clock. */
@@ -96,6 +99,7 @@ export function harness(options: HarnessOptions = {}) {
       ...(options.pendientesBoard === undefined ? {} : { pendientesBoard: options.pendientesBoard }),
       ...(options.transcriber === undefined ? {} : { transcriber: options.transcriber }),
       ...(options.audioDecoder === undefined ? {} : { audioDecoder: options.audioDecoder }),
+      ...(options.demoHistoryQueue === undefined ? {} : { demoHistoryQueue: options.demoHistoryQueue }),
     });
   const worker = createWorker(makeRuntime);
   const deps: Deps = makeRuntime(workerEnv).deps;
