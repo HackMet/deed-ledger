@@ -48,6 +48,7 @@ describe("test environment", () => {
       "0030_planner_memory.sql",
       "0031_one_product_list.sql",
       "0032_demo_stores.sql",
+      "0033_demo_store_limits.sql",
     ]);
   });
 

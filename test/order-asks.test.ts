@@ -4,7 +4,7 @@
  * customer's answer lands on the order, and staff can close an order already stuck without one.
  */
 import { env } from "cloudflare:workers";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { MemberContext } from "../src/application/engine";
 import { staffKey } from "../src/application/engine/order-engine";
 import type { ModelProvider, ModelRequest } from "../src/application/ports";
@@ -15,6 +15,10 @@ import { harness, rows, testEnv } from "./helpers/harness";
 import { engine, forgetFulfillment, newStore, save, T0, tap } from "./helpers/orders";
 import { newPhone, seedIntroducedCustomer, seedStore } from "./helpers/seed";
 import { textMessage, wamid, webhook } from "./helpers/whatsapp";
+
+// Heavy under full-suite load (many webhook round trips on local D1): the 5 s default times out on an
+// ordinary laptop when every file runs in parallel. A real hang still fails, at 30 s.
+vi.setConfig({ testTimeout: 30_000 });
 
 const SETTLED_MS = 4_000;
 
@@ -87,7 +91,7 @@ describe("DEED_ENGINE=1: pickup or delivery is asked before an order confirms", 
     expect(await c.factKinds()).toEqual(["order_version"]);
     expect(await c.orders()).toEqual([{ id: expect.any(String), state: "por_confirmar" }]);
 
-    expect(await c.say("lo recojo")).toMatch(/Lo recogés en la tienda/);
+    expect(await c.say("lo recojo")).toMatch(/Lo pasás a traer a la tienda/);
     expect(c.provider.asked.at(-1)).toContain("PREGUNTA PENDIENTE: pickup_or_delivery");
     expect(await c.factKinds()).toEqual(["order_version", "order_version"]);
 
@@ -221,7 +225,7 @@ describe("DEED_ENGINE=1: an illegible line is asked about before any Confirmar",
     expect(await c.buttons()).toContain("Confirmar");
 
     expect(await c.say("confirmar")).toBe("¿Lo recogés en la tienda o te lo llevamos?");
-    expect(await c.say("lo recojo")).toMatch(/Lo recogés en la tienda/);
+    expect(await c.say("lo recojo")).toMatch(/Lo pasás a traer a la tienda/);
     await c.say("confirmar");
     expect(await c.factKinds()).toEqual(["order_version", "order_version", "order_confirm"]);
   });

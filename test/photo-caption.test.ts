@@ -67,7 +67,7 @@ describe("a photo's caption", () => {
     const { replies, reader } = await photoWithCaption(conversation);
     const parts = reader.user.map((part) => (part.type === "text" ? part.text : "<image>"));
     expect(parts.slice(-3)).toEqual(["[0] foto:", "<image>", `[1] texto: ${JSON.stringify(CAPTION)}`]);
-    expect(replies.at(-1)).toContain("Lo recogés en la tienda.");
+    expect(replies.at(-1)).toContain("Lo pasás a traer a la tienda.");
     expect(replies.at(-1)).not.toContain("¿Lo recogés en la tienda o te lo llevamos?");
   });
 });

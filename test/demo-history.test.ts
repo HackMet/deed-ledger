@@ -6,7 +6,9 @@
  */
 import { createExecutionContext, createMessageBatch, getQueueResult, waitOnExecutionContext } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
-import { DEMO_HISTORY, DEMO_HISTORY_ITEMS, type DemoHistoryMessage } from "../src/application/demo-history";
+import { DEMO_HISTORY, DEMO_HISTORY_ITEMS, DEMO_HISTORY_WAIT_MS, type DemoHistoryMessage } from "../src/application/demo-history";
+import { HISTORY_LOADING, HISTORY_REFRESH_S } from "../src/interfaces/http/console/inicio";
+import { DEMO_SEED_QUEUE } from "../src/interfaces/queue";
 import { isDemoPhone } from "../src/domain/demo";
 import { deriveOrderState } from "../src/domain/order-state";
 import { D1DemoStoreRepository } from "../src/infrastructure/d1/demo-store-repository";
@@ -29,16 +31,18 @@ async function call(h: Harness, path: string, init: { method?: string; cookie?: 
 /** The pieces a store queued, as the queue holds them. */
 class CaughtQueue {
   sent: { body: DemoHistoryMessage; delaySeconds?: number }[] = [];
+  failing = false;
   async sendBatch(messages: readonly { body: DemoHistoryMessage; delaySeconds?: number }[]) {
+    if (this.failing) throw new Error("queue unavailable");
     this.sent.push(...messages);
   }
 }
 
-/** Hands queue messages to the Worker's consumer in one batch, as Cloudflare Queues would. */
-async function deliver(h: Harness, bodies: readonly unknown[]) {
+/** Hands queue messages to the Worker's consumer in one batch, as Cloudflare Queues would: the demo-seed queue unless named. */
+async function deliver(h: Harness, bodies: readonly unknown[], queue = DEMO_SEED_QUEUE, attempts = 1) {
   const batch = createMessageBatch<unknown>(
-    "store-assistant-jobs",
-    bodies.map((body, n) => ({ id: `seed-${n}-${crypto.randomUUID()}`, timestamp: new Date(h.clock.now()), attempts: 1, body })),
+    queue,
+    bodies.map((body, n) => ({ id: `seed-${n}-${crypto.randomUUID()}`, timestamp: new Date(h.clock.now()), attempts, body })),
   );
   const ctx = createExecutionContext();
   await h.worker.queue(batch, h.env, ctx);
@@ -56,34 +60,46 @@ async function openDemo(conversation: "planner" | "classic" = "planner") {
   return { h, queue, cookie, businessId: store!.business_id };
 }
 
-/** A store with every piece delivered, one batch each, each queuing the next as it finishes. */
-async function openSeededDemo(conversation: "planner" | "classic" = "planner") {
+/**
+ * A store with every piece delivered, one batch each: all at once, as the demo-seed queue runs
+ * several invocations side by side, or one after another.
+ */
+async function openSeededDemo(conversation: "planner" | "classic" = "planner", together = true) {
   const opened = await openDemo(conversation);
-  for (let n = 0; n < opened.queue.sent.length; n++) await deliver(opened.h, [opened.queue.sent[n]!.body]);
+  const pieces = opened.queue.sent.map((m) => m.body);
+  if (together) await Promise.all(pieces.map((piece) => deliver(opened.h, [piece])));
+  else for (const piece of pieces) await deliver(opened.h, [piece]);
   return opened;
 }
+
+/** The orders of a seeded store with their customer's name and state, oldest first. */
+async function seededOrders(businessId: string) {
+  return rows<{ id: string; state: string; current_version: number; name: string | null }>(
+    `SELECT o.id, o.state, o.current_version, cu.name FROM orders o JOIN customers cu ON cu.id = o.customer_id AND cu.business_id = o.business_id
+     WHERE o.business_id = ? ORDER BY o.created_at_ms`,
+    businessId,
+  );
+}
+
+const SCRIPTED_STATES = [
+  ["Marta", "entregado"],
+  ["Carlos", "entregado"],
+  [null, "cancelado"], // cancelled before the store asked his name
+  ["Lupita", "entregado"],
+  ["Rosa", "confirmado"],
+  ["Kevin", "confirmado"],
+  ["Yesenia", "preparando"],
+  ["Mario", "listo"],
+  ["Ana", "en_camino"],
+];
 
 describe("a demo store's history", { timeout: 60_000 }, () => {
   it.each(["planner", "classic"] as const)("has every order the script names, in the state the script leaves it, as the ledger derives it (%s)", async (conversation) => {
     const { h, businessId } = await openSeededDemo(conversation);
     expect(h.log.lines.filter((l) => /demo_history_order_failed|demo_seed_step_failed|demo_history_invoice_failed/.test(l))).toEqual([]);
 
-    const orders = await rows<{ id: string; state: string; current_version: number; name: string | null }>(
-      `SELECT o.id, o.state, o.current_version, cu.name FROM orders o JOIN customers cu ON cu.id = o.customer_id AND cu.business_id = o.business_id
-       WHERE o.business_id = ? ORDER BY o.created_at_ms`,
-      businessId,
-    );
-    expect(orders.map((o) => [o.name, o.state])).toEqual([
-      ["Marta", "entregado"],
-      ["Carlos", "entregado"],
-      [null, "cancelado"], // cancelled before the store asked his name
-      ["Lupita", "entregado"],
-      ["Rosa", "confirmado"],
-      ["Kevin", "confirmado"],
-      ["Yesenia", "preparando"],
-      ["Mario", "listo"],
-      ["Ana", "en_camino"],
-    ]);
+    const orders = await seededOrders(businessId);
+    expect(orders.map((o) => [o.name, o.state])).toEqual(SCRIPTED_STATES);
     expect(orders).toHaveLength(DEMO_HISTORY.length);
     const store = new D1OrderStore(env.DB);
     for (const order of orders) {
@@ -166,23 +182,74 @@ describe("a demo store's history", { timeout: 60_000 }, () => {
     expect(h.channel.sent).toEqual([]);
   });
 
-  it("queues the first piece only, opens the store without waiting for it, and each piece queues the next", async () => {
+  it("seeds the same store whether the pieces run side by side or one after another", async () => {
+    const { h, businessId } = await openSeededDemo("planner", false);
+    expect(h.log.lines.filter((l) => /demo_history_failed/.test(l))).toEqual([]);
+    expect((await seededOrders(businessId)).map((o) => [o.name, o.state])).toEqual(SCRIPTED_STATES);
+  });
+
+  it("queues every piece at once, on the demo-seed queue, and opens the store without waiting for them", async () => {
     const { h, queue, businessId } = await openDemo();
-    expect(queue.sent.map((m) => m.body)).toEqual([{ v: 1, kind: "demo_history", businessId, item: 0 }]);
+    expect(queue.sent.map((m) => m.body)).toEqual(Array.from({ length: DEMO_HISTORY_ITEMS }, (_, item) => ({ v: 1, kind: "demo_history", businessId, item })));
     expect(await rows(`SELECT id FROM orders WHERE business_id = ?`, businessId)).toEqual([]);
-    for (let n = 0; n < queue.sent.length; n++) await deliver(h, [queue.sent[n]!.body]);
-    expect(queue.sent.map((m) => m.body.item)).toEqual(Array.from({ length: DEMO_HISTORY_ITEMS }, (_, n) => n));
+    // Running a piece queues nothing more: no chain to wait on.
+    await deliver(h, [queue.sent[0]!.body]);
+    expect(queue.sent).toHaveLength(DEMO_HISTORY_ITEMS);
   });
 
   it("seeds one piece per batch and sends the others back as fresh messages, so one invocation stays under D1's query limit", async () => {
     const { h, queue, businessId } = await openDemo();
-    const other = { v: 1, kind: "demo_history", businessId, item: 1 } as const;
-    const result = await deliver(h, [queue.sent[0]!.body, other]);
+    const result = await deliver(h, [queue.sent[0]!.body, queue.sent[1]!.body]);
     expect(result.explicitAcks).toHaveLength(2);
     expect(result.retryMessages).toEqual([]);
     expect(await rows(`SELECT id FROM orders WHERE business_id = ?`, businessId)).toHaveLength(1);
-    // The one put back, a moment later, and the next piece after the one that ran.
-    expect(queue.sent.slice(1)).toEqual(expect.arrayContaining([{ body: other, delaySeconds: 2 }, { body: { ...other } }]));
+    expect(queue.sent.slice(DEMO_HISTORY_ITEMS)).toEqual([{ body: queue.sent[1]!.body, delaySeconds: 2 }]);
+  });
+
+  it("never runs a piece in a doorbell batch: one found on the jobs queue moves to the demo-seed queue with every piece after it", async () => {
+    const { h, queue, businessId } = await openDemo();
+    // The chaining version queued piece 3; the pieces after it existed only as its successors.
+    const legacy = queue.sent[3]!.body;
+    const result = await deliver(h, [legacy], "store-assistant-jobs");
+    expect(result.explicitAcks).toHaveLength(1);
+    expect(await rows(`SELECT id FROM orders WHERE business_id = ?`, businessId)).toEqual([]);
+    const moved = queue.sent.slice(DEMO_HISTORY_ITEMS);
+    expect(moved.map((m) => m.body)).toEqual([...queue.sent.slice(4, DEMO_HISTORY_ITEMS).map((m) => m.body), legacy]);
+    expect(moved.every((m) => m.delaySeconds === 2)).toBe(true);
+  });
+
+  it("retries a piece it couldn't put back, then logs it and stops instead of letting the queue drop it", async () => {
+    const { h, queue } = await openDemo();
+    const piece = queue.sent[1]!.body;
+    queue.failing = true;
+    const early = await deliver(h, [queue.sent[0]!.body, piece], DEMO_SEED_QUEUE, 1);
+    expect(early.retryMessages.map((m) => m.msgId)).toHaveLength(1);
+    const last = await deliver(h, [queue.sent[0]!.body, piece], DEMO_SEED_QUEUE, 3);
+    expect(last.retryMessages).toEqual([]);
+    expect(last.explicitAcks).toHaveLength(2);
+    expect(h.log.lines.some((l) => l.includes("demo_history_dropped") && l.includes("item 1"))).toBe(true);
+  });
+
+  it("tells Inicio the history is loading until every piece is in, and refreshes it only meanwhile", async () => {
+    const { h, queue, cookie } = await openDemo();
+    const before = await (await call(h, "/console/inicio", { cookie })).text();
+    expect(before).toContain(HISTORY_LOADING);
+    expect(before).toContain(`<meta http-equiv="refresh" content="${HISTORY_REFRESH_S};url=/console/inicio">`);
+    expect(before).not.toContain("Hoy todavía no hay pedidos.");
+    await Promise.all(queue.sent.slice(0, DEMO_HISTORY_ITEMS - 1).map((m) => deliver(h, [m.body])));
+    expect(await (await call(h, "/console/inicio", { cookie })).text()).toContain(HISTORY_LOADING); // the invoices are still to come
+    await deliver(h, [queue.sent[DEMO_HISTORY_ITEMS - 1]!.body]);
+    const after = await (await call(h, "/console/inicio", { cookie })).text();
+    expect(after).not.toContain(HISTORY_LOADING);
+    expect(after).not.toContain('http-equiv="refresh"');
+  });
+
+  it("stops waiting for a history that never completes", async () => {
+    const { h, cookie } = await openDemo();
+    h.clock.advance(DEMO_HISTORY_WAIT_MS + 1);
+    const page = await (await call(h, "/console/inicio", { cookie })).text();
+    expect(page).not.toContain(HISTORY_LOADING);
+    expect(page).not.toContain('http-equiv="refresh"');
   });
 
   it("seeds a piece delivered twice only once", async () => {
@@ -197,6 +264,6 @@ describe("a demo store's history", { timeout: 60_000 }, () => {
     const before = await rows<{ n: number }>(`SELECT count(*) AS n FROM orders`);
     await deliver(h, [{ v: 1, kind: "demo_history", businessId: "store-real", item: 1 }]);
     expect(await rows<{ n: number }>(`SELECT count(*) AS n FROM orders`)).toEqual(before);
-    expect(queue.sent).toHaveLength(1); // only the store's own first piece: nothing chains for a store that isn't one
+    expect(queue.sent).toHaveLength(DEMO_HISTORY_ITEMS); // only the store's own pieces
   });
 });

@@ -6,6 +6,8 @@
  * K12: an order with a customer's change waiting shows it (added, removed, changed lines) with
  * Aprobar ✓ / Rechazar ✗, each with a required reason. The answer goes to the engine as one
  * `review_change` action under the key it derives; the engine reads, decides and returns the commits.
+ * Once the order left the change window (listo and later, D-43) the engine refuses an approval, so the
+ * change shows with Rechazar only and a sentence saying why; it stays waiting until someone declines it.
  *
  * K13: a ready delivery order is dispatched from here with a courier picked from the store's active
  * members; out, it shows blue with the courier's name, and is marked delivered from here too.
@@ -24,7 +26,7 @@ import {
   type OrderTrail,
   type TrailEntry,
 } from "../../../infrastructure/d1/order-trail";
-import { REASON_MAX, reviewKey, reviewReason } from "../../../domain/change-request";
+import { CHANGE_WINDOW, REASON_MAX, reviewKey, reviewReason } from "../../../domain/change-request";
 import { wordsWithoutQuantity } from "../../../domain/orders";
 import type { ActionEnvelope, ConsoleAction } from "../../../domain/contract/actions";
 import type { EngineOutcome, LineDiff, OrderLineView, OrderState } from "../../../domain/contract/outcomes";
@@ -57,8 +59,9 @@ const DECISION_LABELS = { approve: "Aprobado", decline: "Rechazado" } as const;
 const REVIEW_NOTICES = {
   aprobado: "Cambio aprobado. Le avisamos al cliente.",
   rechazado: "Cambio rechazado. Le avisamos al cliente con tu motivo.",
-  motivo: `Escribí un motivo corto (hasta ${REASON_MAX} letras).`,
+  motivo: `Escribí un motivo corto (hasta ${REASON_MAX} caracteres).`,
   estado: "Ese cambio ya no está pendiente. La página ya está al día.",
+  tarde: "El pedido ya avanzó y ese cambio ya no se puede aprobar. Rechazalo con un motivo y le avisamos al cliente.",
   falta: "Ese cambio no está en la lista.",
   permiso: "Eso no se puede desde tu cuenta.",
   guardar: "No se pudo guardar. La página ya está al día; probá otra vez.",
@@ -83,7 +86,7 @@ const NOTICES: Readonly<Record<string, string>> = { ...REVIEW_NOTICES, ...STEP_N
 const STEPS = { despachar: "dispatch", entregar: "mark_delivered" } as const;
 
 const COLOUR_MARKS: Record<OrderColour, string> = { yellow: "Cambió", red: "Cancelado", check: "✓ Entregado", blue: "En camino", none: "" };
-export const EVIDENCE_LABELS: Record<string, string> = { inbound_message: "mensaje", media_asset: "foto", member: "miembro" };
+export const EVIDENCE_LABELS: Record<string, string> = { inbound_message: "mensaje", media_asset: "foto", member: "toque del personal" };
 const CLOSURE_LABELS = { cancelled: "cancelado", superseded: "reemplazado" } as const;
 
 export function pedidosScreen(app: Hono<ConsoleEnv>) {
@@ -156,7 +159,7 @@ export function pedidosScreen(app: Hono<ConsoleEnv>) {
       action: { type: "review_change", changeRequestId: requestId, decision, reason },
     };
     const outcome = await saveAndSend(c, envelope);
-    return back(outcome === null ? "guardar" : reviewNoticeFor(outcome, decision));
+    return back(outcome === null ? "guardar" : reviewNoticeFor(outcome, decision, requestId));
   });
 }
 
@@ -185,7 +188,7 @@ async function saveAndSend(c: Context<ConsoleEnv>, envelope: ActionEnvelope<Cons
   return saved.outcome;
 }
 
-function reviewNoticeFor(outcome: EngineOutcome, decision: "approve" | "decline"): ReviewNotice {
+function reviewNoticeFor(outcome: EngineOutcome, decision: "approve" | "decline", requestId: string): ReviewNotice {
   // A second tap answers with the first: the screen reports the answer that was saved.
   const answered = outcome.type === "duplicate" ? outcome.first : outcome;
   if (answered.type !== "rejected") {
@@ -197,6 +200,9 @@ function reviewNoticeFor(outcome: EngineOutcome, decision: "approve" | "decline"
       return "falta";
     case "not_allowed":
       return "permiso";
+    case "invalid_state":
+      // Refused while the same change still waits: the order moved past the window, so only a decline is left.
+      return answered.order?.openChangeRequest?.id === requestId ? "tarde" : "estado";
     default:
       return "estado";
   }
@@ -239,15 +245,18 @@ function trailBody(trail: OrderTrail, orderId: string, csrf: string, notice: str
 <p class="meta">${STATE_LABELS[trail.state]} · Versión ${trail.version}${marks === "" ? "" : ` · ${marks}`}</p>
 <p class="meta"><a href="/console/deed/${encodeURIComponent(orderId)}">Cómo se armó</a> · <a href="/console/deed/${encodeURIComponent(orderId)}/libro">Ver libro</a></p>
 ${trail.courier === null || trail.delivered ? "" : html`<p class="meta">Lo lleva ${courierName(trail.courier)}</p>`}
-${trail.openRequest === null ? "" : changeBox(trail.openRequest, orderId, csrf)}
+${trail.openRequest === null ? "" : changeBox(trail.openRequest, orderId, csrf, CHANGE_WINDOW.includes(trail.state))}
 ${stepBox(trail, orderId, csrf, members)}
 <ol class="trail">${trail.facts.map((entry) => trailEntry(entry, names))}</ol>`;
 }
 
 const lineText = (line: OrderLineView) => `${line.productName ?? wordsWithoutQuantity(line.text, line.quantity)} × ${line.quantity ?? "?"}${line.unit === null ? "" : ` ${line.unit}`}`;
 
-/** The change waiting for review: what it adds, removes and changes, and the two answers. */
-function changeBox(request: { readonly id: string; readonly diff: LineDiff }, orderId: string, csrf: string) {
+/**
+ * The change waiting for review: what it adds, removes and changes, and the answers. Past the change
+ * window the engine can only decline it, so the screen offers only Rechazar and says why.
+ */
+function changeBox(request: { readonly id: string; readonly diff: LineDiff }, orderId: string, csrf: string, approvable: boolean) {
   const { added, removed, changed } = request.diff;
   const action = `/console/pedidos/${encodeURIComponent(orderId)}/revision`;
   const answer = (decision: "approve" | "decline", label: string) => html`<form method="post" action="${action}" class="${decision}">
@@ -264,7 +273,7 @@ ${removed.map((line) => html`<li class="removed">Quitar: ${lineText(line)}</li>`
 ${changed.map(({ before, after }) => html`<li class="changed">Cambiar: ${lineText(before)} → ${lineText(after)}</li>`)}
 ${added.length + removed.length + changed.length === 0 ? html`<li>Cambia la entrega, no los productos.</li>` : ""}
 </ul>
-${answer("approve", "Aprobar ✓")}
+${approvable ? answer("approve", "Aprobar ✓") : html`<p class="late">El pedido ya avanzó, así que este cambio ya no se puede aprobar. Rechazalo con un motivo y le avisamos al cliente.</p>`}
 ${answer("decline", "Rechazar ✗")}
 </section>`;
 }
@@ -280,7 +289,7 @@ function stepBox(trail: OrderTrail, orderId: string, csrf: string, members: read
   const hidden = (paso: keyof typeof STEPS) => html`<input type="hidden" name="csrf" value="${csrf}">
 <input type="hidden" name="paso" value="${paso}"><input type="hidden" name="version" value="${trail.version}">`;
   if (trail.state === "listo" && trail.fulfillment === null) {
-    return html`<p class="notice">Falta saber si lo recogen o se lo llevamos. Preguntale al cliente.</p>
+    return html`<p class="notice">Falta saber si lo pasan a traer o se lo llevamos. Preguntale al cliente.</p>
 <section class="step"><form method="post" action="${action}">${hidden("entregar")}
 <button type="submit">Ya lo tiene el cliente ✓</button>
 </form></section>`;
@@ -290,7 +299,7 @@ function stepBox(trail: OrderTrail, orderId: string, csrf: string, members: read
 <label>¿Quién lo lleva?<select name="repartidor" required>
 ${members.map((m) => html`<option value="${m.memberId}">${courierName(m)}</option>`)}
 </select></label>
-<button type="submit">Mandar en camino</button>
+<button type="submit">Despachar</button>
 </form></section>`;
   }
   if (trail.state === "en_camino" || (trail.state === "listo" && trail.fulfillment === "pickup")) {
@@ -360,5 +369,5 @@ main>p{margin:12px 18px}
 .change form{display:flex;flex-direction:column;gap:8px;margin-top:12px}
 .change button{border:0;color:#fff;font-size:18px;font-weight:800;min-height:56px}
 .change .approve button{background:var(--ink)}.change .decline button{background:var(--warn)}
-.review.decline{color:var(--warn)}
+.review.decline{color:var(--warn)}.change .late{margin-top:12px;font-weight:700;color:var(--warn)}
 `;

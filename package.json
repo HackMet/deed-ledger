@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "dev:sim": "node scripts/dev-sim.mjs",
-    "test": "vitest run && node --test test/node/deed-recheck-command.test.mjs test/node/demo-verdicts.test.mjs",
+    "test": "vitest run && node --test test/node/deed-recheck-command.test.mjs test/node/demo-verdicts.test.mjs test/node/migration-check.test.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p test/tsconfig.json",
     "cf-typegen": "wrangler types",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",

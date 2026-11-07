@@ -121,7 +121,7 @@ export const COPY = {
    * Queued by the sweep when an answer is slow. Claims nothing, so it is never checked. No time
    * promise: we don't know when the answer goes out.
    */
-  slowNotice: "Recibimos tu mensaje, lo estamos revisando.",
+  slowNotice: "Ya recibí tu mensaje, lo estoy revisando.",
   /** The typed choices where no button goes with them (a status answer). */
   typedFallback: "Respondé Confirmar, Corregir o Cancelar.",
   /**
@@ -130,7 +130,7 @@ export const COPY = {
    */
   typedFallbackSoft: "_O escribí: confirmar, corregir o cancelar._",
   /** The readback's footer, in grey under its buttons. At most 60 characters (WhatsApp). */
-  fixHint: "Si algo está mal, escribime o mandame un audio.",
+  fixHint: "Si algo está mal, escribime o mandame una nota de voz.",
   /** After the readback's items, for lines with no product or no confirmed price. */
   confirmLater: "De estos te confirmo si hay y el precio",
   readbackTitle: "Tu pedido:",
@@ -139,7 +139,7 @@ export const COPY = {
   confirmQuestion: "¿Te lo preparo así?",
   /** Under a readback where nothing is left to prepare: nothing to confirm, the typed way out. */
   soldOutAll: "¿Qué más te mando? Si no querés nada más, respondé Cancelar.",
-  pickup: "Lo recogés en la tienda.",
+  pickup: "Lo pasás a traer a la tienda.",
   /** How the store is paid, as the owner works today (to confirm with him): on pickup or delivery. */
   payOnPickup: "Pagás cuando lo recogés.",
   payOnDelivery: "Pagás cuando te lo entregamos.",
@@ -176,12 +176,12 @@ export const COPY = {
   stopped: "Si no querés recibir más mensajes, escribí solo la palabra ALTO.",
   stoppedDelete: "Si querés que borremos tus datos, escribí: borren mis datos.",
   outOfScope: "De eso no sé 😅 Yo te ayudo con pedidos, precios y el horario de la tienda. ¿Qué te mando?",
-  refusedTap: "Ese botón ya no aplica. Si necesitás algo con tu pedido, escribime.",
+  refusedTap: "Ese botón ya no vale. Si necesitás algo con tu pedido, escribime.",
   whichProduct: "¿De qué producto me preguntás?",
   /** Store hours not set in settings (#47): never a guessed schedule. */
   hoursUnknown: "El horario te lo confirmo.",
   paymentRejected: "No pudimos confirmar ese pago. Si tenés otro comprobante, mandámelo.",
-  pickupReady: "Ya podés pasar por él.",
+  pickupReady: "Ya podés pasar a traerlo.",
   substituteFallback: "Tocá un botón o escribime qué preferís.",
   /** The same, when the buttons couldn't be built: nothing to tap. */
   substituteFallbackTyped: "Escribime qué preferís.",
@@ -931,7 +931,7 @@ function payLine(order: OrderView): string | null {
   return order.fulfillment.mode === "pickup" ? COPY.payOnPickup : COPY.payOnDelivery;
 }
 
-/** "🏪 Lo recogés en la tienda." or "📍 Te lo llevamos a: <the place as said>". */
+/** "🏪 Lo pasás a traer a la tienda." or "📍 Te lo llevamos a: <the place as said>". */
 function fulfillmentLines(order: OrderView): string[] {
   const fulfillment = order.fulfillment;
   if (fulfillment === null) return [];

@@ -3,7 +3,7 @@
  * session and the demo row in one batch: a visitor gets all of it or none. Every read is scoped to a
  * business ID that starts with "demo-", so nothing here can open or read a real store.
  */
-import type { DemoStoreWriter, NewDemoStore } from "../../application/demo-store";
+import type { DemoStoreCounts, DemoStoreWriter, NewDemoStore } from "../../application/demo-store";
 import type { ReplyButton } from "../../domain/replies";
 import type { BatchGuard } from "../../application/ports";
 import { DemoLimitError } from "../../application/demo-store";
@@ -28,19 +28,22 @@ export interface DemoStore {
 export class D1DemoStoreRepository implements DemoStoreWriter {
   constructor(private readonly db: D1Database) {}
 
-  /** How many demo stores this visitor, and everyone, opened in the hour before `nowMs`, and ever. */
-  async recentCounts(visitorHash: string, nowMs: number): Promise<{ readonly visitor: number; readonly everyone: number; readonly ever: number }> {
+  /**
+   * How many demo stores this visitor, and everyone, opened in the hour before `nowMs`, and how many
+   * are open at `nowMs` (not yet expired). Expired stores never count toward the total.
+   */
+  async recentCounts(visitorHash: string, nowMs: number): Promise<DemoStoreCounts> {
     const since = nowMs - HOUR_MS;
     const row = await this.db
       .prepare(
         `SELECT
            (SELECT count(*) FROM demo_stores WHERE visitor_hash = ?1 AND created_at_ms > ?2) AS visitor,
            (SELECT count(*) FROM demo_stores WHERE created_at_ms > ?2) AS everyone,
-           (SELECT count(*) FROM demo_stores) AS ever`,
+           (SELECT count(*) FROM demo_stores WHERE expires_at_ms > ?3) AS open`,
       )
-      .bind(visitorHash, since)
-      .first<{ visitor: number; everyone: number; ever: number }>();
-    return { visitor: row?.visitor ?? 0, everyone: row?.everyone ?? 0, ever: row?.ever ?? 0 };
+      .bind(visitorHash, since, nowMs)
+      .first<{ visitor: number; everyone: number; open: number }>();
+    return { visitor: row?.visitor ?? 0, everyone: row?.everyone ?? 0, open: row?.open ?? 0 };
   }
 
   async create(store: NewDemoStore): Promise<void> {
@@ -52,8 +55,16 @@ export class D1DemoStoreRepository implements DemoStoreWriter {
       holdsSql: `SELECT CASE WHEN
           (SELECT count(*) FROM demo_stores WHERE visitor_hash = ? AND created_at_ms > ?) < ?
           AND (SELECT count(*) FROM demo_stores WHERE created_at_ms > ?) < ?
-          AND (SELECT count(*) FROM demo_stores) < ? THEN 1 END`,
-      params: [store.visitorHash, nowMs - HOUR_MS, DEMO_STORES_PER_VISITOR_PER_HOUR, nowMs - HOUR_MS, DEMO_STORES_PER_HOUR, DEMO_STORES_TOTAL],
+          AND (SELECT count(*) FROM demo_stores WHERE expires_at_ms > ?) < ? THEN 1 END`,
+      params: [
+        store.visitorHash,
+        nowMs - HOUR_MS,
+        DEMO_STORES_PER_VISITOR_PER_HOUR,
+        nowMs - HOUR_MS,
+        DEMO_STORES_PER_HOUR,
+        nowMs,
+        DEMO_STORES_TOTAL,
+      ],
       error: () => new DemoLimitError(),
     };
     await guardedBatch(this.db, [underLimits], [
@@ -96,6 +107,16 @@ export class D1DemoStoreRepository implements DemoStoreWriter {
    * How many messages this demo store's phone has sent: the per-store limit counts them. Only the
    * visitor's phone: the store's seeded customers (demo-history.ts) never use up the visitor's turns.
    */
+  /** Whether this store already recorded a message with this provider ID (a retried phone send). */
+  async hasPhoneMessage(store: DemoStore, providerMessageId: string): Promise<boolean> {
+    if (!isDemoBusiness(store.businessId)) return false;
+    const row = await this.db
+      .prepare(`SELECT 1 AS found FROM inbound_messages WHERE business_id = ? AND provider_message_id = ? LIMIT 1`)
+      .bind(store.businessId, providerMessageId)
+      .first<{ found: number }>();
+    return row !== null;
+  }
+
   async messageCount(store: DemoStore): Promise<number> {
     if (!isDemoBusiness(store.businessId)) return 0;
     const row = await this.db
@@ -108,6 +129,42 @@ export class D1DemoStoreRepository implements DemoStoreWriter {
       .bind(store.businessId, store.customerPhone)
       .first<{ sent: number }>();
     return row?.sent ?? 0;
+  }
+
+  /**
+   * Takes one console reading from this demo store's allowance, in one guarded write: true when one
+   * was left, false when it's used up, the store expired or the business isn't a demo store.
+   */
+  takeConsoleRead(businessId: string, limit: number, nowMs: number): Promise<boolean> {
+    return this.take("console_reads", businessId, limit, nowMs);
+  }
+
+  /**
+   * Takes one send from this demo store phone's lifetime allowance, the same way: parallel sends
+   * can't pass the limit together. `returnPhoneSend` gives it back when nothing new went in.
+   */
+  takePhoneSend(store: DemoStore, limit: number, nowMs: number): Promise<boolean> {
+    return this.take("phone_sends", store.businessId, limit, nowMs);
+  }
+
+  async returnPhoneSend(store: DemoStore): Promise<void> {
+    if (!isDemoBusiness(store.businessId)) return;
+    await this.db
+      .prepare(`UPDATE demo_stores SET phone_sends = phone_sends - 1 WHERE business_id = ?1 AND phone_sends > 0`)
+      .bind(store.businessId)
+      .run();
+  }
+
+  private async take(column: "console_reads" | "phone_sends", businessId: string, limit: number, nowMs: number): Promise<boolean> {
+    if (!isDemoBusiness(businessId)) return false;
+    const result = await this.db
+      .prepare(
+        `UPDATE demo_stores SET ${column} = ${column} + 1
+         WHERE business_id = ?1 AND business_id LIKE '${DEMO_BUSINESS_PREFIX}%' AND expires_at_ms > ?2 AND ${column} < ?3`,
+      )
+      .bind(businessId, nowMs, limit)
+      .run();
+    return result.meta.changes === 1;
   }
 
   /** The demo store behind a business ID, while it hasn't expired. Never a real store. */

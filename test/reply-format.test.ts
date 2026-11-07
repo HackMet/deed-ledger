@@ -222,7 +222,7 @@ describe("the summary", () => {
       ].join("\n"),
     );
     expect(reply.buttons.map((b) => b.title)).toEqual(["Confirmar", "Corregir", "Cancelar"]);
-    expect(reply.footer).toBe("Si algo está mal, escribime o mandame un audio.");
+    expect(reply.footer).toBe("Si algo está mal, escribime o mandame una nota de voz.");
     expect(reply.textFallback).toBe(COPY.typedFallbackSoft);
     expect(reply.body).not.toContain("_O escribí");
   });
@@ -237,7 +237,7 @@ describe("the summary", () => {
         "• 2 Azúcar 1 lb · L 60",
         "• 3 Jabón Xtra · L 105",
         "",
-        "🏪 Lo recogés en la tienda.",
+        "🏪 Lo pasás a traer a la tienda.",
         "💵 Total: L 315. Pagás cuando lo recogés.",
         "",
         "¿Te lo preparo así?",

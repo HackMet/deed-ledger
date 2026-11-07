@@ -29,12 +29,20 @@ import { afterIntake } from "./app";
 import { languageOf } from "./console/language";
 import { buttonInEnglish, customerInEnglish, replyInEnglish } from "./demo-english";
 import { demoLandingPage, demoLimitedPage, demoPhonePage, demoSplitPage } from "./demo-pages";
+import { DEMO_TOUR_GIF_BASE64 } from "./demo-tour";
 import type { HttpEnv } from "./env";
 
 export const DEMO_PATH = "/demo";
+
+let tourGif: ArrayBuffer | undefined;
 /** The demo's own copy of the session token, for the phone's routes (the console's cookie is path /console). */
 const DEMO_COOKIE = "demo_sesion";
 const MAX_SEND_BYTES = 4 * 1024;
+/**
+ * The phone's own ID for one send (request field `clientMessageId`), the same on every retry of that
+ * send, so a retry is recorded once. A UUID fits; anything else is refused.
+ */
+export const CLIENT_MESSAGE_ID = /^[A-Za-z0-9_-]{16,64}$/u;
 
 type DemoEnv = HttpEnv;
 
@@ -56,6 +64,16 @@ export function demoRoutes() {
   app.get("/", async (c) => {
     const session = await demoSession(c);
     return c.html(demoLandingPage(session !== null));
+  });
+
+  // The landing page's recording of a demo visit: one fixed file, decoded once per isolate.
+  app.get("/recorrido.gif", (c) => {
+    tourGif ??= Uint8Array.from(atob(DEMO_TOUR_GIF_BASE64), (ch) => ch.charCodeAt(0)).buffer;
+    return c.body(tourGif, 200, {
+      "content-type": "image/gif",
+      "cache-control": "public, max-age=86400",
+      "x-content-type-options": "nosniff",
+    });
   });
 
   app.post("/empezar", async (c) => {
@@ -151,32 +169,60 @@ export function demoRoutes() {
       const nowMs = deps.clock.now();
       const event = inboundEvent(session.store, input, nowMs);
       if (event === null) return c.json({ error: "bad_request" }, 400);
+      const { demoStores } = runtime;
+      const store = session.store;
+      const limited = (reason: "messages" | "budget") => {
+        deps.log.info("demo_send_limited", { businessId: store.businessId, reason });
+        return c.json({ error: reason === "messages" ? "limit" : "budget" }, 429);
+      };
+      // A retry of a send already recorded answers as it did, before any limit: it costs nothing.
+      if (await demoStores.hasPhoneMessage(store, event.providerMessageId)) return c.json({ ok: true });
       // A demo store's life is a few orders: past that the visitor starts a fresh store.
-      if ((await runtime.demoStores.messageCount(session.store)) >= DEMO_MAX_MESSAGES_PER_STORE) {
-        deps.log.info("demo_send_limited", { businessId: session.store.businessId, reason: "messages" });
-        return c.json({ error: "limit" }, 429);
-      }
+      if ((await demoStores.messageCount(store)) >= DEMO_MAX_MESSAGES_PER_STORE) return limited("messages");
       // Once today's pool is spent, nothing more goes in: the store couldn't read it anyway.
-      if ((await runtime.demoPoolSpent(nowMs)) >= DEMO_DAILY_CAP_MICRO_USD) {
-        deps.log.info("demo_send_limited", { businessId: session.store.businessId, reason: "budget" });
-        return c.json({ error: "budget" }, 429);
-      }
+      if ((await runtime.demoPoolSpent(nowMs)) >= DEMO_DAILY_CAP_MICRO_USD) return limited("budget");
+      // The same limit, taken in one guarded write: parallel sends can't pass it together.
+      if (!(await demoStores.takePhoneSend(store, DEMO_MAX_MESSAGES_PER_STORE, nowMs))) return limited("messages");
       // A voice note is transcribed before any capped model call, so it pays into the demo's pool first.
       let charged: SpendReservation | null = null;
+      // Nothing new went in: the send and a voice note's charge come back, each at most once per request.
+      let sendReturned = false;
+      let chargeReturned = false;
+      const giveBack = async () => {
+        if (!sendReturned) {
+          sendReturned = true;
+          await demoStores.returnPhoneSend(store);
+        }
+        if (charged !== null && !chargeReturned) {
+          chargeReturned = true;
+          await runtime.demoSpend.settle(charged, 0);
+        }
+      };
       if (event.kind === "audio") {
-        charged = await runtime.demoSpend.reserve({ businessId: session.store.businessId }, nowMs, DEMO_VOICE_NOTE_MICRO_USD, DEMO_DAILY_CAP_MICRO_USD);
+        try {
+          charged = await runtime.demoSpend.reserve({ businessId: store.businessId }, nowMs, DEMO_VOICE_NOTE_MICRO_USD, DEMO_DAILY_CAP_MICRO_USD);
+        } catch (error) {
+          deps.log.error("demo_send_failed", { businessId: store.businessId, reason: describeError(error) });
+          await giveBack();
+          return c.json({ error: "retry" }, 500);
+        }
         if (charged === null) {
-          deps.log.info("demo_send_limited", { businessId: session.store.businessId, reason: "budget" });
-          return c.json({ error: "budget" }, 429);
+          await giveBack();
+          return limited("budget");
         }
       }
       try {
         const outcome = await acceptEvents(deps, [event]);
+        // A retry of a send already recorded (same clientMessageId), or intake's own limit.
+        if (outcome.conversations.length === 0) await giveBack();
         c.executionCtx.waitUntil(afterIntake(deps, outcome));
       } catch (error) {
-        deps.log.error("demo_send_failed", { businessId: session.store.businessId, reason: describeError(error) });
-        // The voice note never went in: its charge comes back.
-        if (charged !== null) await runtime.demoSpend.settle(charged, 0);
+        deps.log.error("demo_send_failed", { businessId: store.businessId, reason: describeError(error) });
+        try {
+          await giveBack();
+        } catch (cleanup) {
+          deps.log.error("demo_send_give_back_failed", { businessId: store.businessId, reason: describeError(cleanup) });
+        }
         return c.json({ error: "retry" }, 500);
       }
       return c.json({ ok: true });
@@ -200,15 +246,24 @@ async function demoSession(c: Context<DemoEnv>): Promise<DemoSession | null> {
   return { store, csrf: await csrfToken(config.linkSigningSecret, member.sessionId), userId: member.userId };
 }
 
-/** What the phone sent, as the webhook would have parsed it. Only this store's number and customer. */
+/**
+ * What the phone sent, as the webhook would have parsed it. Only this store's number and customer.
+ * With a `clientMessageId`, a retried send keeps its message ID, so intake records it once (message
+ * IDs are unique per store); without one, every send is new.
+ */
 export function inboundEvent(store: DemoStore, input: unknown, nowMs: number): InboundMessageEvent | null {
   if (typeof input !== "object" || input === null) return null;
-  const body = input as { preset?: unknown; text?: unknown; reply?: unknown; title?: unknown };
+  const body = input as { preset?: unknown; text?: unknown; reply?: unknown; title?: unknown; clientMessageId?: unknown };
+  let providerMessageId = `demo.${crypto.randomUUID()}`;
+  if (body.clientMessageId !== undefined) {
+    if (typeof body.clientMessageId !== "string" || !CLIENT_MESSAGE_ID.test(body.clientMessageId)) return null;
+    providerMessageId = `demo.client.${body.clientMessageId}`;
+  }
   const base = {
     type: "message" as const,
     phoneNumberId: store.phoneNumberId,
     senderPhone: store.customerPhone,
-    providerMessageId: `demo.${crypto.randomUUID()}`,
+    providerMessageId,
     providerTimestampS: Math.floor(nowMs / 1000),
     replyId: null,
     contextMessageId: null,

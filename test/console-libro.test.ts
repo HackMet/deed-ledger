@@ -194,6 +194,28 @@ describe("/console/deed/:orderId/libro: the three lanes", () => {
     expect(body).toContain("Sin confirmación de entrega todavía");
   });
 
+  it("reads in English in the English view, the drawing's wrapped cells included, and keeps every class and link", async () => {
+    const s = await storeWithMembers();
+    const { orderId } = await fourStates(s);
+    const h = harness({ engine });
+    const cookie = await login(h, s, "staff");
+    const path = `/console/deed/${encodeURIComponent(orderId)}/libro`;
+    const spanish = await (await get(h, path, cookie)).text();
+    const english = await (await get(h, path, `${cookie}; consola_idioma=en`)).text();
+    const svgText = (page: string) => [...page.matchAll(/<text class="(?:lane|cell)"[^>]*>([^<]*)<\/text>/g)].map((m) => m[1]).join(" ");
+    for (const words of ["AGENT said", "LEDGER pairs", "WORLD recorded", "No delivery", "Blocked: the state", "Said: confirmed"]) {
+      expect(svgText(english)).toContain(words);
+    }
+    for (const spanishWord of ["AGENTE", "LIBRO", "MUNDO", "Dijo", "Bloqueado", "confirmación", "Vigente"]) expect(svgText(english)).not.toContain(spanishWord);
+    expect(english).toContain("<title>Ledger");
+    expect(english).toContain("Back to the ledger");
+    expect(english).toContain('aria-label="What the agent said, what the ledger pairs and what the world recorded"');
+    // The ES | EN switch differs by design (it marks the language in use), and so does how many lines a cell wraps into.
+    const marks = (page: string) =>
+      [...page.replace(/<p class="lang-line".*?<\/p>/s, "").matchAll(/(?:class|href|id)="[^"]*"/g)].map(([m]) => m).filter((m) => m !== 'class="cell"');
+    expect(marks(english)).toEqual(marks(spanish));
+  });
+
   it("shows a balance that does not add up as a red box, saying what was said and what was recorded", async () => {
     const s = await storeWithMembers();
     const { orderId } = await confirmedOrder(s);

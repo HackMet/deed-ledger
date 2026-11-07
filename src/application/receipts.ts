@@ -27,6 +27,7 @@ import {
   type ReceiptDraftBody,
   receiptReviewKey,
 } from "../domain/receipt-draft";
+import { isDemoBusiness } from "../domain/demo";
 import { storePrefix } from "../domain/media";
 import type { MemberContext } from "./engine";
 import { FactRefusedError } from "./errors";
@@ -179,9 +180,11 @@ export class ReceiptService {
   }
 
   /** Owner only: store the photo, read it, draft revision 1. */
-  async upload(member: MemberContext, file: { readonly bytes: ArrayBuffer }): Promise<UploadResult> {
+  /** `seeded` is set only by the demo history, which scripts a demo store's invoices; visitors can't upload. */
+  async upload(member: MemberContext, file: { readonly bytes: ArrayBuffer }, opts: { readonly seeded?: boolean } = {}): Promise<UploadResult> {
     const { store, media, reader, context } = this.deps;
     if (member.role !== "owner") return { type: "refused", reason: "not_allowed" };
+    if (isDemoBusiness(member.businessId) && opts.seeded !== true) return { type: "refused", reason: "not_allowed" };
     if (file.bytes.byteLength === 0) return { type: "refused", reason: "empty" };
     if (file.bytes.byteLength > MAX_INVOICE_BYTES) return { type: "refused", reason: "too_large" };
     const type = sniffImageType(new Uint8Array(file.bytes, 0, Math.min(file.bytes.byteLength, 16)));

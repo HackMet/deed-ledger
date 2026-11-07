@@ -264,5 +264,6 @@ describe("deedGraph agrees with the ledger's SQL liveness", () => {
         expect(isLiveStatus(pure[f.id]!), `seed ${seed}, fact ${f.id}`).toBe(sql.get(f.id));
       }
     }
-  });
+    // 200 D1 batches: a few seconds alone, past the 5 s default under full-suite load.
+  }, 30_000);
 });

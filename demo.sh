@@ -5,12 +5,12 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 if ! command -v node >/dev/null 2>&1; then
-  echo "demo: Node.js 20 or newer is required (node not found)." >&2
+  echo "demo: Node.js 22 or newer is required (node not found)." >&2
   exit 1
 fi
 major="$(node -p 'process.versions.node.split(".")[0]')"
-if [ "$major" -lt 20 ]; then
-  echo "demo: Node.js 20 or newer is required (found $(node --version))." >&2
+if [ "$major" -lt 22 ]; then
+  echo "demo: Node.js 22 or newer is required (found $(node --version))." >&2
   exit 1
 fi
 if [ ! -d node_modules ]; then

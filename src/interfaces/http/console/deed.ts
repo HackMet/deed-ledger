@@ -43,12 +43,13 @@ const SHORT_KIND: Record<TrailEntry["kind"], string> = {
   change_review: "Cambio revisado",
 };
 
-const STATUS_WORDS: Record<DeedStatus, string> = { live: "Vivo", closed: "Cerrado", blocked: "Bloqueado", pending: "Pendiente" };
-const CLOSURE_LABELS = { cancelled: "cancelado", superseded: "reemplazado" } as const;
+/** The same words as the live graph's where they mean the same: a fact in force, closed, blocked, or not answered yet. */
+const STATUS_WORDS: Record<DeedStatus, string> = { live: "Vigente", closed: "Cerrado", blocked: "Bloqueado", pending: "En duda" };
+const CLOSURE_LABELS = { cancelled: "(lo canceló)", superseded: "(lo reemplazó)" } as const;
 const REASON_LABELS: Record<string, string> = {
   duplicate: "ya se hizo antes",
   stale_version: "versión vieja",
-  not_allowed: "no te toca",
+  not_allowed: "no tiene permiso",
   not_found: "no existe",
   not_backed: "no está respaldado por los registros",
 };
@@ -121,7 +122,7 @@ export function deedScreen(app: Hono<ConsoleEnv>) {
         body: html`<p class="meta"><a href="${SEARCH}">Buscar pedido por código</a></p>
 <p class="counters" id="contadores">Intentos rechazados ${counters.attempts}</p>
 ${counters.refusedByReason.size === 0 ? "" : html`<ul class="reasons">${[...counters.refusedByReason].map(([reason, n]) => html`<li>${reasonLabel(reason, null)}: ${n}</li>`)}</ul>`}
-<p class="counters" id="afirmaciones">Afirmaciones verificadas ${counters.claims}, pasaron ${counters.claimsPassed}</p>
+<p class="counters" id="afirmaciones">Afirmaciones verificadas ${counters.claims}, confirmadas ${counters.claimsPassed}</p>
 ${rows.length === 0 ? html`<p class="empty">Todavía no hay verificaciones.</p>` : html`<ol class="feed">${rows.map(feedRow)}</ol>`}`,
       }),
     );
@@ -158,8 +159,8 @@ ${rows.length === 0 ? html`<p class="empty">Todavía no hay verificaciones.</p>`
         tab: LIVE_PATH,
         refreshSeconds: REFRESH_SECONDS,
         style: STYLE,
-        body: html`<section class="hero"><p class="live-badge"><span class="dot"></span>LIVE</p>
-<p class="summary">${counters.claims} afirmaciones · ${counters.claimsPassed} confirmadas · ${counters.claims - counters.claimsPassed} sin respaldo · ${counters.attempts} intentos rechazados</p></section>
+        body: html`<section class="hero"><p class="live-badge"><span class="dot"></span>EN VIVO</p>
+<p class="summary">${counted(counters.claims, "afirmación", "afirmaciones")} · ${counted(counters.claimsPassed, "confirmada", "confirmadas")} · ${counters.claims - counters.claimsPassed} sin respaldo · ${counted(counters.attempts, "intento rechazado", "intentos rechazados")}</p></section>
 <p class="meta"><a href="${VERIFICATIONS}">Todas las verificaciones</a> · <a href="${SEARCH}">Buscar pedido por código</a></p>
 ${recent.length === 0 ? "" : html`<nav class="picks" aria-label="Pedido que se muestra"><a href="${LIVE_PATH}"${picked === undefined ? html` aria-current="true"` : ""}>El más reciente</a>${recent.map((order) => pickLink(order, picked))}</nav>`}
 <div class="vivo"><section class="vivo-grafo">${trail === null
@@ -207,6 +208,11 @@ ${shownEntries.map((entry) => panelOf(entry, graph, facts, `/console/deed/${enco
       }),
     );
   });
+}
+
+/** "1 afirmación", "3 afirmaciones": the count with its word, singular for one. */
+function counted(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`;
 }
 
 /** One order to follow on En vivo. Unconfirmed orders have no code yet, so they say so. */
@@ -332,7 +338,7 @@ function panelOf(entry: TrailEntry, graph: DeedGraph, facts: readonly DeedFact[]
 <p class="meta">${entry.actor} · ${formatTime(entry.recordedAtMs)}${entry.courier === null ? "" : ` · ${entry.courier.name ?? "repartidor"}`}</p>
 <p class="meta">Operación: <code>${entry.operationKey}</code></p>
 ${entry.evidence.length === 0 ? "" : html`<p>${entry.evidence.filter((e) => e.kind in EVIDENCE_LABELS).map((e) => html`<span class="chip">${EVIDENCE_LABELS[e.kind]} · ${e.refId.slice(0, 8)}</span>`)}</p>`}
-${closure === null ? "" : html`<p class="closed">Cerrado por <a href="#f-${closure.closedByFactId}">${labelOf(closure.closedByFactId)}</a> (${CLOSURE_LABELS[closure.reason]})</p>`}
+${closure === null ? "" : html`<p class="closed">Cerrado por <a href="#f-${closure.closedByFactId}">${labelOf(closure.closedByFactId)}</a> ${CLOSURE_LABELS[closure.reason]}</p>`}
 ${block === null ? "" : html`<p class="blocked">Bloqueado por <a href="#f-${block.closedId}">${labelOf(block.closedId)}</a></p>
 <p><a href="?foco=${entry.factId}#f-${entry.factId}">Ver el camino hasta el bloqueo</a></p>`}
 <p><a href="#grafo">Volver al grafo</a>${libro === "" ? "" : html` · <a href="${libro}">Ver en el libro</a>`}</p>
@@ -355,9 +361,9 @@ function liveFeedRow(row: DeedCheckView) {
   return html`<li class="fail claim"><span class="mark">✗</span><span class="what">Verificó ${CLAIM_LABELS[row.claimKind ?? "other"]}</span><span class="why">${REASON_LABELS.not_backed}</span><time>${formatTime(row.atMs)}</time>${link}</li>`;
 }
 
-/** The reason in Spanish; a refused cancelled order names the cancel (`ancestro cancelado`). */
+/** The reason in Spanish; a refused cancelled order names the cancel ("el pedido ya estaba cancelado"). */
 function reasonLabel(code: string, decidingFactId: string | null): string {
-  if (code === "invalid_state") return decidingFactId === null ? "el estado no lo permite" : "ancestro cancelado";
+  if (code === "invalid_state") return decidingFactId === null ? "el estado no lo permite" : "el pedido ya estaba cancelado";
   return REASON_LABELS[code] ?? "rechazado";
 }
 
@@ -374,7 +380,7 @@ function actionLabel(key: string | null): string {
     case "remove":
       return "quitar un producto";
     case "burst":
-      return "un mensaje del cliente";
+      return "registrar un mensaje del cliente";
     default:
       return "una acción";
   }

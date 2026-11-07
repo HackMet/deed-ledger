@@ -47,7 +47,7 @@ const NOTICES = {
   existe: "Ya tenés un producto con ese nombre. Buscalo en la lista y tocá Editar.",
   guardado: "Listo. Cambios guardados.",
   nombre_usado: "Ya hay otro producto con ese nombre.",
-  nombre: "Escribí el nombre del producto (máximo 80 letras).",
+  nombre: "Escribí el nombre del producto (máximo 80 caracteres).",
   precio: "No pude leer el precio. Escribilo así: 18 o 18.50, sin comas. Si no lo sabés, dejalo vacío.",
   otros: "Revisá los otros nombres: máximo 10, uno por línea.",
   cantidad: "No pude leer la cantidad de siempre. Escribila así: 1 o 0.5, sin comas. Si no sabés, dejala vacía.",

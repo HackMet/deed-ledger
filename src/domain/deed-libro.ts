@@ -125,7 +125,7 @@ const STATE_WORDS: Record<OrderState, string> = {
 const REASON_WORDS: Record<string, string> = {
   duplicate: "ya se hizo antes",
   stale_version: "versión vieja",
-  not_allowed: "no te toca",
+  not_allowed: "no tiene permiso",
   not_found: "no existe",
   invalid_state: "el estado no lo permite",
   not_backed: "no está respaldado por los registros",
@@ -234,7 +234,7 @@ const KIND_WORDS: Record<FactKind, string> = {
 const factLabel = (fact: LibroFact): string => {
   const state = stateOf(fact);
   const what = fact.kind === "order_version" && fact.version !== null ? `${KIND_WORDS.order_version} v${fact.version}` : state === null ? KIND_WORDS[fact.kind] : STATE_WORDS[state];
-  return `${what} · ${fact.live ? "Vivo" : "Cerrado"}`;
+  return `${what} · ${fact.live ? "Vigente" : "Cerrado"}`;
 };
 
 const factCell = (fact: LibroFact): LibroCell => ({

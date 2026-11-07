@@ -105,7 +105,7 @@ describe("Anotar: who can read", () => {
       expect(response.headers.get("cache-control")).toBe("no-store");
       const page = await response.text();
       expect(page).toContain("<h3>Venta</h3>");
-      expect(page).toContain("3 refresco a L 20 c/u");
+      expect(page).toContain("<span>3</span> refresco — L 20 <span>c/u</span>");
       expect(page).toContain("Todavía no se guarda nada.");
       expect(calls()).toBe(1);
     });
@@ -118,6 +118,32 @@ describe("Anotar: who can read", () => {
     const page = await (await post(h, { csrf, para: "pedido", texto: PEDIDO_TEXT }, { cookie })).text();
     expect(page).toContain("<h3>Pedido</h3>");
     expect(page).toContain("Lo pasa a traer");
+  });
+});
+
+describe("Anotar in English", () => {
+  it("shows a reading's own words in English and leaves what was read as it was", async () => {
+    const { h, answer } = anotarHarness();
+    const { cookie, csrf } = await session(h);
+    answer(saleByText);
+    const page = await (await post(h, { csrf, para: "tienda", texto: SALE_TEXT }, { cookie: `${cookie}; consola_idioma=en` })).text();
+    expect(page).toContain("<h3>Sale</h3>");
+    expect(page).toContain("<span>3</span> refresco — L 20 <span>each</span>");
+    answer(pedidoAMano);
+    const order = await (await post(h, { csrf, para: "pedido", texto: PEDIDO_TEXT }, { cookie: `${cookie}; consola_idioma=en` })).text();
+    expect(order).toContain("<h3>Delivery</h3>");
+    expect(order).toContain("Picks it up");
+    expect(order).not.toContain("Lo pasa a traer");
+  });
+
+  it("offers the photo field and the Spanish wording on a real store's form", async () => {
+    const { h } = anotarHarness();
+    const { cookie } = await session(h, "owner");
+    const page = await (await send(h, "/console/anotar", { cookie })).text();
+    expect(page).toContain("Escribí lo que pasó o sacale una foto.");
+    expect(page).toContain('placeholder="Vendí tres refrescos a L 20 cada uno"');
+    expect(page).toContain('name="foto"');
+    expect(page).toContain('href="/console/facturas/nueva"');
   });
 });
 
@@ -195,7 +221,7 @@ describe("Anotar: one store's session never reaches another store's media", () =
       { cookie: mine.cookie, filename: `../../stores/${other.businessId}/x.jpg` },
     );
     expect(response.status).toBe(200);
-    expect(await response.text()).toContain("Producto nuevo: Aceite Mazola 1 L");
+    expect(await response.text()).toContain("Producto nuevo: <span>Aceite Mazola 1 L</span>");
     const keys = await objectsUnder(mine.store.businessId);
     expect(keys).toHaveLength(1);
     expect(keys[0]).toMatch(new RegExp(`^stores/${mine.store.businessId}/console/[0-9a-f]{64}$`));
@@ -210,7 +236,10 @@ describe("Anotar: failures", () => {
     const { cookie, csrf } = await session(h);
     const response = await post(h, { csrf, texto: SALE_TEXT }, { cookie });
     expect(response.status).toBe(503);
-    expect(await response.text()).toContain("No pude leerlo ahorita. Probá otra vez en un rato.");
+    const page = await response.text();
+    expect(page).toContain("No pude leerlo ahorita. Probá otra vez en un rato.");
+    // What the member typed is still in the box, ready to try again.
+    expect(page).toContain(`>${SALE_TEXT}</textarea>`);
     expect(h.log.fields("console_reader.failed")).toHaveLength(1);
     expect(h.log.lines.join("\n")).not.toContain("refrescos");
   });

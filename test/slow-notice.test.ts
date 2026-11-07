@@ -15,7 +15,7 @@ const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const ANSWER = "Respuesta de prueba.";
 // No time promise: nobody knows when the answer goes out.
-const NOTICE = "Recibimos tu mensaje, lo estamos revisando.";
+const NOTICE = "Ya recibí tu mensaje, lo estoy revisando.";
 
 class RecordingPendientes implements Pendientes {
   items: Array<{ tenant: Tenant; item: PendienteItem | SlowReplyPendiente }> = [];

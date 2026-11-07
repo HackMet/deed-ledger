@@ -5,10 +5,14 @@
  * "Probar como cliente" sits here too, the first thing seen, once the store has a WhatsApp number.
  *
  * There is no "sold today" card: no read sums a day's confirmed sales from the records yet.
+ *
+ * A new demo store's history is written in the background for its first minute or so: until it is,
+ * the page says so and reloads itself every few seconds, instead of showing an empty day.
  */
 import type { Hono } from "hono";
 import { html } from "hono/html";
 import { formatLempiras } from "../../../domain/contract/numbers";
+import { isDemoBusiness } from "../../../domain/demo";
 import type { OrderView, PreparationCard } from "../../../domain/contract/outcomes";
 import { type ConsoleEnv, memberContext } from "./auth";
 import { INICIO_PATH, PENDIENTES_PATH, readPendientes, shell } from "./layout";
@@ -20,6 +24,10 @@ const PEDIDOS_PATH = "/console/preparacion";
 const STORE_OFFSET_MS = -6 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const PACKING = new Set<OrderView["state"]>(["confirmado", "preparando"]);
+/** How often the page reloads while a demo store's history is still loading. */
+export const HISTORY_REFRESH_S = 4;
+export const HISTORY_LOADING = "Estamos cargando unos días de pedidos de ejemplo. Esta página se actualiza sola.";
+const HISTORY_ARRIVING = "Los pedidos de ejemplo van llegando.";
 
 const WEEKDAYS = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
 const MONTHS = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
@@ -30,10 +38,10 @@ export function storeDate(nowMs: number): string {
   return `${WEEKDAYS[local.getUTCDay()]}, ${local.getUTCDate()} de ${MONTHS[local.getUTCMonth()]}`;
 }
 
-/** "Buen día, Johan." by the store's clock; without a name, the greeting alone. */
+/** "Buenos días, Johan." by the store's clock; without a name, the greeting alone. */
 export function greeting(nowMs: number, displayName: string | null): string {
   const hour = new Date(nowMs + STORE_OFFSET_MS).getUTCHours();
-  const hello = hour < 12 ? "Buen día" : hour < 18 ? "Buenas tardes" : "Buenas noches";
+  const hello = hour < 12 ? "Buenos días" : hour < 18 ? "Buenas tardes" : "Buenas noches";
   const first = displayName?.trim().split(/\s+/u)[0] ?? "";
   return first === "" ? `${hello}.` : `${hello}, ${first}.`;
 }
@@ -46,10 +54,12 @@ export function inicioScreen(app: Hono<ConsoleEnv>) {
     const context = memberContext(c);
     const engine = c.get("runtime").engine;
     const isOwner = member.role === "owner";
-    const [cards, open, numbers] = await Promise.all([
+    const history = c.get("runtime").demoHistory;
+    const [cards, open, numbers, loading] = await Promise.all([
       engine === null ? Promise.resolve(null) : engine.preparationList(context),
       isOwner ? readPendientes(c) : Promise.resolve(null),
       c.get("runtime").deps.tenancy.displayNumbersOf({ businessId: member.businessId }),
+      history === null || !isDemoBusiness(member.businessId) ? Promise.resolve(false) : history.loading(member.businessId).catch(() => false),
     ]);
     c.header("Cache-Control", "no-store");
     return c.html(
@@ -59,10 +69,11 @@ export function inicioScreen(app: Hono<ConsoleEnv>) {
         kicker: storeDate(context.nowMs),
         subtitle: "Esto es lo que necesita tu tienda hoy.",
         path: INICIO_PATH,
+        ...(loading ? { notice: HISTORY_LOADING, refreshSeconds: HISTORY_REFRESH_S } : {}),
         style: STYLE + TRY_STYLE,
         body: html`<p class="lead-action"><a class="button gold" href="/console/anotar">Anotar algo</a></p>
 ${tryCard(numbers)}<section class="stats" aria-label="Hoy">${stats(cards, isOwner ? open : null)}</section>
-${cards === null ? html`<p class="empty">La lista de pedidos no está lista todavía.</p>` : todayList(cards, context.nowMs)}`,
+${cards === null ? html`<p class="empty">La lista de pedidos no está lista todavía.</p>` : todayList(cards, context.nowMs, loading)}`,
       }),
     );
   });
@@ -81,10 +92,10 @@ function stat(label: string, value: number, note: string, href: string, tone: st
 }
 
 /** The orders on the preparation list that were confirmed today, oldest first, as Pedidos lists them. */
-function todayList(cards: readonly PreparationCard[], nowMs: number) {
+function todayList(cards: readonly PreparationCard[], nowMs: number, loading: boolean) {
   const today = cards.filter((card) => storeDay(card.confirmedAtMs) === storeDay(nowMs));
   return html`<section class="card today"><div class="card-head"><h2>Los pedidos de hoy</h2><a class="link" href="${PEDIDOS_PATH}">Ver todos →</a></div>
-${today.length === 0 ? html`<p class="empty">Hoy todavía no hay pedidos.</p>` : html`<ul>${today.map((card) => todayRow(card, nowMs))}</ul>`}</section>`;
+${today.length === 0 ? html`<p class="empty">${loading ? HISTORY_ARRIVING : "Hoy todavía no hay pedidos."}</p>` : html`<ul>${today.map((card) => todayRow(card, nowMs))}</ul>`}</section>`;
 }
 
 function todayRow(card: PreparationCard, nowMs: number) {

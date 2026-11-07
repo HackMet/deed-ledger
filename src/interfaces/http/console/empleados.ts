@@ -6,12 +6,14 @@
  * store, and only staff can be changed here: owners are managed with `npm run admin:invite`, so an
  * owner can't lock themselves out from the console.
  */
-import type { Context, Hono } from "hono";
+import type { Context, Hono, MiddlewareHandler } from "hono";
 import { html } from "hono/html";
 import type { MemberSummary } from "../../../application/ports";
 import { INVITE_TTL_MS } from "../../../domain/console-auth";
+import { isDemoBusiness } from "../../../domain/demo";
 import { hashToken, newToken } from "../../../infrastructure/tokens";
 import { type ConsoleEnv, requireOwner } from "./auth";
+import { demoRefusal } from "./demo-walls";
 import { csrfField, shell } from "./layout";
 
 const PATH = "/console/empleados";
@@ -28,7 +30,13 @@ const NOTICES = {
 } as const;
 type NoticeKey = keyof typeof NOTICES;
 
+/** A demo store has no staff (D-64): refused here too, whatever path reached the screen. */
+const notInDemo: MiddlewareHandler<ConsoleEnv> = async (c, next) =>
+  isDemoBusiness(c.get("member").businessId) ? demoRefusal(c, "staff") : next();
+
 export function empleadosScreen(app: Hono<ConsoleEnv>) {
+  app.use("/empleados", notInDemo);
+  app.use("/empleados/*", notInDemo);
   app.get("/empleados", requireOwner, async (c) => {
     const members = await c.get("runtime").deps.consoleAuth.listMembers(c.get("member"));
     const notice = c.req.query("aviso");

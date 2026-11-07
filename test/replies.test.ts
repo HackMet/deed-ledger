@@ -168,7 +168,7 @@ describe("templates", () => {
         "• 2 Azúcar 1 lb · L 60",
         "• 3 Jabón Xtra · L 105",
         "",
-        "🏪 Lo recogés en la tienda.",
+        "🏪 Lo pasás a traer a la tienda.",
         "💵 Total: L 315. Pagás cuando lo recogés.",
         "",
         "¿Te lo preparo así?",
@@ -387,14 +387,14 @@ describe("templates", () => {
 describe("notices", () => {
   it("says listo with the total and its claims, as the contract fixture expects", () => {
     const reply = renderNotice(readyNotice.notice);
-    expect(reply.body).toBe("¡Tu pedido ya está listo! 🙌 Total: L 345. Ya podés pasar por él.");
+    expect(reply.body).toBe("¡Tu pedido ya está listo! 🙌 Total: L 345. Ya podés pasar a traerlo.");
     expect(flattenClaims(reply.claims)).toEqual(readyClaims);
   });
 
   it("names what's missing when it's ready without a line", () => {
     const order: OrderView = { ...soldOutLine1, state: "listo", total: 28500 };
     expect(renderNotice({ type: "order_ready", order }).body).toBe(
-      "¡Tu pedido ya está listo! 🙌 Total: L 285, sin Aceite Clover 1 L. Ya podés pasar por él.",
+      "¡Tu pedido ya está listo! 🙌 Total: L 285, sin Aceite Clover 1 L. Ya podés pasar a traerlo.",
     );
   });
 

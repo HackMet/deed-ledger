@@ -30,7 +30,7 @@ const NOTICES = {
   respondido: "Listo, le mandamos tu respuesta.",
   ventana: "Tu respuesta queda lista, pero WhatsApp no deja mandarla hasta que el cliente vuelva a escribir. Llamale si es urgente.",
   vacio: "Escribí la respuesta antes de tocar Responder.",
-  largo: `La respuesta es muy larga: máximo ${OWNER_REPLY_MAX_CHARS} letras.`,
+  largo: `La respuesta es muy larga: máximo ${OWNER_REPLY_MAX_CHARS} caracteres.`,
   nombre_si: "Listo. La próxima vez el asistente lo reconoce.",
   nombre_no: "Listo. El asistente no va a usar ese nombre.",
 } as const;
@@ -144,7 +144,7 @@ ${item.said == null ? "" : html`<blockquote class="said">«${item.said}»</block
 ${answerable(item) ? html`<form method="post" action="${PATH}/responder" class="answer">${csrfField(csrf)}<input type="hidden" name="pendiente" value="${item.id}">
 <label>Tu respuesta <small>(le llega por WhatsApp con tu nombre)</small><textarea name="respuesta" rows="2" maxlength="${OWNER_REPLY_MAX_CHARS}" placeholder="Sí hay, a L 65"></textarea></label>
 <button class="primary">Responder</button></form>` : ""}
-<form method="post" action="${PATH}/listo">${csrfField(csrf)}<input type="hidden" name="pendiente" value="${item.id}"><button>Listo</button></form>
+<form method="post" action="${PATH}/listo">${csrfField(csrf)}<input type="hidden" name="pendiente" value="${item.id}"><button>Resuelto</button></form>
 </article>`;
 }
 

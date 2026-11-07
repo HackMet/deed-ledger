@@ -38,7 +38,7 @@ export const LATE_AFTER_MINUTES = 30;
 /** What a tap's result tells the person who tapped, by key in the redirect. */
 const NOTICES = {
   cambio: "Este pedido cambió. Revisá la versión nueva.",
-  estado: "Ese botón ya no aplica. El pedido ya está al día.",
+  estado: "Ese botón ya no vale. El pedido ya está al día.",
   permiso: "Eso lo confirma el dueño.",
   falta: "Ese pedido ya no está en la lista.",
   guardar: "No se pudo guardar. Revisá el pedido y tocá otra vez.",
@@ -91,7 +91,7 @@ export function preparacionScreen(app: Hono<ConsoleEnv>) {
     return c.html(
       shell(c, {
         title: `${orderLabel(card.order)}${card.customerName ?? "Cliente sin nombre"}`,
-        subtitle: `Versión ${card.order.version} · ${fulfillmentKind(card.order)}`,
+        subtitle: fulfillmentKind(card.order),
         back: PATH,
         path: orderPath(card.order.orderId),
         tab: PATH,
@@ -205,10 +205,16 @@ function listCard(card: PreparationCard, nowMs: number) {
   const { order } = card;
   const chip = chipFor(card, nowMs);
   const count = order.lines.length;
-  const when = `${card.changedLineIds.length > 0 ? "cambió" : "confirmado"} ${formatStoreTime(card.confirmedAtMs, nowMs)}`;
+  const changedAt = card.changedLineIds.length > 0 ? changeTime(card) : undefined;
+  const when =
+    changedAt === undefined
+      ? `confirmado ${formatStoreTime(card.confirmedAtMs, nowMs)}`
+      : changedAt === null
+        ? "cambió"
+        : `cambió ${formatStoreTime(changedAt, nowMs)}`;
   return html`<a class="card order${PACKING.has(order.state) ? "" : " packed"}" id="${order.orderId}" href="${orderPath(order.orderId)}">
 <span class="row"><strong class="name">${orderLabel(order)}${card.customerName ?? "Cliente sin nombre"}</strong><span class="${chip.tone === "" ? "chip" : `chip ${chip.tone}`}">${chip.label}</span></span>
-<span class="muted">${count === 1 ? "1 producto" : `${count} productos`} · ${fulfillmentLine(order)} · <span class="when">${when}</span></span>
+<span class="muted">${count === 1 ? "1 producto" : `${count} productos`} · ${fulfillmentLine(order)}<span class="sep"> · </span><span class="when">${when}</span></span>
 <span class="items">${order.lines.map((line) => html`<span>${line.quantity ?? "¿cuántos?"} × ${line.productName ?? `"${line.text}"`}</span>`)}</span>
 </a>`;
 }
@@ -218,8 +224,12 @@ export function orderLabel(order: OrderView): string {
   return order.code === undefined ? "" : `#${order.code} · `;
 }
 
-/** The one thing to notice about an order: ready, changed by the customer, waiting too long, or its state. */
+/**
+ * The one thing to notice about an order: a customer's change still waiting for an answer (it must be
+ * answered before Listo, after which it can only be declined), ready, changed, waiting too long, or its state.
+ */
 export function chipFor(card: PreparationCard, nowMs: number): { readonly label: string; readonly tone: string } {
+  if (waitingChange(card.order)) return { label: "Cambio sin responder", tone: "chg" };
   if (!PACKING.has(card.order.state)) return { label: "Listo", tone: "ok" };
   if (card.changedLineIds.length > 0) return { label: "Cambió", tone: "chg" };
   const waited = Math.floor((nowMs - card.confirmedAtMs) / 60_000);
@@ -248,22 +258,52 @@ function orderPage(card: PreparationCard, nowMs: number, csrf: string) {
   const { order } = card;
   const packing = PACKING.has(order.state);
   const changed = new Set(card.changedLineIds);
-  return html`${changed.size === 0 ? "" : html`<p class="notice changed-note">${changeNote(card, changed.size, nowMs)}</p>`}
+  return html`${waitingNote(order)}${changed.size === 0 ? "" : html`<p class="notice changed-note">${changeNote(card, changed.size, nowMs)}</p>`}
 ${order.fulfillment?.mode === "delivery" ? html`<p class="where">${deliveryText(order.fulfillment)}</p>` : ""}
 <ul class="card lines">${order.lines.map((line) => lineItem(order, line, packing, changed.has(line.lineId), csrf))}</ul>
 <p class="total">${order.total === null ? "Total: falta precio" : `Total ${formatLempiras(order.total)}`}</p>
 <div class="actions">${orderActions(card, csrf)}</div>`;
 }
 
+/** A customer's change the store hasn't answered yet (K12); only the real engine tracks them. */
+const waitingChange = (order: OrderView): boolean => order.openChangeRequest != null;
+
+/**
+ * When the current version's change happened. With the real engine a change after confirming becomes a
+ * version when it is approved, so the approval's time is the change's; an engine that tracks no reviews
+ * (the pretend one) confirms each version itself, so the card's confirmation time is. Null when the
+ * latest review is a decline: the time of the change on screen isn't known from the card.
+ */
+function changeTime(card: PreparationCard): number | null {
+  const review = card.order.lastReview ?? null;
+  if (review === null) return card.confirmedAtMs;
+  return review.decision === "approve" ? review.atMs : null;
+}
+
 /** "Marta Reyes cambió el pedido a las 8:05 a. m. Revisá la línea marcada." */
 function changeNote(card: PreparationCard, lines: number, nowMs: number): string {
-  const time = formatStoreTime(card.confirmedAtMs, nowMs);
+  const changedAt = changeTime(card);
+  const time = changedAt === null ? null : formatStoreTime(changedAt, nowMs);
   // Today it reads "a las 8:05 a. m."; an older change already says its day ("ayer 8:05 p. m.").
-  const at = /^\d/.test(time) ? `${time.startsWith("1:") ? "a la" : "a las"} ${time}` : time;
+  const at = time === null ? "" : /^\d/.test(time) ? ` ${time.startsWith("1:") ? "a la" : "a las"} ${time}` : ` ${time}`;
   const who = card.customerName === null ? "El pedido cambió" : `${card.customerName} cambió el pedido`;
   // The time already ends in a period ("p. m.").
-  const said = `${who} ${at}`;
+  const said = `${who}${at}`;
   return `${said.endsWith(".") ? said : `${said}.`} Revisá ${lines === 1 ? "la línea marcada" : "las líneas marcadas"}.`;
+}
+
+/**
+ * A customer's change still waiting (K12), above the lines: it is answered on the order's history page.
+ * While packing it can still be approved, so it is reviewed before Listo; from Listo on it can only be
+ * declined (the change window, D-43), and the note says so. Each sentence is its own text node, so the
+ * console's English view translates it whole.
+ */
+function waitingNote(order: OrderView) {
+  if (!waitingChange(order)) return "";
+  const what = PACKING.has(order.state)
+    ? "Revisalo antes de marcar Listo: después ya no se puede aprobar."
+    : "El pedido ya está listo, así que ya no se puede aprobar. Rechazalo con un motivo y le avisamos al cliente.";
+  return html`<p class="notice waiting-note"><strong>El cliente pidió un cambio que espera respuesta.</strong> <span>${what}</span> <a href="/console/pedidos/${encodeURIComponent(order.orderId)}">Ver el cambio</a></p>`;
 }
 
 function lineItem(order: OrderView, line: OrderLineView, packing: boolean, changed: boolean, csrf: string) {
