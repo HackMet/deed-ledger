@@ -16,7 +16,7 @@ import type { StoreHours } from "../domain/contract/outcomes";
 import {
   DEMO_BUSINESS_PREFIX,
   DEMO_STORE_TTL_MS,
-  type DemoLimit,
+  type DemoLimitReason,
   demoLimitReached,
   newDemoPhone,
   newDemoPhoneNumberId,
@@ -40,9 +40,18 @@ export interface NewDemoStore {
   readonly expiresAtMs: number;
 }
 
+export interface DemoStoreCounts {
+  /** Stores this visitor opened in the last hour. */
+  readonly visitor: number;
+  /** Stores everyone opened in the last hour. */
+  readonly everyone: number;
+  /** Stores open now (not yet expired). */
+  readonly open: number;
+}
+
 export interface DemoStoreWriter {
-  /** How many demo stores this visitor, and everyone, opened in the hour before `nowMs`. */
-  recentCounts(visitorHash: string, nowMs: number): Promise<{ readonly visitor: number; readonly everyone: number; readonly ever: number }>;
+  /** How many demo stores this visitor, and everyone, opened in the hour before `nowMs`, and how many are open. */
+  recentCounts(visitorHash: string, nowMs: number): Promise<DemoStoreCounts>;
   /** Throws DemoLimitError when a limit no longer holds as the store is written. */
   create(store: NewDemoStore): Promise<void>;
 }
@@ -133,12 +142,12 @@ export interface DemoStoreDeps {
 
 export type OpenDemoResult =
   | { readonly type: "opened"; readonly businessId: string; readonly sessionToken: string; readonly expiresAtMs: number }
-  | { readonly type: "limited"; readonly limit: Exclude<DemoLimit, null> };
+  | { readonly type: "limited"; readonly limit: DemoLimitReason };
 
 export async function openDemoStore(deps: DemoStoreDeps, visitorHash: string): Promise<OpenDemoResult> {
   const nowMs = deps.clock.now();
   const counts = await deps.stores.recentCounts(visitorHash, nowMs);
-  const limit = demoLimitReached(counts.visitor, counts.everyone, counts.ever);
+  const limit = demoLimitReached(counts.visitor, counts.everyone, counts.open);
   if (limit !== null) {
     deps.log.info("demo_store_limited", { reason: limit });
     return { type: "limited", limit };
@@ -168,7 +177,7 @@ export async function openDemoStore(deps: DemoStoreDeps, visitorHash: string): P
   } catch (error) {
     if (!(error instanceof DemoLimitError)) throw error;
     const now = await deps.stores.recentCounts(visitorHash, nowMs);
-    const raced = demoLimitReached(now.visitor, now.everyone, now.ever) ?? "everyone";
+    const raced = demoLimitReached(now.visitor, now.everyone, now.open) ?? "everyone";
     deps.log.info("demo_store_limited", { reason: raced });
     return { type: "limited", limit: raced };
   }

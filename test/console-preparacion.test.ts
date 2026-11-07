@@ -99,9 +99,9 @@ describe("the pretend engine follows the contract", () => {
 const cardsOf = (page: string) =>
   [
     ...page.matchAll(
-      /<a class="card order[^"]*" id="[^"]*" href="([^"]+)">\s*<span class="row"><strong class="name">([^<]*)<\/strong><span class="chip[^"]*">([^<]*)<\/span><\/span>\s*<span class="muted">([^<]*)<span class="when">([^<]*)<\/span><\/span>/g,
+      /<a class="card order[^"]*" id="[^"]*" href="([^"]+)">\s*<span class="row"><strong class="name">([^<]*)<\/strong><span class="chip[^"]*">([^<]*)<\/span><\/span>\s*<span class="muted">([^<]*)<span class="sep">([^<]*)<\/span><span class="when">([^<]*)<\/span><\/span>/g,
     ),
-  ].map(([, href = "", name, chip, start, when]) => ({ href, name, chip, line: `${start}${when}` }));
+  ].map(([, href = "", name, chip, start, sep, when]) => ({ href, name, chip, line: `${start}${sep}${when}` }));
 
 /** One order line on the order's page, by product name. */
 const lineOf = (page: string, name: string) => [...page.matchAll(/<li class="line[^"]*">[\s\S]*?<\/li>/g)].map(([li]) => li).find((li) => li.includes(name));
@@ -210,7 +210,8 @@ describe("the dev console's preparation list", () => {
     const page = await response.text();
     expect(page).toContain('<a class="back" href="/console/preparacion" aria-label="Volver">←</a>');
     expect(page).toContain("<h1>Carla</h1>");
-    expect(page).toContain('<p class="sub">Versión 2 · Recoge en tienda</p>');
+    // O4: the packer sees how it leaves, not the engine's version count.
+    expect(page).toContain('<p class="sub">Recoge en tienda</p>');
     expect(page).toContain("Carla cambió el pedido a las 7:35 a. m. Revisá la línea marcada.");
     expect(page).toContain(`Total ${formatLempiras(34500)}`);
     expect(page).toContain("Al marcar Listo se le avisa a Carla con el total.");
@@ -237,7 +238,7 @@ describe("the dev console's preparation list", () => {
   it("shows a new order with Empezar, a delivery's place, and no total promised when a price is missing", async () => {
     const { h } = devConsole();
     const page = await (await h.get("/console/preparacion/demo-order-2")).text();
-    expect(page).toContain('<p class="sub">Versión 1 · Entrega a domicilio</p>');
+    expect(page).toContain('<p class="sub">Entrega a domicilio</p>');
     expect(page).toContain("Entrega: frente a la iglesia, casa verde");
     expect(page).toContain("Total: falta precio");
     expect(page).toContain('<button class="wide">Empezar a preparar</button>');
@@ -302,7 +303,7 @@ describe("the dev console's preparation list", () => {
     expect(staleListo.headers.get("location")).toBe("/console/preparacion/demo-order-3?aviso=cambio");
     const page = await (await h.get("/console/preparacion/demo-order-3?aviso=cambio")).text();
     expect(page).toContain("Este pedido cambió. Revisá la versión nueva.");
-    expect(page).toContain("Versión 1");
+    expect(page).toContain("Empezar a preparar");
     expect((await engine.preparationList(devStore())).find((c) => c.order.orderId === "demo-order-3")?.order.state).toBe("confirmado");
 
     const staleLine = await post(h, { type: "mark_line", orderId: "demo-order-3", version: "9", lineId: "d3-1", mark: "listo", operationKey: "k-3" });

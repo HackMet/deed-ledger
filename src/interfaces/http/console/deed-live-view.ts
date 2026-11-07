@@ -20,6 +20,14 @@ const STATE_WORDS: Record<NodeState, string> = { en_duda: "EN DUDA", hecho: "HEC
 const STATE_CLASS: Record<NodeState, string> = { en_duda: "lv-duda", hecho: "lv-hecho", cerrado: "lv-cerrado", bloqueado: "lv-bloqueado" };
 const CONFIRMED: Record<Confirmer, string> = { tienda: "Lo confirmó: tienda", cliente: "Lo confirmó: cliente", whatsapp: "Lo confirmó: WhatsApp (entregado)" };
 
+/** What backs a fact, in plain words: the ledger's evidence kinds stay in the code. */
+const EVIDENCE_WORDS: Record<string, string> = {
+  inbound_message: "mensaje del cliente",
+  media_asset: "foto",
+  member: "toque del personal",
+  confirmation: "confirmación",
+};
+
 const short = (text: string) => (text.length > TITLE_MAX ? `${text.slice(0, TITLE_MAX - 1)}…` : text);
 
 export const LIVE_STYLE = `
@@ -60,7 +68,7 @@ export const LIVE_STYLE = `
 function node(view: DeedNodeView, x: number, panels: string) {
   const word = STATE_WORDS[view.state];
   const locked = view.state === "bloqueado";
-  const tip = `${view.title} · ${view.evidenceKinds.length === 0 ? "sin respaldo" : view.evidenceKinds.join(", ")} · ${formatTime(view.recordedAtMs)}`;
+  const tip = `${view.title} · ${view.evidenceKinds.length === 0 ? "sin respaldo" : view.evidenceKinds.map((kind) => EVIDENCE_WORDS[kind] ?? "otro respaldo").join(", ")} · ${formatTime(view.recordedAtMs)}`;
   const wordY = locked ? CY + 13 : CY + 3;
   const adjust = word.length > 7 ? html` textLength="50" lengthAdjust="spacingAndGlyphs"` : "";
   return html`<a href="${panels}#f-${view.factId}" class="${STATE_CLASS[view.state]}"><title>${tip}</title>

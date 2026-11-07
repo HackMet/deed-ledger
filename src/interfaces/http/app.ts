@@ -13,7 +13,7 @@ import { parseWebhookPayload } from "../../integrations/whatsapp/payload";
 import { verifyTokenMatches, verifyWebhookSignature } from "../../integrations/whatsapp/signature";
 
 /** Meta's webhook payloads are up to 3 MB; anything bigger isn't from Meta. */
-const MAX_WEBHOOK_BYTES = 4 * 1024 * 1024;
+export const MAX_WEBHOOK_BYTES = 4 * 1024 * 1024;
 
 export function createHttpApp(makeRuntime: (env: Env) => Runtime) {
   const app = new Hono<HttpEnv>();
@@ -21,8 +21,9 @@ export function createHttpApp(makeRuntime: (env: Env) => Runtime) {
   app.use("*", async (c, next) => {
     c.set("runtime", makeRuntime(c.env));
     await next();
-    // Only this site may frame its pages (the demo frames the console and its phone).
-    c.header("Content-Security-Policy", "frame-ancestors 'self'");
+    // Only this site may frame its pages (the demo frames the console and its phone). A page that set
+    // a stricter policy keeps it: a real store's console allows no frame at all (demo-walls.ts).
+    if (!c.res.headers.has("Content-Security-Policy")) c.header("Content-Security-Policy", "frame-ancestors 'self'");
   });
 
   app.get("/health", (c) => c.text("ok"));
@@ -48,8 +49,9 @@ export function createHttpApp(makeRuntime: (env: Env) => Runtime) {
 
     const declaredLength = Number(c.req.header("content-length") ?? "0");
     if (declaredLength > MAX_WEBHOOK_BYTES) return c.text("Payload too large", 413);
-    const raw = await c.req.arrayBuffer();
-    if (raw.byteLength > MAX_WEBHOOK_BYTES) return c.text("Payload too large", 413);
+    // Read with a running count: a body without Content-Length is never buffered past the limit.
+    const raw = await readAtMost(c.req.raw.body, MAX_WEBHOOK_BYTES);
+    if (raw === null) return c.text("Payload too large", 413);
 
     // The signature covers the exact bytes received, so it is checked before anything is parsed.
     if (!(await verifyWebhookSignature(config.whatsappAppSecret, raw, c.req.header("x-hub-signature-256")))) {
@@ -106,6 +108,34 @@ export function createHttpApp(makeRuntime: (env: Env) => Runtime) {
   });
 
   return app;
+}
+
+/**
+ * The whole body, or null as soon as it passes `maxBytes` (the rest is cancelled, never read).
+ * No body reads as empty.
+ */
+export async function readAtMost(body: ReadableStream<Uint8Array> | null, maxBytes: number): Promise<ArrayBuffer | null> {
+  if (body === null) return new ArrayBuffer(0);
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes.buffer;
 }
 
 /**

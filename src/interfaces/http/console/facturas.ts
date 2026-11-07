@@ -9,19 +9,20 @@ import { type Context, type Hono } from "hono";
 import { html } from "hono/html";
 import type { ConsoleReceiptDraft } from "../../../application/receipts";
 import { formatLempiras } from "../../../domain/contract/numbers";
+import { isDemoBusiness } from "../../../domain/demo";
 import type { CatalogEntry, DraftLine, LineEdit } from "../../../domain/receipt-draft";
 import { type ConsoleEnv, INVOICE_UPLOAD_PATH, memberContext, requireOwner } from "./auth";
 import { shell } from "./layout";
 
 const NOTICES = {
-  tamano: "La foto pesa más de 10 MB. Mandá una más liviana.",
+  tamano: "La foto pesa más de 10 MB. Mandá una que pese menos.",
   vacia: "No llegó ninguna foto. Elegí la foto de la factura.",
   tipo: "Mandá una foto JPG, PNG o WEBP de la factura.",
   pdf: "Todavía no leo PDF. Mandá una foto o una captura de la factura.",
   ilegible: "No pude leer esa factura. Probá con otra foto, más cerca y con buena luz.",
   repetida: "Esa factura ya la habías subido. Aquí está.",
   guardado: "Cambios guardados. Revisalos y aprobá la factura.",
-  datos: "Revisá la línea marcada: nombre (hasta 120 letras), cantidad como 12 o 1.5, costo como 15.50 o vacío.",
+  datos: "Revisá la línea marcada: nombre (hasta 120 caracteres), cantidad como 12 o 1.5, costo como 15.50 o vacío.",
   lineas: "La factura necesita al menos una línea.",
   cambio: "La factura cambió mientras tanto. Revisá la versión nueva antes de aprobar.",
   cantidad: "Falta la cantidad en una línea. Escribila y guardá los cambios.",
@@ -30,7 +31,7 @@ const NOTICES = {
   yaaprobada: "Esa factura ya quedó registrada. No la repetí.",
   rechazada: "Factura rechazada.",
   yarechazada: "Esa factura ya estaba rechazada.",
-  motivo: "Escribí el motivo del rechazo (hasta 200 letras).",
+  motivo: "Escribí el motivo del rechazo (hasta 200 caracteres).",
   estado: "Esa factura ya no se puede cambiar.",
   anulada: "Factura anulada. El inventario volvió a como estaba antes de ella.",
   yaanulada: "Esa factura ya estaba anulada. No hice ningún cambio.",
@@ -96,7 +97,7 @@ export function facturasScreen(app: Hono<ConsoleEnv>) {
     const id = draftId(c);
     const member = memberContext(c);
     const draft = id === null ? null : await c.get("runtime").receipts.get(member, id);
-    if (draft === null) return c.html(await listPage(c, "Esa factura no está en la lista.", [], member.nowMs), 404);
+    if (draft === null) return c.html(notFoundPage(c), 404);
     const catalog = await c.get("runtime").receipts.catalog(member);
     return c.html(await reviewPage(c, noticeOf(c), draft, catalog, member.nowMs, c.req.query("linea")));
   });
@@ -173,6 +174,9 @@ export function facturasScreen(app: Hono<ConsoleEnv>) {
 }
 
 const LIST_PATH = "/console/facturas";
+export const INVOICE_LIST_PATH = LIST_PATH;
+/** A demo store takes no photos (D-64); its seeded invoices can still be reviewed. */
+const DEMO_NO_UPLOADS = "En la demostración no se suben fotos de facturas. Abrí una de la lista para revisarla.";
 
 // ---------------------------------------------------------------------------------------------
 // Rendering. `html` escapes every interpolated string.
@@ -198,23 +202,33 @@ function statusOf(draft: ConsoleReceiptDraft, nowMs: number): string {
   return "Por revisar";
 }
 
+const isDemo = (c: Context<ConsoleEnv>) => isDemoBusiness(c.get("member").businessId);
+
 function listPage(c: Context<ConsoleEnv>, notice: string | null, drafts: readonly ConsoleReceiptDraft[], nowMs: number) {
   return page(
     c,
     "Facturas",
     notice,
-    html`<p><a class="button primary" href="${INVOICE_UPLOAD_PATH}">Subir factura</a></p>
+    html`${isDemo(c) ? html`<p class="meta">${DEMO_NO_UPLOADS}</p>` : html`<p><a class="button primary" href="${INVOICE_UPLOAD_PATH}">Subir factura</a></p>`}
 ${drafts.length === 0
   ? html`<p class="empty">Todavía no hay facturas.</p>`
   : html`<ul class="cards">${drafts.map(
       (draft) => html`<li><a href="/console/facturas/${draft.id}"><strong>${draft.body.supplier ?? "Proveedor sin nombre"}</strong>
-<span>${draft.body.lines.length} líneas · ${statusOf(draft, nowMs)}</span></a></li>`,
+<span><span>${draft.body.lines.length}</span> ${draft.body.lines.length === 1 ? "línea" : "líneas"} · ${statusOf(draft, nowMs)}</span></a></li>`,
     )}</ul>`}`,
   );
 }
 
+/** An invoice ID that isn't this store's (or isn't anymore): only that, and the way back. */
+function notFoundPage(c: Context<ConsoleEnv>) {
+  return page(c, "Revisar factura", "Esa factura no está en la lista.", html`<p><a class="button" href="${LIST_PATH}">Ver todas las facturas</a></p>`);
+}
+
 function uploadPage(c: Context<ConsoleEnv>, notice: string | null) {
   const csrf = c.get("csrf");
+  if (isDemo(c)) {
+    return page(c, "Subir factura", notice, html`<p class="meta">${DEMO_NO_UPLOADS}</p><p><a class="button" href="${LIST_PATH}">Ver las facturas</a></p>`);
+  }
   return page(
     c,
     "Subir factura",
@@ -246,7 +260,7 @@ function reviewPage(c: Context<ConsoleEnv>, notice: string | null, draft: Consol
     html`<div class="review">
 <figure class="photo"><img src="/console/facturas/${draft.id}/imagen" alt="Foto de la factura"></figure>
 <section class="card">
-<p class="status">${status}${draft.declined === null ? "" : html`: ${draft.declined.reason}`}</p>
+<p class="status"><span>${status}</span>${draft.declined === null ? "" : html`: <span>${draft.declined.reason}</span>`}</p>
 ${open ? editForm(draft, catalog, csrf, badLine) : readOnly(draft, names)}
 ${open ? decisionForms(draft, csrf) : ""}
 ${draft.receipt !== null && !draft.receipt.cancelled
@@ -264,22 +278,22 @@ function matchText(line: DraftLine, names: ReadonlyMap<string, string>): string 
 function readOnly(draft: ConsoleReceiptDraft, names: ReadonlyMap<string, string>) {
   return html`<p><strong>${draft.body.supplier ?? "Proveedor sin nombre"}</strong>${draft.body.date === null ? "" : html` · ${draft.body.date}`}</p>
 <ul class="lines">${draft.body.lines.map(
-    (line) => html`<li>${quantityText(line.qtyMilli) || "?"} × ${line.name} · ${line.unitCostCentavos === null ? "sin costo" : `${formatLempiras(line.unitCostCentavos)} c/u`} · ${matchText(line, names)}</li>`,
+    (line) => html`<li>${quantityText(line.qtyMilli) || "?"} × ${line.name} · ${line.unitCostCentavos === null ? html`<span>sin costo</span>` : html`${formatLempiras(line.unitCostCentavos)} <span>c/u</span>`} · <span>${matchText(line, names)}</span></li>`,
   )}</ul>`;
 }
 
 function editForm(draft: ConsoleReceiptDraft, catalog: readonly CatalogEntry[], csrf: string, badLine: string | undefined) {
   return html`<form method="post" action="/console/facturas/${draft.id}/editar">
 <label>Proveedor<input name="proveedor" maxlength="120" value="${draft.body.supplier ?? ""}"></label>
-${draft.body.date === null ? "" : html`<p class="meta">Fecha: ${draft.body.date}</p>`}
+${draft.body.date === null ? "" : html`<p class="meta">Fecha: <span>${draft.body.date}</span></p>`}
 <input type="hidden" name="lineas" value="${draft.body.lines.length}">
 ${draft.body.lines.map(
-  (line, n) => html`<fieldset class="${badLine === String(n + 1) ? "bad" : ""}"><legend>Línea ${n + 1}${line.match === null ? html` <em>nuevo</em>` : ""}</legend>
+  (line, n) => html`<fieldset class="${badLine === String(n + 1) ? "bad" : ""}"><legend>Línea <span>${n + 1}</span>${line.match === null ? html` <em>nuevo</em>` : ""}</legend>
 <label>Producto en la factura<input name="nombre_${n}" maxlength="120" value="${line.name}" required></label>
-<div class="pair"><label>Cantidad${line.unit === null ? "" : ` (${line.unit})`}<input name="cantidad_${n}" inputmode="decimal" value="${quantityText(line.qtyMilli)}" placeholder="?"></label>
+<div class="pair"><label>Cantidad${line.unit === null ? "" : html` <span>(${line.unit})</span>`}<input name="cantidad_${n}" inputmode="decimal" value="${quantityText(line.qtyMilli)}" placeholder="?"></label>
 <label>Costo c/u (L)<input name="costo_${n}" inputmode="decimal" value="${costText(line.unitCostCentavos)}" placeholder="sin costo"></label></div>
 <label>Producto de la tienda<select name="producto_${n}">
-<option value="nuevo" ${line.match === null ? "selected" : ""}>Nuevo: crear "${line.name}"</option>
+<option value="nuevo" ${line.match === null ? "selected" : ""}>Crear como producto nuevo</option>
 ${catalog.map((product) => html`<option value="${product.id}" ${line.match?.productId === product.id ? "selected" : ""}>${product.name}</option>`)}
 </select></label>
 <label class="check"><input type="checkbox" name="quitar_${n}"> Quitar esta línea</label>

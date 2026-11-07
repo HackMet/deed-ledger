@@ -187,7 +187,7 @@ describe("the top bar", () => {
     await setName("memberships", "Rosa", store.businessId, store.staffId);
     for (const [path, title, subtitle] of [
       ["/console/preparacion", "Pedidos", "Hoy · 3 por preparar"],
-      ["/console/preparacion/demo-order-1", "Carla", "Versión 2 · Recoge en tienda"],
+      ["/console/preparacion/demo-order-1", "Carla", "Recoge en tienda"],
       ["/console/anotar", "Anotar", "Te muestro lo que entendí. Todavía no se guarda nada."],
       ["/console/pendientes", "Pendientes", "Lo que solo vos decidís"],
       ["/console/mas", "Más", null],

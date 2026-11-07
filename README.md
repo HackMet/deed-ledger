@@ -51,7 +51,8 @@ Think of it like a receipt. A promise is just words. A receipt proves it happene
 ## See it in 60 seconds
 
 1. **[Open the demo](https://store-assistant.atiendeme.workers.dev/demo)** and click the button. You get your own made-up store, and a few days
-   of made-up orders fill in shortly.
+   of made-up orders fill in shortly. Each demo store takes up to 40 messages, and all demo stores share a US$5 daily
+   AI budget; if it runs out, try again tomorrow.
 2. **Be the customer.** On the phone on the left, tap **Text order**, then **Confirm**. Give any name.
 3. **Be the store.** On the right, open **Orders**, tap the order with the name you gave, then **Start preparing** and **Ready**.
 4. **Watch the customer's phone.** They hear "ready" only after that tap.
@@ -96,11 +97,9 @@ We'd rather tell you than have you find out:
 
 - **No store uses it every day yet.** The demo is made up.
 - **It's slow.** In earlier phone tests a text reply took 9 to 21 seconds, and a photo about 34. We want under 10.
-- **Older demo stores still show false alarms.** A bug made the proof screen flag "not backed by the records" on normal
-  orders. It's fixed for new stores, but the record is never rewritten, so stores opened before the fix keep those flags.
 - **The first step looks finished too early.** A new order shows as confirmed by the customer before they've confirmed it.
 - **It can't yet tell whether WhatsApp delivered a message.**
-- **Parts of the demo mix English and Spanish.**
+- **A few labels stay in Spanish in the English view** (confirmation dialogs, image descriptions).
 - **Supplier invoices aren't connected to the AI yet.**
 
 ## Who made this
@@ -154,7 +153,7 @@ and it's an audit log with good branding.
 
 | Check | Result | Command |
 |---|---|---|
-| Tests | 1920 passed, plus 9 under `node:test` (November 5) | `npm test` |
+| Tests | 1995 passed, plus 15 under `node:test` (November 6) | `npm test` |
 | Attacks that reach the engine | 9 attacks, 0 false facts admitted (November 5) | `node scripts/adversary.mjs` |
 | Scripted demo | 29 of 29 steps passed; re-check of 3 entries, 0 differ (November 5) | `./demo.sh` |
 | Scripted customer conversations | 28 of 31 finished, with no truth failure (November 4) | `npm run eval` with real models |

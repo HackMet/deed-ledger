@@ -19,11 +19,12 @@
     // With DEV_CONSOLE: the WhatsApp phone number ID of the simulator's store; the console acts as
     // its owner, so it shows the orders typed in `npm run chat`. Ignored without DEV_CONSOLE.
     "DEV_STORE_PHONE_NUMBER_ID": "",
-    // "1" turns on the pretend engine with its state in D1 (migration 0016), for a deployed demo until
-    // the real engine lands. The console still needs login. DEV_CONSOLE wins when both are set.
+    // "1" turns on the pretend engine with its state in D1 (migration 0016). It only takes effect when
+    // DEED_ENGINE isn't "1", so with the value below it does nothing. DEV_CONSOLE wins when both are set.
     "PRETEND_ENGINE": "",
-    // "1" runs the order engine on D1 (OrderEngine), with Angel's reader reading customers' messages. Off
-    // by default. It wins over PRETEND_ENGINE and DEV_CONSOLE.
+    // "1" runs the order engine on D1 (OrderEngine), with Angel's reader reading customers' messages. On
+    // here, so the deployed Worker runs it; it wins over PRETEND_ENGINE and DEV_CONSOLE. Tests turn it
+    // off (vitest.config.ts) unless a test turns it on.
     "DEED_ENGINE": "1",
     // "planner" lets the planner (a second Muse Spark call per burst) decide each conversation step
     // (D-45); "classic" (the default) keeps the engine's own questions. The simulator's --planner sets it.
@@ -85,15 +86,28 @@
     }
   ],
 
-  // The queue is a doorbell: a message only says "this conversation has work". D1 holds the work.
+  // The jobs queue is a doorbell: a message only says "this conversation has work". D1 holds the work.
+  // The demo-seed queue carries one piece of a new demo store's history per message (D-66). A piece
+  // takes up to ~600 D1 queries and an invocation may make 1,000, so each batch holds one piece, in
+  // an invocation of its own, never shared with doorbells; the queue runs several pieces at once.
+  // The seed queue must exist before a deploy: `npx wrangler queues create store-assistant-demo-seed`.
   "queues": {
-    "producers": [{ "binding": "JOBS", "queue": "store-assistant-jobs" }],
+    "producers": [
+      { "binding": "JOBS", "queue": "store-assistant-jobs" },
+      { "binding": "DEMO_SEED", "queue": "store-assistant-demo-seed" }
+    ],
     "consumers": [
       {
         "queue": "store-assistant-jobs",
         "max_batch_size": 10,
         "max_batch_timeout": 1,
         "max_retries": 5
+      },
+      {
+        "queue": "store-assistant-demo-seed",
+        "max_batch_size": 1,
+        "max_batch_timeout": 0,
+        "max_retries": 3
       }
     ]
   },

@@ -272,7 +272,7 @@ describe("K14: a supplier invoice photo becomes a reviewed draft", () => {
     expect(notice(await s.post(`/console/facturas/${id}/rechazar`, { revision: "1", motivo: "otra vez" }))).toBe("yarechazada");
     expect(notice(await s.post(`/console/facturas/${id}/aprobar`, { revision: "1" }))).toBe("estado");
     expect(await s.footprint()).toEqual({ facts: 1, movements: 0, balances: 0, products: 2 });
-    expect(await (await s.page(`/console/facturas/${id}`)).text()).toContain("Rechazada: No es de nuestra tienda");
+    expect(await (await s.page(`/console/facturas/${id}`)).text()).toContain("<span>Rechazada</span>: <span>No es de nuestra tienda</span>");
   });
 
   it("'anular factura' closes the receipt and restores its stock with compensating movements; a second tap changes nothing", async () => {
@@ -352,5 +352,37 @@ describe("K14: a supplier invoice photo becomes a reviewed draft", () => {
     expect(notice(await s.post(`/console/facturas/${id}/aprobar`, { revision: "1" }))).toBe("estado");
     expect(await other.footprint()).toMatchObject({ facts: 0, movements: 0 });
     expect((await other.draftRow(id))!.state).toBe("pending");
+  });
+  it("a missing invoice shows only that it isn't there and the way back, even when the store has invoices", async () => {
+    const s = await setup();
+    await s.upload(receiptFixtures.distribuidora);
+    const response = await s.page(`/console/facturas/inv_${"0".repeat(40)}`);
+    expect(response.status).toBe(404);
+    const page = await response.text();
+    expect(page).toContain("Esa factura no está en la lista.");
+    expect(page).toContain(`href="/console/facturas">Ver todas las facturas`);
+    expect(page).not.toContain("Todavía no hay facturas.");
+  });
+
+  it("shows the review page and the list in English, leaving the invoice's own words and every field as they were", async () => {
+    const s = await setup();
+    const id = await s.upload(receiptFixtures.distribuidora);
+    const spanish = await (await s.page(`/console/facturas/${id}`)).text();
+    const english = await (await send(s.h, `/console/facturas/${id}`, { headers: { cookie: `${s.owner}; consola_idioma=en` } })).text();
+    const fields = (page: string) => [...page.matchAll(/<(?:input|button|select|textarea|option)\b[^>]*>/g)].map(([tag]) => tag.replace(/ (?:placeholder|aria-label|title)="[^"]*"/g, ""));
+    expect(fields(english)).toEqual(fields(spanish));
+    for (const words of ["Review invoice", ">Supplier<", ">Line <span>1</span>", ">Quantity", "Store product", "Create as a new product", "Save changes", "Reason for declining", "Approve ✓", "Decline ✗", "To review"]) {
+      expect(english, words).toContain(words);
+    }
+    expect(english).toContain("Galletas Ejemplo");
+    for (const spanishOnly of ["Revisar factura", "Guardar cambios", "Motivo del rechazo", "Producto de la tienda"]) {
+      expect(english, spanishOnly).not.toContain(spanishOnly);
+    }
+    const list = await (await send(s.h, "/console/facturas", { headers: { cookie: `${s.owner}; consola_idioma=en` } })).text();
+    expect(list).toContain("Upload invoice");
+    expect(list).toMatch(/<span>3<\/span> lines · To review/);
+    const missing = await (await send(s.h, `/console/facturas/inv_${"0".repeat(40)}`, { headers: { cookie: `${s.owner}; consola_idioma=en` } })).text();
+    expect(missing).toContain("That invoice isn't on the list.");
+    expect(missing).toContain("See all invoices");
   });
 });

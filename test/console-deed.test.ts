@@ -549,10 +549,10 @@ describe("/console/deed/verificaciones: every check, newest first, for the store
     const cookie = await login(h, s, "staff");
     const body = await (await get(h, "/console/deed/verificaciones", cookie)).text();
     expect(body).toContain('id="contadores">Intentos rechazados 1<');
-    expect(body).toContain('id="afirmaciones">Afirmaciones verificadas 0, pasaron 0<');
+    expect(body).toContain('id="afirmaciones">Afirmaciones verificadas 0, confirmadas 0<');
     expect(body).toContain("✗");
     expect(body).toContain("Intentó marcar listo");
-    expect(body).toContain("ancestro cancelado");
+    expect(body).toContain("el pedido ya estaba cancelado");
     expect(body).not.toContain(foreign.orderId);
     expect(body).toContain(`href="/console/deed/${encodeURIComponent(orderId)}"`);
   });

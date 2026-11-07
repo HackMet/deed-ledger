@@ -22,13 +22,13 @@ or piped into `wrangler secret put`; never paste them into a file, a chat or a l
      - `openssl rand -hex 32 | npx wrangler secret put SENDER_HASH_SALT`
      - `openssl rand -hex 32 | npx wrangler secret put LINK_SIGNING_SECRET`
 4. **Apply the migrations:** `npx wrangler d1 migrations apply DB --remote`
-5. **Deploy** with the pretend engine on (until the real engine is ready) and login still required:
-   `npx wrangler deploy --var PRETEND_ENGINE:1`. Note the `https://store-assistant.<account>.workers.dev` URL it
+5. **Create the demo-seed queue** (once): `npx wrangler queues create store-assistant-demo-seed`.
+6. **Deploy** with login still required: `npx wrangler deploy`. Note the `https://store-assistant.<account>.workers.dev` URL it
    prints. Never pass `DEV_CONSOLE` to a deployed Worker: it turns login off.
-6. **Deploy again with the public URL**, so the first message links the privacy page:
-   `npx wrangler deploy --var PRETEND_ENGINE:1 --var PUBLIC_BASE_URL:https://store-assistant.<account>.workers.dev`
+7. **Deploy again with the public URL**, so the first message links the privacy page:
+   `npx wrangler deploy --var PUBLIC_BASE_URL:https://store-assistant.<account>.workers.dev`
    (no trailing slash). Every later deploy passes both `--var`s.
-7. **Point WhatsApp at it** (Meta app dashboard → WhatsApp → Configuration):
+8. **Point WhatsApp at it** (Meta app dashboard → WhatsApp → Configuration):
    - Callback URL: `https://store-assistant.<account>.workers.dev/webhooks/whatsapp`
    - Verify token: the value you typed for `WHATSAPP_VERIFY_TOKEN`.
    - Subscribe to the `messages` field.
@@ -71,9 +71,12 @@ or piped into `wrangler secret put`; never paste them into a file, a chat or a l
 ## Automatic deploys
 
 `.github/workflows/deploy.yml` deploys the demo on every merge to `main` (and by hand from the Actions tab): tests,
-then `d1 migrations apply --remote`, then `wrangler deploy` with the demo's `--var`s (pretend engine, planner path,
+then `d1 migrations apply --remote`, then `wrangler deploy` with the demo's `--var`s (planner path, English console,
 test commands on, and a US$15 daily Muse Spark budget for the store, `MODEL_DAILY_CAP_USD`, so judges trying it
-at once don't hit the US$2 default). One deploy runs at a time.
+at once don't hit the US$2 default). One deploy runs at a time. A run by hand deploys only from `main`. The
+Cloudflare secrets reach only the migrate and deploy steps. After the deploy, a smoke step checks `/health` and
+`/demo`. `scripts/check-migrations.mjs` runs in CI and before every deploy: a migration after 0032 that drops,
+renames, or adds a NOT NULL column without a DEFAULT fails unless it says `-- migration-check: allow <reason>`.
 
 Setup, once:
 
@@ -95,5 +98,6 @@ without `PRETEND_ENGINE`. Orders taken by the pretend engine stay in its own tab
 ## If something goes wrong
 
 - `npx wrangler deployments list` and `npx wrangler rollback` return to the previous version. A rollback doesn't
-  undo migrations; migrations only add, so the older code keeps working.
+  undo migrations; migrations only add, so the older code keeps working. To restore data, D1 Time Travel:
+  `npx wrangler d1 time-travel restore DB --timestamp <ISO time before the problem>`.
 - A failing webhook verification is almost always the verify token or the callback URL.

@@ -12,6 +12,7 @@ import { entryOf } from "../../../domain/deed-recheck";
 import { D1LibroReads } from "../../../infrastructure/d1/libro-reads";
 import { D1OrderTrail } from "../../../infrastructure/d1/order-trail";
 import type { ConsoleEnv } from "./auth";
+import { englishPhrase, languageOf } from "./language";
 import { shell, simplePage } from "./layout";
 import { formatTime } from "./pedidos";
 
@@ -60,16 +61,23 @@ function boxClass(lane: number, cell: LibroCell, state: PairState | null): strin
   return cell.kind === "balance" || cell.kind === "missing" ? (state === null ? "c-book" : STATE_COLOUR_CLASS[state]) : "c-book";
 }
 
-function cellSvg(cell: LibroCell, lane: number, state: PairState | null, y: number) {
+/**
+ * A cell's words in the page's language. The drawing wraps them into short lines, which the page-wide
+ * translation could no longer read whole, so the English view translates them here, before wrapping.
+ */
+type Say = (text: string) => string;
+const asIs: Say = (text) => text;
+
+function cellSvg(cell: LibroCell, lane: number, state: PairState | null, y: number, say: Say) {
   const x = COL_X[lane]!;
-  const lines = wrap(cell.text);
+  const lines = wrap(say(cell.text));
   return html`<rect class="box ${boxClass(lane, cell, state)}" x="${x}" y="${y + 4}" width="${COL_W}" height="${ROW_H - 8}" rx="6"/>${lines.map(
     (line, i) => html`<text class="cell" x="${x + COL_W / 2}" y="${y + 19 + i * 13}" text-anchor="middle">${line}</text>`,
   )}`;
 }
 
 /** One row: its cells in their lanes, and the pair's bar behind them, in the pair's colour. */
-function rowSvg(row: LibroRow, index: number) {
+function rowSvg(row: LibroRow, index: number, say: Say) {
   const y = HEADER_H + index * ROW_H;
   const cells: Array<[number, LibroCell | null]> = [
     [0, row.agent],
@@ -83,7 +91,7 @@ function rowSvg(row: LibroRow, index: number) {
     row.state === null || first === undefined || last === undefined || first === last
       ? ""
       : html`<line class="bar ${STATE_COLOUR_CLASS[row.state]}" x1="${COL_X[first]! + COL_W}" y1="${y + ROW_H / 2}" x2="${COL_X[last]!}" y2="${y + ROW_H / 2}"/>`;
-  return html`<a href="#d-${row.id}" aria-label="${row.state === null ? "Sin par" : PAIR_WORDS[row.state]}">${bar}${present.map(([lane, cell]) => cellSvg(cell, lane, row.state, y))}</a>`;
+  return html`<a href="#d-${row.id}" aria-label="${row.state === null ? "Sin par" : PAIR_WORDS[row.state]}">${bar}${present.map(([lane, cell]) => cellSvg(cell, lane, row.state, y, say))}</a>`;
 }
 
 /** The detail under the drawing: each cell in full, its IDs and codes, its time, and the link to what decided it. */
@@ -116,7 +124,7 @@ const legend = html`<ul class="legend">
 <li><i class="s-en_duda"></i>${PAIR_WORDS.en_duda}</li>
 <li><i class="s-bloqueado"></i>${PAIR_WORDS.bloqueado}</li>
 </ul>
-<p class="hint">Sin confirmación de entrega todavía es en duda, nunca rojo. Tocá una fila para ver su detalle.</p>`;
+<p class="hint">Sin confirmación de entrega todavía es «en duda», nunca rojo. Tocá una fila para ver su detalle.</p>`;
 
 export function libroScreen(app: Hono<ConsoleEnv>) {
   /** The entry a third party re-judges (C3): IDs, codes, numbers and claims, never names, phones or message text. */
@@ -137,10 +145,11 @@ export function libroScreen(app: Hono<ConsoleEnv>) {
     if (input === null) return c.html(simplePage("Libro", html`<p class="empty">Ese pedido no está en la lista.</p>`), 404);
     const trail = await new D1OrderTrail(c.env.DB).trail(tenant, orderId);
     const rows = libroRows(input, await reads.whatsappIds(tenant, orderId));
+    const say = languageOf(c) === "en" ? englishPhrase : asIs;
     const height = HEADER_H + Math.max(rows.length, 1) * ROW_H + 6;
     const svg = html`<svg id="libro" class="libro" viewBox="0 0 ${VIEW_W} ${height}" role="img" aria-label="Lo que dijo el agente, lo que el libro empareja y lo que registró el mundo">
-${LANE_TITLES.map((title, lane) => html`<text class="lane" x="${COL_X[lane]! + COL_W / 2}" y="20" text-anchor="middle">${title}</text>`)}
-${rows.map((row, index) => rowSvg(row, index))}
+${LANE_TITLES.map((title, lane) => html`<text class="lane" x="${COL_X[lane]! + COL_W / 2}" y="20" text-anchor="middle">${say(title)}</text>`)}
+${rows.map((row, index) => rowSvg(row, index, say))}
 </svg>`;
     return c.html(
       await shell(c, {

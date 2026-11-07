@@ -1,5 +1,11 @@
 import type { ConsoleAuthRepository, ConsoleMember, InvitePreview, MemberSummary, NewConsoleSession, Tenant } from "../../application/ports";
+import { isDemoBusiness } from "../../domain/demo";
 import { type Guard, guardedBatch } from "./fence";
+
+/** A demo store never stores a staff member's phone or invite (D-64), whatever screen asked. */
+function refuseDemoStaff(tenant: Tenant): void {
+  if (isDemoBusiness(tenant.businessId)) throw new Error("a demo store has no staff");
+}
 
 class InviteUnusableError extends Error {
   override readonly name = "InviteUnusableError";
@@ -138,6 +144,7 @@ export class D1ConsoleAuthRepository implements ConsoleAuthRepository {
     tenant: Tenant,
     person: { readonly phone: string; readonly displayName: string | null; readonly nowMs: number },
   ): Promise<{ readonly userId: string; readonly role: "owner" | "staff" }> {
+    refuseDemoStaff(tenant);
     await this.db.batch([
       // A person can belong to several stores, so the shared record is never touched from here: the
       // name the owner typed is this store's own, on the membership.
@@ -171,6 +178,7 @@ export class D1ConsoleAuthRepository implements ConsoleAuthRepository {
     userId: string,
     invite: { readonly id: string; readonly tokenHash: string; readonly nowMs: number; readonly expiresAtMs: number },
   ): Promise<{ readonly phone: string; readonly displayName: string | null } | null> {
+    refuseDemoStaff(tenant);
     // Both statements match only a staff membership of this store, so an owner or another store's
     // member gets neither a reactivation nor an invite. A re-added person starts without fiado.
     await this.db.batch([

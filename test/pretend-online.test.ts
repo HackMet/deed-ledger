@@ -82,7 +82,7 @@ describe("the pretend engine with its state in D1", () => {
     const ready = await save(await staffSide.onConsoleAction(member(store.businessId), tap({ type: "mark_ready", orderId, version: 1 })));
     expect(ready.outcome).toMatchObject({ type: "action_saved", order: { state: "listo" } });
     expect(ready.notices).toMatchObject([{ customerId: "cust-1", notice: { type: "order_ready" } }]);
-    expect(renderNotice(ready.notices[0]!.notice).body).toBe("¡Tu pedido #101 ya está listo! 🙌 Total: L 18. Ya podés pasar por él.");
+    expect(renderNotice(ready.notices[0]!.notice).body).toBe("¡Tu pedido #101 ya está listo! 🙌 Total: L 18. Ya podés pasar a traerlo.");
 
     // The consumer's isolate sees the staff tap, for the claim check and for "¿ya está?".
     expect((await consumer.preparationList(store))[0]!.order.state).toBe("listo");
@@ -191,7 +191,7 @@ describe("PRETEND_ENGINE in the Worker", () => {
     expect(response.status).toBe(303);
     expect(response.headers.get("location")).not.toContain("aviso=guardar");
 
-    const READY = "¡Tu pedido #101 ya está listo! 🙌 Total: L 18. Ya podés pasar por él.";
+    const READY = "¡Tu pedido #101 ya está listo! 🙌 Total: L 18. Ya podés pasar a traerlo.";
     expect(await rows(`SELECT body_text FROM outbound_messages WHERE business_id = ? AND operation_key = 'k-ready'`, store.businessId)).toEqual([
       { body_text: READY },
     ]);

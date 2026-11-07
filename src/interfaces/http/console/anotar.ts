@@ -19,8 +19,10 @@ import {
 } from "../../../application/console-reader";
 import { describeError } from "../../../application/errors";
 import { formatLempiras } from "../../../domain/contract/numbers";
+import { isDemoBusiness } from "../../../domain/demo";
 import type { Observation, ObservationIssue, PricedLine, ItemLine } from "../../../domain/contract/observation";
 import { type ConsoleEnv, INVOICE_UPLOAD_PATH } from "./auth";
+import { INVOICE_LIST_PATH } from "./facturas";
 import { csrfField, shell } from "./layout";
 
 const PATH = "/console/anotar";
@@ -37,9 +39,9 @@ type Refusal = Extract<ConsoleReadOutcome, { ok: false }>["reason"];
 const REFUSALS: Record<Refusal, { readonly status: 400 | 413 | 429 | 503; readonly text: string }> = {
   empty: { status: 400, text: "Escribí algo o tomá una foto, y lo leo." },
   too_many: { status: 400, text: "Mandame una foto y un texto a la vez, nada más." },
-  too_large: { status: 413, text: "Eso está muy pesado para leerlo de una vez. La foto puede pesar hasta 5 MB y el texto unas 2,000 letras." },
+  too_large: { status: 413, text: "Eso está muy pesado para leerlo de una vez. La foto puede pesar hasta 5 MB y el texto unos 2,000 caracteres." },
   unsupported_photo: { status: 400, text: "No pude abrir esa foto. Probá tomándola otra vez desde aquí." },
-  voice_not_ready: { status: 400, text: "Las notas de voz aquí vienen pronto. Por ahora escribilo o tomale foto." },
+  voice_not_ready: { status: 400, text: "Las notas de voz aquí vienen pronto. Por ahora escribilo o sacale una foto." },
   spend_cap: { status: 429, text: "Por hoy ya se leyó todo lo que alcanza. Mañana se puede otra vez." },
   rejected: { status: 503, text: "No pude leerlo ahorita. Probá otra vez en un rato." },
   unavailable: { status: 503, text: "No pude leerlo ahorita. Probá otra vez en un rato." },
@@ -53,24 +55,26 @@ export const anotarBodyLimit = bodyLimit({
     const c = raw as unknown as Context<ConsoleEnv>;
     const notice = REFUSALS.too_large;
     c.get("runtime").deps.log.info("console_reader.refused", { businessId: c.get("member").businessId, reason: "too_large" });
-    return c.html(page(c, notice.text, "report"), notice.status);
+    return c.html(page(c, notice.text, "report", ""), notice.status);
   },
 });
 
 export function anotarScreen(app: Hono<ConsoleEnv>) {
-  app.get("/anotar", (c) => c.html(page(c, null, "report")));
+  app.get("/anotar", (c) => c.html(page(c, null, "report", "")));
 
   app.post("/anotar", async (c) => {
     const runtime = c.get("runtime");
     const form = await c.req.parseBody();
     const purpose: ConsolePurpose = form["para"] === "pedido" ? "order" : "report";
     const inputs: ConsoleInput[] = [];
+    const text = form["texto"];
+    // What the member typed comes back in the box when the reading fails, so nothing is lost.
+    const typed = typeof text === "string" ? text : "";
     const photo = form["foto"];
     if (photo instanceof File && photo.size > 0) {
-      if (photo.size > MAX_PHOTO_BYTES) return refusal(c, "too_large", purpose);
+      if (photo.size > MAX_PHOTO_BYTES) return refusal(c, "too_large", purpose, typed);
       inputs.push({ type: "photo", bytes: await photo.arrayBuffer(), contentType: photo.type });
     }
-    const text = form["texto"];
     if (typeof text === "string") inputs.push({ type: "text", text });
 
     let outcome: ConsoleReadOutcome;
@@ -83,9 +87,9 @@ export function anotarScreen(app: Hono<ConsoleEnv>) {
     } catch (error) {
       // Storage or the spend ledger failed; nothing was read.
       runtime.deps.log.error("console_reader.failed", { businessId: c.get("member").businessId, reason: describeError(error) });
-      return refusal(c, "unavailable", purpose);
+      return refusal(c, "unavailable", purpose, typed);
     }
-    if (!outcome.ok) return refusal(c, outcome.reason, purpose);
+    if (!outcome.ok) return refusal(c, outcome.reason, purpose, typed);
     c.header("Cache-Control", "no-store");
     return c.html(
       shell(c, {
@@ -101,12 +105,14 @@ export function anotarScreen(app: Hono<ConsoleEnv>) {
   });
 }
 
-function refusal(c: Context<ConsoleEnv>, reason: Refusal, purpose: ConsolePurpose) {
+function refusal(c: Context<ConsoleEnv>, reason: Refusal, purpose: ConsolePurpose, typed: string) {
   const notice = REFUSALS[reason];
-  return c.html(page(c, notice.text, purpose), notice.status);
+  return c.html(page(c, notice.text, purpose, typed), notice.status);
 }
 
-function page(c: Context<ConsoleEnv>, notice: string | null, purpose: ConsolePurpose) {
+function page(c: Context<ConsoleEnv>, notice: string | null, purpose: ConsolePurpose, typed: string) {
+  // A demo store takes no photos (D-64): the form doesn't offer what the console would refuse.
+  const demo = isDemoBusiness(c.get("member").businessId);
   return shell(c, {
     title: "Anotar",
     subtitle: SUBTITLE,
@@ -115,16 +121,18 @@ function page(c: Context<ConsoleEnv>, notice: string | null, purpose: ConsolePur
     style: STYLE,
     body: html`<form class="card" method="post" action="${PATH}" enctype="multipart/form-data">
 ${csrfField(c.get("csrf"))}
-<p>Escribí lo que pasó o tomale foto. Te muestro lo que entendí.</p>
+<p>${demo ? "Escribí lo que pasó. Te muestro lo que entendí." : "Escribí lo que pasó o sacale una foto. Te muestro lo que entendí."}</p>
 <fieldset><legend>¿Qué es?</legend>
 <label><input type="radio" name="para" value="tienda"${purpose === "report" ? html` checked` : ""}> Venta, fiado o producto nuevo</label>
 <label><input type="radio" name="para" value="pedido"${purpose === "order" ? html` checked` : ""}> Pedido a mano</label>
 </fieldset>
-${c.get("member").role === "owner" ? html`<a class="choice" href="${INVOICE_PATH}">Factura de proveedor<span class="go" aria-hidden="true">›</span></a>` : ""}
+${c.get("member").role === "owner" ? html`<a class="choice" href="${demo ? INVOICE_LIST_PATH : INVOICE_PATH}">Factura de proveedor<span class="go" aria-hidden="true">›</span></a>` : ""}
 <label for="texto">Escribilo aquí</label>
-<textarea id="texto" name="texto" rows="4" maxlength="${MAX_TEXT_CHARS}" placeholder="Vendí tres refrescos a veinte cada uno"></textarea>
-<label for="foto">Foto (si querés)</label>
-<input id="foto" type="file" name="foto" accept="image/jpeg,image/png,image/webp,image/gif" capture="environment">
+<textarea id="texto" name="texto" rows="4" maxlength="${MAX_TEXT_CHARS}" placeholder="Vendí tres refrescos a L 20 cada uno">${typed}</textarea>
+${demo
+  ? html`<p class="hint">En la demostración no se suben fotos.</p>`
+  : html`<label for="foto">Foto (si querés)</label>
+<input id="foto" type="file" name="foto" accept="image/jpeg,image/png,image/webp,image/gif" capture="environment">`}
 <button class="primary">Leer</button>
 </form>`,
   });
@@ -141,19 +149,19 @@ function body(observation: Observation) {
     case "fiado_report":
       return html`<h3>Fiado a ${observation.customer}</h3>${lines(observation.lines)}`;
     case "setup_card":
-      return html`<h3>Producto nuevo: ${observation.name}</h3><ul>
-<li>Unidad: ${observation.unit ?? "sin decir"}</li>
-<li>Hay: ${observation.count ?? "sin contar"}</li>
-<li>Precio: ${observation.price === null ? "sin precio" : formatLempiras(observation.price)}</li></ul>`;
+      return html`<h3>Producto nuevo: <span>${observation.name}</span></h3><ul>
+<li>Unidad: <span>${observation.unit ?? "sin decir"}</span></li>
+<li>Hay: <span>${observation.count ?? "sin contar"}</span></li>
+<li>Precio: <span>${observation.price === null ? "sin precio" : formatLempiras(observation.price)}</span></li></ul>`;
     case "supplier_invoice":
-      return html`<h3>Factura${observation.supplier === null ? "" : html` de ${observation.supplier}`}</h3>${lines(observation.lines)}
-${observation.total === null ? "" : html`<p>Total impreso: ${formatLempiras(observation.total)}</p>`}`;
+      return html`<h3>${observation.supplier === null ? "Factura" : html`Factura de <span>${observation.supplier}</span>`}</h3>${lines(observation.lines)}
+${observation.total === null ? "" : html`<p>Total impreso: <span>${formatLempiras(observation.total)}</span></p>`}`;
     case "customer_order":
       return html`<h3>Pedido</h3>${lines(observation.lines)}`;
     case "fulfillment":
-      return html`<h3>Entrega</h3><p>${
+      return html`<h3>Entrega</h3><p><span>${
         observation.mode === "pickup" ? "Lo pasa a traer" : observation.mode === "delivery" ? "A domicilio" : "Sin decir cómo"
-      }${observation.placeText === null ? "" : html`: ${observation.placeText}`}</p>`;
+      }</span>${observation.placeText === null ? "" : html`: <span>${observation.placeText}</span>`}</p>`;
     case "customer_name":
       return html`<h3>Nombre del cliente</h3><p>${observation.name}</p>`;
     default:
@@ -165,8 +173,8 @@ function lines(items: readonly (ItemLine | PricedLine)[]) {
   if (items.length === 0) return html`<p>Sin productos.</p>`;
   return html`<ul>${items.map(
     (item) =>
-      html`<li>${[item.quantity ?? "¿cuántos?", item.unit, item.name].filter((part) => part !== null).join(" ")}${
-        "unitPrice" in item && item.unitPrice !== null ? html` a ${formatLempiras(item.unitPrice)} c/u` : ""
+      html`<li><span>${item.quantity ?? "¿cuántos?"}</span> ${[item.unit, item.name].filter((part) => part !== null).join(" ")}${
+        "unitPrice" in item && item.unitPrice !== null ? html` — ${formatLempiras(item.unitPrice)} <span>c/u</span>` : ""
       }${item.restrictedCategory ? html` <span class="tag">solo en tienda</span>` : ""}</li>`,
   )}</ul>`;
 }

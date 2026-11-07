@@ -40,8 +40,8 @@ async function sessions(options: { env?: Env; pendientesBoard?: PendientesBoard;
 describe("Inicio", () => {
   it("greets by the store's clock and date", () => {
     expect(storeDate(NOW)).toBe("miércoles, 28 de octubre");
-    expect(greeting(NOW, "Johan Rodas")).toBe("Buen día, Johan.");
-    expect(greeting(NOW, null)).toBe("Buen día.");
+    expect(greeting(NOW, "Johan Rodas")).toBe("Buenos días, Johan.");
+    expect(greeting(NOW, null)).toBe("Buenos días.");
     expect(greeting(NOW + 6 * 3_600_000, "Rosa")).toBe("Buenas tardes, Rosa.");
     expect(greeting(NOW + 12 * 3_600_000, "Rosa")).toBe("Buenas noches, Rosa.");
   });
@@ -52,7 +52,7 @@ describe("Inicio", () => {
     expect(response.status).toBe(200);
     const html = await response.text();
     expect(html).toContain('<p class="kicker">miércoles, 28 de octubre</p>');
-    expect(html).toContain("<h1>Buen día.</h1>");
+    expect(html).toContain("<h1>Buenos días.</h1>");
 
     const list = await (await page("/console/preparacion", owner)).text();
     const toPack = (list.match(/<a class="card order" /g) ?? []).length;

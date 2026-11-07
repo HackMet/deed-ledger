@@ -3,7 +3,7 @@
  * wire format, real D1 and the real console route. No pretend engine anywhere in this file.
  */
 import { env } from "cloudflare:workers";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { MemberContext } from "../src/application/engine";
 import { staffKey } from "../src/application/engine/order-engine";
 import type { ModelProvider, ModelRequest, Tenant } from "../src/application/ports";
@@ -20,6 +20,10 @@ import { harness, rows, testEnv } from "./helpers/harness";
 import { engine, save, store as orderStore } from "./helpers/orders";
 import { newPhone, seedIntroducedCustomer } from "./helpers/seed";
 import { buttonReply, textMessage, wamid, webhook } from "./helpers/whatsapp";
+
+// Heavy under full-suite load (many webhook round trips on local D1): the 5 s default times out on an
+// ordinary laptop when every file runs in parallel. A real hang still fails, at 30 s.
+vi.setConfig({ testTimeout: 30_000 });
 
 const SETTLED_MS = 4_000;
 const SAFE_REPLY = "Dejame revisar bien y ya te confirmo.";

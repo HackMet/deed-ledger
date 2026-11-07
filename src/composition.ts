@@ -80,7 +80,19 @@ import { WhatsAppMediaSource } from "./integrations/whatsapp/media";
 import { receiptRecordings } from "../test/fixtures/receipts";
 import { DEMO_INVOICE_PENDING_JPEG_BASE64, DEMO_INVOICE_RECEIVED_JPEG_BASE64, DEMO_INVOICE_RECORDINGS } from "./infrastructure/demo-invoices";
 import type { MemberContext } from "./application/engine";
-import { type DemoHistoryQueue, type DemoHistoryRunner, type DemoHistoryMessage, DEMO_HISTORY_ITEMS, demoHistoryMessage, ScriptedOrderReader, SeedClock, seedDemoHistoryItem } from "./application/demo-history";
+import {
+  type DemoHistoryQueue,
+  type DemoHistoryRunner,
+  type DemoHistoryMessage,
+  DEMO_HISTORY_ITEMS,
+  DEMO_HISTORY_WAIT_MS,
+  demoHistoryMessage,
+  historyComplete,
+  ScriptedOrderReader,
+  SeedClock,
+  seedDemoHistoryItem,
+} from "./application/demo-history";
+import { readSeedProgress } from "./infrastructure/d1/demo-history-progress";
 
 export interface Runtime {
   /** The Deed's record of checks (K20): the engine that writes it is wired where it runs (demo/worker.ts). */
@@ -475,34 +487,41 @@ const silentDoorbell = { ring: async () => {} };
 
 /** How long a piece waits when its batch already ran one. */
 const DEMO_HISTORY_LATER_S = 2;
+/** The supplier invoices a seeded store gets: one received, one to review. */
+const DEMO_HISTORY_INVOICES = 2;
 
 function demoHistoryRunner(env: Env, overrides: RuntimeOverrides, db: D1Database): DemoHistoryRunner {
   const queue: DemoHistoryQueue = overrides.demoHistoryQueue ?? {
     sendBatch: async (messages) => {
-      await (env.JOBS as unknown as Queue<DemoHistoryMessage>).sendBatch(messages.map((m) => ({ ...m, contentType: "json" as const })));
+      await (env.DEMO_SEED as unknown as Queue<DemoHistoryMessage>).sendBatch(messages.map((m) => ({ ...m, contentType: "json" as const })));
     },
   };
   const stores = new D1DemoStoreRepository(db);
+  const now = () => (overrides.clock ?? systemClock).now();
   return {
-    schedule: (businessId) => queue.sendBatch([{ body: demoHistoryMessage(businessId, 0) }]),
+    // Every piece at once, newest orders first: the queue hands them out one per invocation, several
+    // at a time, so the store fills in about as long as its slowest piece takes.
+    schedule: (businessId) =>
+      queue.sendBatch(Array.from({ length: DEMO_HISTORY_ITEMS }, (_, item) => ({ body: demoHistoryMessage(businessId, item) }))),
     later: (message) => queue.sendBatch([{ body: message, delaySeconds: DEMO_HISTORY_LATER_S }]),
-    async run(message) {
-      // Then the next piece, even after one that failed: the store gets the rest. None for a store
-      // that isn't a live demo store.
-      if (!(await runPiece(message))) return;
-      if (message.item + 1 < DEMO_HISTORY_ITEMS) await queue.sendBatch([{ body: demoHistoryMessage(message.businessId, message.item + 1) }]);
+    run: (message) => runPiece(message),
+    async loading(businessId) {
+      const target = await stores.seedTarget(businessId, now());
+      if (target === null || now() - target.openedAtMs > DEMO_HISTORY_WAIT_MS) return false;
+      const progress = await readSeedProgress(db, businessId);
+      return progress !== null && !historyComplete(progress, DEMO_HISTORY_INVOICES);
     },
   };
 
-  /** False when the message names no live demo store. A piece that fails is logged inside and still true. */
-  async function runPiece(message: DemoHistoryMessage): Promise<boolean> {
-    const target = await stores.seedTarget(message.businessId, (overrides.clock ?? systemClock).now());
-    if (target === null) return false;
+  /** Nothing for a message that names no live demo store. A piece that fails is logged inside. */
+  async function runPiece(message: DemoHistoryMessage): Promise<void> {
+    const target = await stores.seedTarget(message.businessId, now());
+    if (target === null) return;
     const clock = new SeedClock(target.openedAtMs);
     const reader = new ScriptedOrderReader();
     const { jobHandler: _handler, doorbell: _doorbell, ...rest } = overrides;
     const seed = buildRuntime(env, { ...rest, clock, doorbell: silentDoorbell, orderReader: reader });
-    if (seed.engine === null) return false;
+    if (seed.engine === null) return;
     const owner: MemberContext = { businessId: target.businessId, memberId: target.ownerUserId, role: "owner", canApproveFiado: true, nowMs: target.openedAtMs };
     const done = await seedDemoHistoryItem(
       {
@@ -523,6 +542,5 @@ function demoHistoryRunner(env: Env, overrides: RuntimeOverrides, db: D1Database
       message.item,
     );
     seed.deps.log.info("demo_history_item", { businessId: target.businessId, count: message.item, outcome: done ? "seeded" : "skipped" });
-    return true;
   }
 }

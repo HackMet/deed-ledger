@@ -14,8 +14,7 @@ building it for the Meta Global AI Developer Hackathon (Indie track).
 - **Goal:** one convincing flow that works end to end, powered by Meta models. A customer's order in any form →
   readback → the customer confirms → the preparation list → staff tap Listo → the customer hears "listo", each step
   exactly once and only when the record exists.
-- **Status:** foundation built (webhook intake, ordered processing, outbox, store isolation). Contract v1 is a draft
-  (`docs/contract.md`); the engine, perception, replies and the console are next. `docs/status.md` has the details.
+- **Status:** submitted Nov 4; a public demo runs at `/demo`. `docs/status.md` has the details.
 - **Team:** two people (D-37). Angel owns perception, WhatsApp, media, answers, the web view and deploys. His
   teammate owns the engine, the ledger and fact memory. Work in the other person's area only when they agree.
 - **Time zones:** Angel works in Honduras time (CST, UTC−6, no daylight saving). The organizers publish Eastern Time,

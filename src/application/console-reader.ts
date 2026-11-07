@@ -12,6 +12,7 @@
  * - Every call goes through the reader's daily spend cap.
  */
 import type { BurstReading, Evidence, ItemLine, Observation, ObservationKind } from "../domain/contract/observation";
+import { isDemoBusiness } from "../domain/demo";
 import { looksLikeAudio, sniffImageType } from "../domain/image-type";
 import { storePrefix } from "../domain/media";
 import type { BurstMessage } from "../domain/perception/burst";
@@ -28,6 +29,18 @@ export const MAX_TEXT_CHARS = 2_000;
 export const MAX_PARTS = 3;
 
 export type ConsolePurpose = "report" | "order";
+
+/**
+ * A photo or recording sent from a demo store's console. The demo's walls refuse these with their
+ * own page first (demo-walls.ts); this is the backstop, so nothing a visitor sends is ever stored.
+ */
+export class DemoUploadRefusedError extends Error {
+  override name = "DemoUploadRefusedError";
+
+  constructor() {
+    super("a demo store takes no uploads");
+  }
+}
 
 export type ConsoleInput =
   | { readonly type: "text"; readonly text: string }
@@ -109,6 +122,10 @@ export async function readConsoleInput(
   });
   if (inputs.length === 0) return refuse("empty");
   if (inputs.length > MAX_PARTS) return refuse("too_many");
+  if (isDemoBusiness(tenant.businessId) && inputs.some((input) => !isText(input))) {
+    deps.log.warn("console_reader.refused", { businessId: tenant.businessId, reason: "demo_upload" });
+    throw new DemoUploadRefusedError();
+  }
 
   // Every check before anything is stored or spent.
   const checked: (BurstMessage | { readonly type: "photo"; readonly bytes: ArrayBuffer; readonly mimeType: string })[] = [];

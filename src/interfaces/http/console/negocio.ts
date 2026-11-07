@@ -24,12 +24,12 @@ const DAYS = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "
 const NOTICES = {
   guardado: "Listo, guardamos los datos de la tienda.",
   repetido: "Eso ya se guardó hace un momento. Esperá un minuto para cambiarlo otra vez.",
-  name: "Escribí el nombre de la tienda (hasta 120 letras).",
-  storeType: `El tipo de tienda es muy largo (hasta ${LIMITS.storeType} letras).`,
+  name: "Escribí el nombre de la tienda (hasta 120 caracteres).",
+  storeType: `El tipo de tienda es muy largo (hasta ${LIMITS.storeType} caracteres).`,
   hours: "Revisá el horario: cada día necesita hora de apertura y de cierre (como 08:00 y 18:00), y abrir antes de cerrar.",
-  address: `La dirección es muy larga (hasta ${LIMITS.address} letras).`,
-  deliveryZones: `Las zonas de entrega son muy largas (hasta ${LIMITS.deliveryZones} letras).`,
-  assistantNotes: `Las notas para el asistente son muy largas (hasta ${LIMITS.assistantNotes} letras).`,
+  address: `La dirección es muy larga (hasta ${LIMITS.address} caracteres).`,
+  deliveryZones: `Las zonas de entrega son muy largas (hasta ${LIMITS.deliveryZones} caracteres).`,
+  assistantNotes: `Las notas para el asistente son muy largas (hasta ${LIMITS.assistantNotes} caracteres).`,
   permiso: "Esto es solo para el dueño.",
 } as const satisfies Record<string, string>;
 type Notice = keyof typeof NOTICES;

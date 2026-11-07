@@ -50,7 +50,7 @@ export async function approvals(c: Context<ConsoleEnv>): Promise<readonly InboxI
         href: `/console/pedidos/${encodeURIComponent(row.orderId)}`,
         // The code already reads "#TP2BV".
         title: row.code === null ? "Un cliente pidió un cambio" : `El pedido ${row.code} tiene un cambio`,
-        note: "Aprobalo o rechazalo en el pedido.",
+        note: "Respondelo en el pedido.",
       });
     }
     const invoices: InboxItem[] = drafts

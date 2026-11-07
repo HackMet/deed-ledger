@@ -19,8 +19,9 @@ export const DEMO_STORE_TTL_MS = 24 * 60 * 60 * 1000;
 export const DEMO_STORES_PER_VISITOR_PER_HOUR = 20;
 export const DEMO_STORES_PER_HOUR = 120;
 /**
- * Demo stores ever opened, after which the demo stops opening new ones. Demo stores expire but stay in
- * the shared database (memberships and deed checks can't be deleted), so this bounds its growth.
+ * Demo stores open at once (not yet expired), after which the demo opens no new one until some
+ * expire. Expired stores stay in the database but no longer count, so the demo never fills up for
+ * good. With the hourly limit this is reached only if the hourly limit is raised.
  */
 export const DEMO_STORES_TOTAL = 3000;
 export const HOUR_MS = 60 * 60 * 1000;
@@ -56,18 +57,27 @@ export function newDemoPhone(random: (n: number) => Uint8Array): string {
   return zeroLed(15, random);
 }
 
-/** Why a new demo store was refused, if it was. */
-export type DemoLimit = "visitor" | "everyone" | null;
+/**
+ * Why a new demo store was refused, if it was. visitor: this visitor's hourly limit. everyone: the
+ * hourly limit for all visitors together (try again within the hour). full: the demo already has
+ * DEMO_STORES_TOTAL stores open (try again once some expire, up to a day).
+ */
+export type DemoLimit = "visitor" | "everyone" | "full" | null;
+/** A refusal's reason, for the limit page and the log. */
+export type DemoLimitReason = Exclude<DemoLimit, null>;
 
-export function demoLimitReached(createdLastHourByVisitor: number, createdLastHour: number, createdEver = 0): DemoLimit {
+export function demoLimitReached(createdLastHourByVisitor: number, createdLastHour: number, openNow = 0): DemoLimit {
   if (createdLastHourByVisitor >= DEMO_STORES_PER_VISITOR_PER_HOUR) return "visitor";
-  if (createdLastHour >= DEMO_STORES_PER_HOUR || createdEver >= DEMO_STORES_TOTAL) return "everyone";
+  if (createdLastHour >= DEMO_STORES_PER_HOUR) return "everyone";
+  if (openNow >= DEMO_STORES_TOTAL) return "full";
   return null;
 }
 
 /**
  * Who a visitor is for the hourly store limit: their IPv4 address, or the /64 network of an IPv6 one
  * (one IPv6 user usually holds a whole /64, so the full address would let them reset the limit).
+ * Not /48: mobile carriers hand each phone a /64 out of shared larger blocks, so a /48 would turn
+ * away strangers the way five-per-address would (D-65).
  */
 export function demoVisitorKey(ip: string): string {
   if (!ip.includes(":")) return ip;
@@ -95,6 +105,11 @@ export function isDemoPreset(value: unknown): value is DemoPresetName {
 export const DEMO_MAX_TEXT = 300;
 /** Messages one demo store's phone can send in its life: enough for several orders, not a flood. */
 export const DEMO_MAX_MESSAGES_PER_STORE = 40;
+/**
+ * Readings one demo store's console can ask for in its life (Anotar and Pedido a mano each call the
+ * model), so a visitor can't drain the demo's shared daily budget from the console.
+ */
+export const DEMO_MAX_CONSOLE_READS_PER_STORE = 20;
 /**
  * What one demo voice note is charged against the demo's daily pool before it is transcribed. The
  * transcriber reports no cost and its price isn't recorded here (unknown), so this is a deliberately

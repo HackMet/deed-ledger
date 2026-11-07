@@ -17,33 +17,55 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  PUBLIC_BASE_URL: https://store-assistant.atiendeme.workers.dev
+
 jobs:
   deploy:
+    # A manual run from another branch would apply that branch's migrations to production: main only.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      # Actions are pinned to full commit SHAs (a tag can be moved); the comment names the release.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: npm
+      # The Cloudflare secrets are only on the two steps that need them, never on npm ci or the tests, which run
+      # third-party code.
       - run: npm ci
       - name: Generated Worker types match wrangler.jsonc
         run: npx wrangler types --check
       - run: npm run typecheck
       - run: npm test
       # Migrations only add, so the code still running keeps working while they apply.
+      - name: Migrations only add
+        run: node scripts/check-migrations.mjs
       - name: Apply D1 migrations
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: npx wrangler d1 migrations apply DB --remote
+      # DEED_ENGINE "1" comes from wrangler.jsonc and wins over every other engine flag.
       - name: Deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: >-
           npx wrangler deploy
-          --var PRETEND_ENGINE:1
-          --var PUBLIC_BASE_URL:https://store-assistant.atiendeme.workers.dev
+          --var PUBLIC_BASE_URL:${{ env.PUBLIC_BASE_URL }}
           --var CONVERSATION:planner
           --var CONSOLE_LANG:en
           --var TEST_COMMANDS:1
           --var MODEL_DAILY_CAP_USD:15
+      # The new version can take a few seconds to reach every edge; retry before calling it broken. Only reads:
+      # /demo is the landing page, which opens no store.
+      - name: Smoke test
+        run: |
+          curl -fsS --retry 6 --retry-delay 5 --retry-all-errors --max-time 20 "$PUBLIC_BASE_URL/health" | grep -qx ok
+          curl -fsS --retry 6 --retry-delay 5 --retry-all-errors --max-time 20 -o /dev/null "$PUBLIC_BASE_URL/demo"
+          echo "health and /demo answer"

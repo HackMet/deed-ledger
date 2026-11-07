@@ -72,6 +72,21 @@ async function openDemo(h: Harness, ip = `198.51.100.${Math.floor(Math.random() 
   return { cookie, csrf: csrf!, businessId: store!.business_id };
 }
 
+describe("the demo's landing page", () => {
+  it("serves its recording of a demo visit as a cacheable GIF, without a session", async () => {
+    const h = harness();
+    const gif = await call(h, "/demo/recorrido.gif");
+    expect(gif.status).toBe(200);
+    expect(gif.headers.get("content-type")).toBe("image/gif");
+    expect(gif.headers.get("cache-control")).toBe("public, max-age=86400");
+    const bytes = new Uint8Array(await gif.arrayBuffer());
+    expect(new TextDecoder().decode(bytes.subarray(0, 6))).toBe("GIF89a");
+    expect(bytes.byteLength).toBeGreaterThan(100_000);
+    const landing = await (await call(h, "/demo")).text();
+    expect(landing).toContain('src="/demo/recorrido.gif"');
+  });
+});
+
 describe("opening a demo store", () => {
   it("gives the visitor a synthetic store of their own, signed in as its owner, with products and prices", async () => {
     const h = harness();
@@ -290,7 +305,8 @@ describe("the demo's phone", () => {
     expect(await refused.text()).toContain(`href="/demo/tienda"`);
     // Refused, the visitor keeps the store they had.
     expect((await call(h, "/demo/telefono/mensajes?despues=0", { cookie })).status).toBe(200);
-  });
+    // One new demo store per reset: past the 5 s default under full-suite load.
+  }, 30_000);
 
   it("ends with the store: an expired demo can't send or read", async () => {
     const h = harness();

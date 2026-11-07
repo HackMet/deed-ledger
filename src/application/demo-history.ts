@@ -265,11 +265,12 @@ export interface DemoStoreRefs {
 
 /**
  * The queue message for one piece of a demo store's history. Seeding a whole store in one request
- * takes far more D1 queries than one Worker invocation may make, so each piece is its own message,
- * and each piece queues the next once it's done: one piece per store waits at a time, so pieces
- * never pile up in one batch. Item n (0 to DEMO_HISTORY.length - 1) is the n-th order, the last
- * item the invoices. Only the store's ID travels; everything else is read back from the store, and
- * only a live demo store is seeded.
+ * takes far more D1 queries than one Worker invocation may make, so each piece is its own message
+ * on the demo-seed queue, which delivers one per batch: each piece runs in an invocation of its own,
+ * apart from the doorbells, and the queue runs several at once. Item n (0 to DEMO_HISTORY.length - 1)
+ * is the n-th order, the last item the invoices. The pieces don't depend on each other: each is its
+ * own customer on its own conversation. Only the store's ID travels; everything else is read back
+ * from the store, and only a live demo store is seeded.
  */
 export interface DemoHistoryMessage {
   readonly v: 1;
@@ -280,19 +281,73 @@ export interface DemoHistoryMessage {
 
 export const DEMO_HISTORY_ITEMS = DEMO_HISTORY.length + 1;
 
-/** Where the pieces are queued: the jobs queue in production. */
+/** Where the pieces are queued: the demo-seed queue in production. */
 export interface DemoHistoryQueue {
   sendBatch(messages: readonly { readonly body: DemoHistoryMessage; readonly delaySeconds?: number }[]): Promise<void>;
 }
 
 /**
- * `schedule` queues a new store's first piece; `run` seeds one from the queue and queues the next;
- * `later` puts a piece back for a moment, as a fresh message.
+ * `schedule` queues every piece of a new store's history at once; `run` seeds one from the queue;
+ * `later` puts a piece back on the demo-seed queue for a moment, as a fresh message; `loading` says
+ * whether a demo store's history is still being written, for the console to say so.
  */
 export interface DemoHistoryRunner {
   schedule(businessId: string): Promise<void>;
   run(message: DemoHistoryMessage): Promise<void>;
   later(message: DemoHistoryMessage): Promise<void>;
+  loading(businessId: string): Promise<boolean>;
+}
+
+/** How long after a demo store opens its history may still be loading; after it, the console stops waiting. */
+export const DEMO_HISTORY_WAIT_MS = 3 * MINUTE_MS;
+
+/** The provider message ID of the n-th message the seed sends for an item: fixed, so a redelivered piece is a duplicate. */
+export function seedMessageId(item: number, n: number): string {
+  return `demo.seed.${item}.${n}`;
+}
+
+/** How many messages the seed sends for an order, as seedOrder sends them. */
+export function seedMessageCount(order: ScriptOrder): number {
+  const added = order.addBeforeConfirm === undefined ? 0 : 2;
+  if (order.answer === "cancel") return 2 + added;
+  return 3 + added + (order.answer === "confirm_twice" ? 1 : 0) + (order.changeAfterConfirm === undefined ? 0 : 1);
+}
+
+const STEP_STATE: Record<StaffStep, string> = {
+  start_preparing: "preparando",
+  mark_ready: "listo",
+  dispatch: "en_camino",
+  mark_delivered: "entregado",
+};
+
+/** The state the script leaves an order in. */
+export function seedFinalState(order: ScriptOrder): string {
+  if (order.answer === "cancel") return "cancelado";
+  const last = order.staff[order.staff.length - 1];
+  return last === undefined ? "confirmado" : STEP_STATE[last];
+}
+
+/** What the store holds of its history: each seeded order's first message ID, its last, and the order's state. */
+export interface SeedProgress {
+  /** Every seed message ID the store received. */
+  readonly messageIds: ReadonlySet<string>;
+  /** The state of the order each item's first message started, by item; absent: no order yet. */
+  readonly stateByItem: ReadonlyMap<number, string>;
+  /** Supplier invoices drafted. */
+  readonly invoices: number;
+}
+
+/**
+ * Whether the history is written: every order has its last message and the state the script leaves
+ * it in, and the invoices are there. A piece that failed never completes, so callers stop waiting
+ * after DEMO_HISTORY_WAIT_MS.
+ */
+export function historyComplete(progress: SeedProgress, invoices: number): boolean {
+  if (progress.invoices < invoices) return false;
+  return DEMO_HISTORY.every(
+    (order, item) =>
+      progress.messageIds.has(seedMessageId(item, seedMessageCount(order) - 1)) && progress.stateByItem.get(item) === seedFinalState(order),
+  );
 }
 
 export function demoHistoryMessage(businessId: string, item: number): DemoHistoryMessage {
@@ -343,10 +398,10 @@ async function seedInvoices(h: DemoHistoryDeps, store: DemoStoreRefs, openedAtMs
   try {
     if (h.invoices.approved !== null) {
       const owner = at(3 * DAY_MS + 6 * HOUR_MS);
-      const drafted = await h.receipts.upload(owner, { bytes: copy(h.invoices.approved) });
+      const drafted = await h.receipts.upload(owner, { bytes: copy(h.invoices.approved) }, { seeded: true });
       if (drafted.type === "drafted") await h.receipts.approve({ ...owner, nowMs: owner.nowMs + 20 * MINUTE_MS }, drafted.draftId, 1);
     }
-    if (h.invoices.pending !== null) await h.receipts.upload(at(2 * HOUR_MS), { bytes: copy(h.invoices.pending) });
+    if (h.invoices.pending !== null) await h.receipts.upload(at(2 * HOUR_MS), { bytes: copy(h.invoices.pending) }, { seeded: true });
   } catch (error) {
     h.deps.log.warn("demo_history_failed", { businessId: store.businessId, reason: `invoices: ${describeError(error)}` });
   }
@@ -355,7 +410,7 @@ async function seedInvoices(h: DemoHistoryDeps, store: DemoStoreRefs, openedAtMs
 async function seedOrder(h: DemoHistoryDeps, store: DemoStoreRefs, order: ScriptOrder, item: number): Promise<void> {
   const phone = h.newPhone();
   let sent = 0;
-  const say = (message: Parameters<typeof sayOnce>[4]) => sayOnce(h, store, phone, `demo.seed.${item}.${sent++}`, message);
+  const say = (message: Parameters<typeof sayOnce>[4]) => sayOnce(h, store, phone, seedMessageId(item, sent++), message);
   const conversation = await say({ text: order.text });
   if (order.addBeforeConfirm !== undefined) {
     const first = await readback(h, conversation);

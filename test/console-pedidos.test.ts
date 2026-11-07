@@ -220,7 +220,7 @@ describe("K5: the Orders screen reads the ledger", () => {
     const page = await (await get(h, `/console/pedidos/${orderId}`, await login(h, s))).text();
     expect(page).toContain("Cambio de estado");
     expect(page).toContain("Personal");
-    expect(page).toContain("miembro");
+    expect(page).toContain("toque del personal");
     expect(page).toContain("Depende de: Pedido confirmado (paso 2)");
   });
 
@@ -635,7 +635,7 @@ describe("K13: Pedidos dispatches a ready delivery order with a courier and show
     const unknownCookie = await login(h, t);
     const unknownPath = `/console/pedidos/${unknownId}`;
     const unknownPage = await (await get(h, unknownPath, unknownCookie)).text();
-    expect(unknownPage).toContain("Falta saber si lo recogen o se lo llevamos.");
+    expect(unknownPage).toContain("Falta saber si lo pasan a traer o se lo llevamos.");
     expect(unknownPage).not.toContain("Entregado ✓");
     expect(unknownPage).not.toContain("¿Quién lo lleva?");
 

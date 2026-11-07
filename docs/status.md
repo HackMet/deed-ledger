@@ -7,7 +7,27 @@ Last updated: Fri Nov 6, 2026, by Claude Code.
 
 ## Now
 
-- **Demo store history (`claude/demo-seed`, D-66, not merged):** a new demo store opens with a few days of made-up
+- **Review fixes (`claude/review-fixes`, not merged):** six reviewers (security, deploy, QA, polish, Codex, Muse)
+  went through the live version; six lanes fixed what they found, combined on one branch.
+  Demo security (D-68, accepted): the console walls match the decoded path, and the services refuse a demo store's uploads
+  and staff invites; the total counts only open stores ("full" has its own page); each demo store gets 20 console
+  readings; the phone's 40 are taken atomically and a retried send (`clientMessageId`) is recorded once; the webhook
+  stops reading at 4 MB; a real store's console can't be framed. Migration 0033.
+  Seeding (D-70, accepted) runs on its own queue, `store-assistant-demo-seed`, which must be created before the deploy; the
+  pieces run side by side. Live seeding time is to be measured after the deploy (it was ~3 min 15 s).
+  Orders (D-69, accepted): a waiting change shows "Cambio sin responder" on the card and the packing page; once the order is
+  Listo the change can only be declined. Approving still needs a reason (K12).
+  Language: the English view covers the order screens, Deed, Libro ("ledger"), Pendientes and attributes; Muse's
+  voseo notes applied ("pasar a traer", "nota de voz", "caracteres").
+  CI: secrets only on the migrate and deploy steps, deploys from `main` only, SHA-pinned actions, a smoke check,
+  a migration guard, longer timeouts for four heavy tests.
+  Landing page (Angel: "exactly what I meant"): `/demo` is a showcase, the hero line, the recorded visit
+  (`/demo/recorrido.gif`, embedded by `scripts/make-demo-tour.mjs`), three steps and one "Try it" button (still a
+  POST, so link previews never open stores). The GIF still shows the old landing page in its first seconds:
+  re-record with `scripts/record-demo-gif.mjs`, then rerun `make-demo-tour.mjs`.
+  Open: branch protection on `main` (Angel); invoices still use recorded readings (no Muse Spark adapter).
+
+- **Demo store history (D-66, merged #81; seeding moved by D-70):** a new demo store opens with a few days of made-up
   orders (every state, a change waiting for the owner), named customers and two invoices (one received into stock,
   one to review). Each order runs through intake, the processor, the order handler and the engine with a scripted
   reading (no model call), and staff steps through `runConsoleAction`. Seeding a whole store takes ~2,600 D1 queries
@@ -19,7 +39,7 @@ Last updated: Fri Nov 6, 2026, by Claude Code.
   `src/infrastructure/demo-invoices.ts`). The Orders list now names the customer once they gave a name.
   Open: the planner engine records no Deed refusal for a stale Confirmar.
 
-- **Deed's false alarms (`claude/deed-claim-checks`, D-67, not merged):** the Deed's record now has one row per claim
+- **Deed's false alarms (D-67, merged #82):** the Deed's record now has one row per claim
   check, with the final verdict. A seeded store went from 57 of 117 unbacked to 0, on local D1 in both conversation
   modes; not yet seen on Cloudflare. `deed_checks` is append-only, so stores opened before the fix keep their old rows.
   The check that blocks a reply didn't change. `scripts/record-demo-gif.mjs` no longer uses a seeded customer's name;
@@ -36,7 +56,7 @@ Last updated: Fri Nov 6, 2026, by Claude Code.
   leaves Más out, so the demo's console frame on a laptop shows every option; a phone keeps the five tabs with Más.
   Empleados is left out of a demo store's menu. "Probar como cliente" moved from Más to Inicio.
 
-- **Public demo (`claude/public-demo`, D-61, not deployed):** `/demo` opens a synthetic store per visitor with a
+- **Public demo (D-61, deployed Nov 5):** `/demo` opens a synthetic store per visitor with a
   customer phone beside the console. Deploying needs migration `0032_demo_stores.sql` applied to the remote D1 first.
   Tested locally with the real models (Nov 5): text → readback → Confirmar → name → the console's "To prepare";
   the preset photo and voice note read in fresh stores. D-62 adds the limits and fixes. **To test it by hand, use

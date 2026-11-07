@@ -602,7 +602,7 @@ const EXPECTED_READBACK = [
   "• 3 Jabón Xtra · L 105",
   "• 2 Azúcar 1 lb · L 60",
   "",
-  "🏪 Lo recogés en la tienda.",
+  "🏪 Lo pasás a traer a la tienda.",
   "💵 Total: L 315. Pagás cuando lo recogés.",
   "",
   "¿Te lo preparo así?",
@@ -643,7 +643,7 @@ describe("the first order, from reading to reply", () => {
     await t.staffTap("mark_ready", "k-ready");
     expect((await t.engine.preparationList(t.tenant))[0]!.order.state).toBe("listo");
     // The engine's notice, rendered as the PRD says, was saved with the tap and reached the phone.
-    const READY = "¡Tu pedido #101 ya está listo! 🙌 Total: L 315. Ya podés pasar por él.";
+    const READY = "¡Tu pedido #101 ya está listo! 🙌 Total: L 315. Ya podés pasar a traerlo.";
     expect(t.notices.map((notice) => renderNotice(notice.notice).body)).toEqual([READY]);
     expect(t.h.sentTo(t.phone).at(-1)).toBe(READY);
     // A second tap of the same button (same operation key) queues nothing more.
@@ -727,7 +727,7 @@ describe("the first order, from reading to reply", () => {
         "• 5 Arroz 1 lb · L 90",
         "• 5 Azúcar 1 lb · L 82.50",
         "",
-        "🏪 Lo recogés en la tienda.",
+        "🏪 Lo pasás a traer a la tienda.",
         "💵 Total: L 172.50. Pagás cuando lo recogés.",
         "",
         "¿Te lo preparo así?",

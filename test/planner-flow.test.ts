@@ -465,14 +465,14 @@ describe("the planner path on local D1, from a photo of a list to one confirmed 
         "• 1 Salsa de tomate Naturas 400 g (te puse 1) · L 28",
         "De estos te confirmo si hay y el precio: Platanos y Piña.",
         "",
-        "🏪 Lo recogés en la tienda.",
+        "🏪 Lo pasás a traer a la tienda.",
         "💵 El total te lo confirmo. Pagás cuando lo recogés.",
         "",
         "¿Te lo preparo así?",
       ].join("\n"),
     );
     // Under the buttons, the footer instead of the typed choices.
-    expect(readback.footer).toBe("Si algo está mal, escribime o mandame un audio.");
+    expect(readback.footer).toBe("Si algo está mal, escribime o mandame una nota de voz.");
     const confirm = readback.buttons!.find((button) => button.title === "Confirmar")!;
     expect(await t.engine.preparationList(t.tenant)).toEqual([]);
 

@@ -25,7 +25,7 @@ const NOTICES = {
   confirmado: "Precio confirmado.",
   propuesto: "Precio propuesto. El dueño lo confirma.",
   formato: PRICE_FORMAT_HELP,
-  nombre: `Escribí el nombre del producto (hasta ${PRODUCT_NAME_MAX} letras).`,
+  nombre: `Escribí el nombre del producto (hasta ${PRODUCT_NAME_MAX} caracteres).`,
   repetido: "Ya hay un producto con ese nombre.",
   yaguardado: "Ese precio ya se guardó hace un momento. Esperá un minuto para cambiarlo otra vez.",
   falta: "Ese producto no está en la lista.",
