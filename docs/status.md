@@ -3,11 +3,11 @@
 Shared state for every agent: what's true now, what's next, what's open, what bit us. Keep it short. Anything a
 command can tell you (git log, test results, CI) doesn't belong here. Decisions go in [decisions.md](decisions.md).
 
-Last updated: Fri Nov 6, 2026, by Claude Code.
+Last updated: Wed Nov 11, 2026, by Claude Code.
 
 ## Now
 
-- **Review fixes (`claude/review-fixes`, not merged):** six reviewers (security, deploy, QA, polish, Codex, Muse)
+- **Review fixes (merged #83, deployed Nov 7):** six reviewers (security, deploy, QA, polish, Codex, Muse)
   went through the live version; six lanes fixed what they found, combined on one branch.
   Demo security (D-68, accepted): the console walls match the decoded path, and the services refuse a demo store's uploads
   and staff invites; the total counts only open stores ("full" has its own page); each demo store gets 20 console
@@ -41,7 +41,7 @@ Last updated: Fri Nov 6, 2026, by Claude Code.
 
 - **Deed's false alarms (D-67, merged #82):** the Deed's record now has one row per claim
   check, with the final verdict. A seeded store went from 57 of 117 unbacked to 0, on local D1 in both conversation
-  modes; not yet seen on Cloudflare. `deed_checks` is append-only, so stores opened before the fix keep their old rows.
+  modes; deployed Nov 6, not yet checked by hand on Cloudflare. `deed_checks` is append-only, so stores opened before the fix keep their old rows.
   The check that blocks a reply didn't change. `scripts/record-demo-gif.mjs` no longer uses a seeded customer's name;
   `docs/assets/deed-demo.gif` still shows a store with no history, until someone records it again after the deploy.
 

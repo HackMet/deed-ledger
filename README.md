@@ -153,9 +153,9 @@ and it's an audit log with good branding.
 
 | Check | Result | Command |
 |---|---|---|
-| Tests | 1995 passed, plus 15 under `node:test` (November 6) | `npm test` |
-| Attacks that reach the engine | 9 attacks, 0 false facts admitted (November 5) | `node scripts/adversary.mjs` |
-| Scripted demo | 29 of 29 steps passed; re-check of 3 entries, 0 differ (November 5) | `./demo.sh` |
+| Tests | 1996 passed, plus 15 under `node:test` (November 11) | `npm test` |
+| Attacks that reach the engine | 9 attacks, 0 false facts admitted (November 11) | `node scripts/adversary.mjs` |
+| Scripted demo | 29 of 29 steps passed; re-check of 3 entries, 0 differ (November 11) | `./demo.sh` |
 | Scripted customer conversations | 28 of 31 finished, with no truth failure (November 4) | `npm run eval` with real models |
 
 A truth failure is a wrong product, an amount the records don't back, a contradicted order state, or an injected instruction
