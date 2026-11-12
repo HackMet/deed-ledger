@@ -9,6 +9,14 @@
   <img src="https://img.shields.io/badge/AI-Meta%20Muse-0866FF?logo=meta&logoColor=white" alt="Meta Muse models" />
 </p>
 
+<h2 align="center">🗳️ Deed is in the Meta AI Hackathon community vote, open until Monday, November 16</h2>
+
+<p align="center">
+  <a href="https://cerebralvalley.ai/e/meta-ai-developer-hackathon/hackathon/gallery/4521"><img src="https://img.shields.io/badge/VOTE%20FOR%20DEED-until%20Mon%2C%20Nov%2016-E5262B?style=for-the-badge" alt="Vote for Deed, open until Monday, November 16" height="56" /></a>
+</p>
+
+<p align="center"><strong>If you find it useful, your vote helps a lot 🙏</strong></p>
+
 <div align="center">
 
 <table>
